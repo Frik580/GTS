@@ -64,7 +64,7 @@ def get_best_model():
             logging.critical("3. Добавьте .env в .gitignore")
         else:
             logging.error(f"Ошибка при выборе модели: {e}. Используем базовый fallback.")
-        return genai.GenerativeModel('gemini-pro'), False
+        return genai.GenerativeModel('gemini-1.5-flash'), True
 
 model, supports_json_mode = get_best_model()
 logging.info(f"Текущая активная модель: {model.model_name}")
@@ -78,15 +78,19 @@ RSS_FEEDS = [
     "https://www.google.com/alerts/feeds/08581651676967390390/17504039104683303894",
 ]
 
-CHECK_INTERVAL = 60
-COOLDOWN = 300
-LEARNING_INTERVAL = 600
-CLEANUP_INTERVAL = 86400  # Очистка раз в 24 часа
-RETENTION_DAYS = 30       # Храним данные за последние 30 дней
+# Интервалы сканирования
+CHECK_INTERVAL = 300  # Увеличим до 5 минут, чтобы не спамить запросами
+COOLDOWN = 600        # Кулдаун уведомлений
+LEARNING_INTERVAL = 3600 # Обучение раз в час
+CLEANUP_INTERVAL = 86400 
+RETENTION_DAYS = 14      # 30 дней — много для локальной БД, сократим до 14
 
-# Параметры затухания: 0.99 означает, что за один цикл (60 сек) 
-# значение теряет 1% своей "силы".
-DECAY_FACTOR = 0.99 
+# Динамическая задержка AI: 4 сек для Flash (15 RPM), 32 сек для Pro (2 RPM)
+AI_DELAY = 4 if supports_json_mode else 32
+
+# Параметры затухания: сделаем более агрессивным (0.95), так как баллы 
+# в логах (450+) растут слишком быстро.
+DECAY_FACTOR = 0.95 
 
 # =========================
 # STATE
@@ -182,7 +186,7 @@ def ai_analyze(text, max_retries=3):
 
         except Exception as e:
             if "429" in str(e) or "quota" in str(e).lower():
-                wait_time = (attempt + 1) * 10
+                wait_time = (attempt + 1) * 30 # Увеличим время ожидания при ошибке
                 logging.warning(f"⚠️ Rate limit hit (429). Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
                 time.sleep(wait_time)
                 continue
@@ -423,7 +427,9 @@ while True:
             logging.error(f"Feed error {url}: {e}")
             continue
 
-        for entry in feed.entries:
+        # Ограничим количество новостей за один проход (max 5), 
+        # чтобы не упираться в лимиты API Gemini Pro
+        for entry in feed.entries[:5]:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT id FROM events WHERE link = ?", (entry.link,))
@@ -433,8 +439,9 @@ while True:
             text = entry.title + " " + entry.get("summary", "")
             score, event_type, entities = ai_analyze(text)
             
-            # Throttling: Stay under 15 RPM (1 request every 4 seconds)
-            time.sleep(4)
+            # Адаптивный Throttling
+            logging.info(f"Waiting {AI_DELAY}s for next AI call...")
+            time.sleep(AI_DELAY)
 
             event_key = make_event_key(entities)
             event_scores[event_key] += score
