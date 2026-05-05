@@ -1,4 +1,5 @@
 import feedparser
+import logging
 import requests
 import time
 import os
@@ -7,11 +8,23 @@ import google.generativeai as genai
 import yfinance as yf
 from datetime import datetime, timedelta
 from collections import defaultdict
-from db import conn, cursor, init_db
+from db import get_db_connection, init_db
 from dotenv import load_dotenv
 
 load_dotenv()
 init_db()
+
+# =========================
+# LOGGING CONFIG
+# =========================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler("gts.log", encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
 
 # =========================
 # CONFIG
@@ -36,19 +49,25 @@ def get_best_model():
         pro_model = next((m for m in models_list if 'gemini-pro' in m), None)
 
         if flash_model:
-            print(f"--- Выбрана модель: {flash_model} (JSON Mode ON) ---")
+            logging.info(f"--- Выбрана модель: {flash_model} (JSON Mode ON) ---")
             return genai.GenerativeModel(flash_model), True
         elif pro_model:
-            print(f"--- Выбрана модель: {pro_model} (JSON Mode OFF) ---")
+            logging.info(f"--- Выбрана модель: {pro_model} (JSON Mode OFF) ---")
             return genai.GenerativeModel(pro_model), False
         else:
             raise Exception(f"Совместимые модели не найдены в списке: {models_list}")
     except Exception as e:
-        print(f"Ошибка при выборе модели: {e}. Используем базовый fallback.")
+        if "API key was reported as leaked" in str(e):
+            logging.critical("⚠️ КРИТИЧЕСКАЯ ОШИБКА: Ваш API-ключ заблокирован из-за утечки!")
+            logging.critical("1. Создайте новый ключ: https://aistudio.google.com/app/apikey")
+            logging.critical("2. Обновите GEMINI_API_KEY в файле .env")
+            logging.critical("3. Добавьте .env в .gitignore")
+        else:
+            logging.error(f"Ошибка при выборе модели: {e}. Используем базовый fallback.")
         return genai.GenerativeModel('gemini-pro'), False
 
 model, supports_json_mode = get_best_model()
-print(f"Текущая активная модель: {model.model_name}")
+logging.info(f"Текущая активная модель: {model.model_name}")
 
 RSS_FEEDS = [
     "https://news.google.com/rss/search?q=US+Iran",
@@ -62,45 +81,68 @@ RSS_FEEDS = [
 CHECK_INTERVAL = 60
 COOLDOWN = 300
 LEARNING_INTERVAL = 600
+CLEANUP_INTERVAL = 86400  # Очистка раз в 24 часа
+RETENTION_DAYS = 30       # Храним данные за последние 30 дней
+
+# Параметры затухания: 0.99 означает, что за один цикл (60 сек) 
+# значение теряет 1% своей "силы".
+DECAY_FACTOR = 0.99 
 
 # =========================
 # STATE
 # =========================
 
-event_scores = defaultdict(int)
-event_last_sent = {}
+def init_state():
+    scores = defaultdict(float)
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        # Используем экспоненциальное затухание прямо в SQL (SQLite не имеет exp(), 
+        # поэтому аппроксимируем через время или просто берем взвешенное среднее)
+        # Здесь: чем старее запись, тем меньше её вклад в начальный score.
+        cursor.execute("""
+            SELECT entities, SUM(weighted_score) FROM (
+                SELECT 
+                    score * (1.0 - (julianday('now') - julianday(timestamp))) as weighted_score,
+                    CASE WHEN oil != 'bearish' THEN 'OIL' ELSE 'GLOBAL' END as entities 
+                FROM events WHERE timestamp > datetime('now', '-1 day')
+            ) GROUP BY entities
+        """)
+        for key, val in cursor.fetchall():
+            scores[key] = val
+    return scores
 
+event_scores = init_state()
+event_last_sent = {}
 learning_rate = 0.05
 
 def load_weights():
-    weights = {
-        "US_IRAN": 2.5,
-        "HORMUZ": 3.0,
-        "OIL": 2.0,
-        "GLOBAL": 1.0
-    }
-    cursor.execute("SELECT event_key, weight FROM weights")
-    for key, val in cursor.fetchall():
-        weights[key] = val
+    weights = {"US_IRAN": 2.5, "HORMUZ": 3.0, "OIL": 2.0, "GLOBAL": 1.0}
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT event_key, weight FROM weights")
+        for key, val in cursor.fetchall():
+            weights[key] = val
     return weights
 
 def save_weights():
-    for key, val in event_weights.items():
-        cursor.execute("""
-            INSERT INTO weights (event_key, weight) 
-            VALUES (?, ?) 
-            ON CONFLICT(event_key) DO UPDATE SET weight = excluded.weight
-        """, (key, val))
-    conn.commit()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        for key, val in event_weights.items():
+            cursor.execute("""
+                INSERT INTO weights (event_key, weight) 
+                VALUES (?, ?) 
+                ON CONFLICT(event_key) DO UPDATE SET weight = excluded.weight
+            """, (key, val))
+        conn.commit()
 
 event_weights = load_weights()
-print(f"--- Веса загружены: {event_weights} ---")
+logging.info(f"--- Веса загружены: {event_weights} ---")
 
 # =========================
 # AI ENGINE
 # =========================
 
-def ai_analyze(text):
+def ai_analyze(text, max_retries=3):
     """
     Uses Gemini AI to perform deep sentiment analysis and NER.
     """
@@ -115,34 +157,42 @@ def ai_analyze(text):
     Do not include any markdown formatting or explanations.
     """
 
-    try:
-        # Используем JSON Mode только если модель его поддерживает (1.5+)
-        gen_config = {"response_mime_type": "application/json"} if supports_json_mode else {}
-        
-        response = model.generate_content(prompt, generation_config=gen_config)
-        
-        # Проверка, не заблокирован ли ответ фильтрами безопасности
-        if not response.candidates or not response.candidates[0].content.parts:
-            return 0.0, "neutral", []
+    for attempt in range(max_retries):
+        try:
+            # Используем JSON Mode только если модель его поддерживает (1.5+)
+            gen_config = {"response_mime_type": "application/json"} if supports_json_mode else {}
             
-        res_text = response.text.strip()
-        
-        # Надежный поиск границ JSON (на случай, если модель добавила текст)
-        start = res_text.find('{')
-        end = res_text.rfind('}') + 1
+            response = model.generate_content(prompt, generation_config=gen_config)
+            
+            # Проверка, не заблокирован ли ответ фильтрами безопасности
+            if not response.candidates or not response.candidates[0].content.parts:
+                return 0.0, "neutral", []
 
-        if start == -1 or end == 0:
-            return 0.0, "neutral", []
+            res_text = response.text.strip()
+            
+            # Надежный поиск границ JSON (на случай, если модель добавила текст)
+            start = res_text.find('{')
+            end = res_text.rfind('}') + 1
 
-        data = json.loads(res_text[start:end])
+            if start == -1 or end == 0:
+                return 0.0, "neutral", []
 
-        return float(data.get("score", 0)), data.get("event_type", "neutral"), data.get("entities", [])
+            data = json.loads(res_text[start:end])
+            return float(data.get("score", 0)), data.get("event_type", "neutral"), data.get("entities", [])
 
-    except Exception as e:
-        print(f"AI Analysis Error: {e}")
-        if any(word in text.lower() for word in ["war", "strike", "attack"]):
-            return 4.0, "military", ["Unknown"]
-        return 0.0, "neutral", []
+        except Exception as e:
+            if "429" in str(e) or "quota" in str(e).lower():
+                wait_time = (attempt + 1) * 10
+                logging.warning(f"⚠️ Rate limit hit (429). Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+                continue
+            logging.error(f"AI Analysis Error: {e}")
+            break
+
+    # Fallback logic
+    if any(word in text.lower() for word in ["war", "strike", "attack"]):
+        return 4.0, "military", ["Unknown"]
+    return 0.0, "neutral", []
 
 # =========================
 # EVENT ENGINE
@@ -215,9 +265,9 @@ def send_telegram(msg):
             data={"chat_id": CHAT_ID, "text": msg},
             timeout=10
         )
-        print("TELEGRAM:", response.text)
+        logging.info(f"TELEGRAM: {response.text}")
     except Exception as e:
-        print(f"Error sending telegram: {e}")
+        logging.error(f"Error sending telegram: {e}")
 
 # =========================
 # ANTI-SPAM
@@ -281,9 +331,9 @@ def get_market_data():
                     change = ((today_close - yesterday_close) / yesterday_close) * 100
                     market_data[data_key] = float(change)
             else:
-                print(f"Warning: Not enough data for {ticker_symbol} to calculate daily change.")
+                logging.warning(f"Warning: Not enough data for {ticker_symbol} to calculate daily change.")
         except Exception as e:
-            print(f"Error fetching data for {ticker_symbol}: {e}")
+            logging.error(f"Error fetching data for {ticker_symbol}: {e}")
 
     return market_data
 
@@ -291,8 +341,10 @@ def get_market_data():
 def learning_cycle():
     raw_market_data = get_market_data()
 
-    cursor.execute("SELECT * FROM predictions WHERE resolved = 0")
-    rows = cursor.fetchall()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM predictions WHERE resolved = 0")
+        rows = cursor.fetchall()
 
     for row in rows:
         event_key = row[1]
@@ -317,76 +369,94 @@ def learning_cycle():
 
         update_weights(event_key, predicted, actual)
 
-        cursor.execute("""
-            UPDATE predictions
-            SET resolved = 1, actual_move = ?
-            WHERE id = ?
-        """, (actual, row[0]))
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE predictions
+                SET resolved = 1, actual_move = ?
+                WHERE id = ?
+            """, (actual, row[0]))
+            conn.commit()
 
     save_weights()
-    conn.commit()
+
+def cleanup_db():
+    """
+    Удаляет записи из БД, которые старше RETENTION_DAYS, чтобы предотвратить разрастание файла.
+    """
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            # Удаляем старые события и прогнозы
+            cursor.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (RETENTION_DAYS,))
+            cursor.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (RETENTION_DAYS,))
+            conn.commit()  # Завершаем транзакцию после удаления
+            
+            # VACUUM пересобирает базу, освобождая место на диске
+            old_isolation = conn.isolation_level
+            conn.isolation_level = None  # Включаем autocommit для VACUUM
+            conn.execute("VACUUM")
+            conn.isolation_level = old_isolation
+            
+            logging.info(f"--- База данных оптимизирована: удалены данные старше {RETENTION_DAYS} дней ---")
+    except Exception as e:
+        logging.error(f"Ошибка при очистке БД: {e}")
 
 # =========================
 # MAIN LOOP
 # =========================
 
 last_learning_run = 0
+last_cleanup_run = 0
 
 while True:
-    print("GTS 4.0 scanning...")
+    logging.info("GTS 4.0 scanning...")
+
+    # Применяем затухание ко всем накопленным баллам перед новым сканированием
+    for key in event_scores:
+        event_scores[key] *= DECAY_FACTOR
 
     for url in RSS_FEEDS:
         try:
             feed = feedparser.parse(url)
         except Exception as e:
-            print(f"Feed error {url}: {e}")
+            logging.error(f"Feed error {url}: {e}")
             continue
 
         for entry in feed.entries:
-            cursor.execute("SELECT id FROM events WHERE link = ?", (entry.link,))
-            if cursor.fetchone():
-                continue
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM events WHERE link = ?", (entry.link,))
+                if cursor.fetchone():
+                    continue
 
             text = entry.title + " " + entry.get("summary", "")
-
             score, event_type, entities = ai_analyze(text)
+            
+            # Throttling: Stay under 15 RPM (1 request every 4 seconds)
+            time.sleep(4)
 
             event_key = make_event_key(entities)
-
             event_scores[event_key] += score
-
             market = market_signals(score, event_key)
-
             prob = predict_impact(event_scores[event_key], event_key)
-
             signal = generate_signal(prob, event_scores[event_key])
 
-            # DB events
-            cursor.execute("""
-                INSERT INTO events (title, link, score, event, nasdaq, oil, soxs, vix)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                entry.title,
-                entry.link,
-                score,
-                event_type,
-                market["nasdaq"],
-                market["oil"],
-                market["soxs"],
-                market["vix"]
-            ))
-            conn.commit()
-
-            # DB predictions
-            cursor.execute("""
-                INSERT INTO predictions (event_key, score, predicted_impact)
-                VALUES (?, ?, ?)
-            """, (
-                event_key,
-                event_scores[event_key],
-                prob
-            ))
-            conn.commit()
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    INSERT INTO events (title, link, score, event, nasdaq, oil, soxs, vix)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    entry.title, entry.link, score, event_type,
+                    market["nasdaq"], market["oil"], market["soxs"], market["vix"]
+                ))
+                
+                cursor.execute("""
+                    INSERT INTO predictions (event_key, score, predicted_impact)
+                    VALUES (?, ?, ?)
+                """, (event_key, event_scores[event_key], prob))
+                conn.commit()
 
             # TELEGRAM
             if should_send(event_key):
@@ -417,5 +487,10 @@ while True:
     if current_time - last_learning_run >= LEARNING_INTERVAL:
         learning_cycle()
         last_learning_run = current_time
+
+    # Цикл очистки (запускается раз в сутки)
+    if current_time - last_cleanup_run >= CLEANUP_INTERVAL:
+        cleanup_db()
+        last_cleanup_run = current_time
 
     time.sleep(CHECK_INTERVAL)
