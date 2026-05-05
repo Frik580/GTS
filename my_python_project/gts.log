@@ -1,0 +1,7 @@
+2026-05-05 13:18:25,731 [INFO] --- Выбрана модель: models/gemini-pro-latest (JSON Mode OFF) ---
+2026-05-05 13:18:25,742 [INFO] Текущая активная модель: models/gemini-pro-latest
+2026-05-05 13:18:25,746 [INFO] --- Веса загружены: {'US_IRAN': 2.5, 'HORMUZ': 3.0, 'OIL': 2.0, 'GLOBAL': 4.958474613389107, 'Unknown': 0.5} ---
+2026-05-05 13:18:25,746 [INFO] GTS 4.0 scanning...
+2026-05-05 13:18:31,438 [ERROR] Ошибка при очистке БД: cannot VACUUM from within a transaction
+2026-05-05 13:19:31,438 [INFO] GTS 4.0 scanning...
+2026-05-05 13:19:33,949 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)

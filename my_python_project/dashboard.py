@@ -5,6 +5,7 @@ import time
 
 st.set_page_config(layout="wide", page_title="GTS 3.0 Terminal")
 
+@st.cache_data(ttl=30)
 def load_data():
     # Используем context manager для автоматического закрытия соединения
     with sqlite3.connect("gts.db") as conn:
@@ -37,5 +38,4 @@ col3.metric("Events", len(df))
 st.subheader("🧠 Live Events Feed")
 st.dataframe(df)
 
-time.sleep(60)
-st.rerun()
+st.caption("Auto-refreshing every 60s...")
