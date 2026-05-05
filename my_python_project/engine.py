@@ -72,21 +72,24 @@ logging.info(f"Текущая активная модель: {model.model_name}"
 RSS_FEEDS = [
     "https://news.google.com/rss/search?q=US+Iran",
     "https://news.google.com/rss/search?q=Hormuz",
-    "https://www.google.com/alerts/feeds/08581651676967390390/13531311268805037202", 
-    "https://www.google.com/alerts/feeds/08581651676967390390/9151711154181076810", 
-    "https://www.google.com/alerts/feeds/08581651676967390390/9151711154181074984", 
-    "https://www.google.com/alerts/feeds/08581651676967390390/17504039104683303894",
+    "https://news.google.com/rss/search?q=Oil",
+    "https://news.google.com/rss/search?q=Gold+Price+Analysis",
+    "https://news.google.com/rss/search?q=Bitcoin+Crypto+News",
+    # "https://www.google.com/alerts/feeds/08581651676967390390/13531311268805037202", 
+    # "https://www.google.com/alerts/feeds/08581651676967390390/9151711154181076810", 
+    # "https://www.google.com/alerts/feeds/08581651676967390390/9151711154181074984", 
+    # "https://www.google.com/alerts/feeds/08581651676967390390/17504039104683303894",
 ]
 
 # Интервалы сканирования
-CHECK_INTERVAL = 300  # Увеличим до 5 минут, чтобы не спамить запросами
+CHECK_INTERVAL = 1200 # 20 минут (безопасно для дневной квоты 1500 RPD)
 COOLDOWN = 600        # Кулдаун уведомлений
 LEARNING_INTERVAL = 3600 # Обучение раз в час
 CLEANUP_INTERVAL = 86400 
 RETENTION_DAYS = 14      # 30 дней — много для локальной БД, сократим до 14
 
-# Динамическая задержка AI: 4 сек для Flash (15 RPM), 32 сек для Pro (2 RPM)
-AI_DELAY = 4 if supports_json_mode else 32
+# Increased safety margin for free tier limits
+AI_DELAY = 15 if supports_json_mode else 60
 
 # Параметры затухания: сделаем более агрессивным (0.95), так как баллы 
 # в логах (450+) растут слишком быстро.
@@ -120,7 +123,7 @@ event_last_sent = {}
 learning_rate = 0.05
 
 def load_weights():
-    weights = {"US_IRAN": 2.5, "HORMUZ": 3.0, "OIL": 2.0, "GLOBAL": 1.0}
+    weights = {"US_IRAN": 2.5, "HORMUZ": 3.0, "OIL": 2.0, "GOLD": 1.5, "BTC": 1.2, "GLOBAL": 1.0}
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT event_key, weight FROM weights")
@@ -185,8 +188,9 @@ def ai_analyze(text, max_retries=3):
             return float(data.get("score", 0)), data.get("event_type", "neutral"), data.get("entities", [])
 
         except Exception as e:
-            if "429" in str(e) or "quota" in str(e).lower():
-                wait_time = (attempt + 1) * 30 # Увеличим время ожидания при ошибке
+            err_msg = str(e).lower()
+            if "429" in err_msg or "quota" in err_msg or "limit" in err_msg:
+                wait_time = (attempt + 1) * 120 # Увеличиваем ожидание (2, 4, 6 минут)
                 logging.warning(f"⚠️ Rate limit hit (429). Retrying in {wait_time}s... (Attempt {attempt+1}/{max_retries})")
                 time.sleep(wait_time)
                 continue
@@ -215,6 +219,12 @@ def make_event_key(entities):
     if "Oil" in entities:
         return "OIL"
 
+    if "Gold" in entities or "XAU" in entities:
+        return "GOLD"
+
+    if "Bitcoin" in entities or "BTC" in entities:
+        return "BTC"
+
     return "_".join(sorted(entities))
 
 # =========================
@@ -230,7 +240,9 @@ def market_signals(score, event_key):
         "nasdaq": "bearish" if intensity > 3 else "bullish" if intensity < -2 else "flat",
         "oil": "bullish" if intensity > 2 else "bearish",
         "soxs": "bullish" if intensity > 3 else "bearish",
-        "vix": "bullish" if intensity > 2 else "flat"
+        "vix": "bullish" if intensity > 2 else "flat",
+        "gold": "bullish" if intensity > 1.5 else "bearish" if intensity < -3 else "flat",
+        "btc": "bearish" if intensity > 4 else "bullish" if intensity < -2 else "flat"
     }
 
 # =========================
@@ -317,7 +329,10 @@ def get_market_data():
     tickers_to_fetch = {
         "^IXIC": "nasdaq_change", # NASDAQ Composite
         "CL=F": "oil_change",    # Crude Oil Futures
-        "^VIX": "vix_change"     # CBOE Volatility Index
+        "^VIX": "vix_change",    # CBOE Volatility Index
+        "GC=F": "gold_change",   # Gold Futures
+        "BTC-USD": "btc_change", # Bitcoin
+        "SOXS": "soxs_change"    # Direxion Daily Semiconductor Bear 3X
     }
 
     for ticker_symbol, data_key in tickers_to_fetch.items():
@@ -350,37 +365,33 @@ def learning_cycle():
         cursor.execute("SELECT * FROM predictions WHERE resolved = 0")
         rows = cursor.fetchall()
 
-    for row in rows:
-        event_key = row[1]
-        predicted = row[3]
+        for row in rows:
+            event_key = row[1]
+            predicted = row[3]
+            actual = 0
+            scaling_factor = 10
 
-        actual = 0 # Default actual move if no specific market data applies
-
-        # Define how each event_key maps to actual market moves
-        # Scaling factor: a 10% market move (e.g., VIX or Oil) corresponds to 100 impact score
-        scaling_factor = 10
-
-        if event_key == "OIL":
-            if 'oil_change' in raw_market_data:
+            if event_key == "OIL" and 'oil_change' in raw_market_data:
                 actual = min(abs(raw_market_data['oil_change']) * scaling_factor, 100)
-        elif event_key in ["US_IRAN", "HORMUZ", "GLOBAL"]:
-            # For general risk events, prioritize VIX change, then inverted Nasdaq change
-            if 'vix_change' in raw_market_data:
-                actual = min(abs(raw_market_data['vix_change']) * scaling_factor, 100)
-            elif 'nasdaq_change' in raw_market_data:
-                # A drop in Nasdaq (negative change) means positive risk-off impact
-                actual = min(abs(raw_market_data['nasdaq_change']) * scaling_factor, 100)
+            elif event_key == "GOLD" and 'gold_change' in raw_market_data:
+                actual = min(abs(raw_market_data['gold_change']) * scaling_factor, 100)
+            elif event_key == "BTC" and 'btc_change' in raw_market_data:
+                actual = min(abs(raw_market_data['btc_change']) * (scaling_factor / 2), 100)
+            elif event_key in ["US_IRAN", "HORMUZ", "GLOBAL"]:
+                if 'vix_change' in raw_market_data:
+                    actual = min(abs(raw_market_data['vix_change']) * scaling_factor, 100)
+                elif 'nasdaq_change' in raw_market_data:
+                    actual = min(abs(raw_market_data['nasdaq_change']) * scaling_factor, 100)
 
-        update_weights(event_key, predicted, actual)
+            logging.info(f"Resolving prediction for {event_key}: Predicted {predicted:.2f}, Actual {actual:.2f}")
+            update_weights(event_key, predicted, actual)
 
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
             cursor.execute("""
                 UPDATE predictions
                 SET resolved = 1, actual_move = ?
                 WHERE id = ?
             """, (actual, row[0]))
-            conn.commit()
+        conn.commit()
 
     save_weights()
 
@@ -410,7 +421,8 @@ def cleanup_db():
 # MAIN LOOP
 # =========================
 
-last_learning_run = 0
+last_learning_run = 0 # Установка в 0 форсирует запуск обучения при первом проходе цикла
+last_market_data_fetch = 0 # Для отслеживания времени последнего получения рыночных данных
 last_cleanup_run = 0
 
 while True:
@@ -420,6 +432,12 @@ while True:
     for key in event_scores:
         event_scores[key] *= DECAY_FACTOR
 
+    # Получаем актуальные рыночные данные один раз за цикл CHECK_INTERVAL
+    current_market_data = get_market_data()
+    btc_change_for_notification = current_market_data.get("btc_change", 0)
+    gold_change_for_notification = current_market_data.get("gold_change", 0)
+    soxs_change_for_notification = current_market_data.get("soxs_change", 0)
+
     for url in RSS_FEEDS:
         try:
             feed = feedparser.parse(url)
@@ -427,9 +445,9 @@ while True:
             logging.error(f"Feed error {url}: {e}")
             continue
 
-        # Ограничим количество новостей за один проход (max 5), 
-        # чтобы не упираться в лимиты API Gemini Pro
-        for entry in feed.entries[:5]:
+        # Ограничиваем до 3 самых свежих новостей с каждого фида
+        # Это экономит дневную квоту запросов (RPD)
+        for entry in feed.entries[:3]:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT id FROM events WHERE link = ?", (entry.link,))
@@ -452,11 +470,11 @@ while True:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO events (title, link, score, event, nasdaq, oil, soxs, vix)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO events (title, link, score, event, nasdaq, oil, soxs, gold, btc, vix)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     entry.title, entry.link, score, event_type,
-                    market["nasdaq"], market["oil"], market["soxs"], market["vix"]
+                    market["nasdaq"], market["oil"], market["soxs"], market["gold"], market["btc"], market["vix"]
                 ))
                 
                 cursor.execute("""
@@ -466,6 +484,12 @@ while True:
                 conn.commit()
 
             # TELEGRAM
+            # Дополнительная проверка для BTC: отправляем только при критических изменениях (>5%)
+            if event_key == "BTC":
+                if abs(btc_change_for_notification) < 5.0:
+                    logging.info(f"Skipping BTC notification for '{entry.title}' - change ({btc_change_for_notification:.2f}%) not critical.")
+                    continue # Пропускаем отправку уведомления для этой BTC новости
+
             if should_send(event_key):
 
                 msg = f"""
@@ -479,7 +503,9 @@ while True:
 
 📉 Nasdaq: {market['nasdaq']}
 🛢 Oil: {market['oil']}
-⚡ SOXS: {market['soxs']}
+⚡ SOXS: {market['soxs']} ({soxs_change_for_notification:+.2f}%)
+✨ Gold: {market['gold']} ({gold_change_for_notification:+.2f}%)
+₿ BTC: {market['btc']} ({btc_change_for_notification:+.2f}%)
 📊 VIX: {market['vix']}
 
 📰 {entry.title}

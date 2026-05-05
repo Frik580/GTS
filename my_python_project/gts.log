@@ -1,77 +1,87 @@
-2026-05-05 13:18:25,731 [INFO] --- Выбрана модель: models/gemini-pro-latest (JSON Mode OFF) ---
-2026-05-05 13:18:25,742 [INFO] Текущая активная модель: models/gemini-pro-latest
-2026-05-05 13:18:25,746 [INFO] --- Веса загружены: {'US_IRAN': 2.5, 'HORMUZ': 3.0, 'OIL': 2.0, 'GLOBAL': 4.958474613389107, 'Unknown': 0.5} ---
-2026-05-05 13:18:25,746 [INFO] GTS 4.0 scanning...
-2026-05-05 13:18:31,438 [ERROR] Ошибка при очистке БД: cannot VACUUM from within a transaction
-2026-05-05 13:19:31,438 [INFO] GTS 4.0 scanning...
-2026-05-05 13:19:33,949 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:19:44,240 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:20:04,392 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:20:39,067 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":98,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777969238,"text":"\ud83e\udde0 EVENT: Unknown\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \u26aa NEUTRAL\n\n\ud83d\udcca Score: 4.0\n\ud83d\udcc8 Impact: 24.0%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 US-Iran Ceasefire Live Updates: \"Stop Holding World Hostage,\" Germany Tells Iran After UAE Attacked - NDTV\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMiggJBVV95cUxObHUwQ1pwal9McTQ1dEpIRVEwc05GYzhBSnBSX1pBTDJ3bHVXaWZ4Q1ZKT1k5SjE1QlNEUk9pMFRpMWt4MEs1cUs2TkVYazhYSjdyclJfbklIcDlPSE10TUVaOUpLbldvalQ2UU5OXzFTZlpLNVU0QjlFM1hKS2xtbzlublc4NUcwRk1TODdhTkJLNUFLa0p1OTZvb01RNW11WGhScklXRTd0QVN4TFp6cGhKQm9ad3hOaDVTNFNyU3p0alp4dHNwcEVHUUo4U3VPU3Z5S0YtMi1lU0tRd000TnBzbHpFSXUzQ0FwVHhPdDU0ZW5uOWNybGVaWTNHOVBtTEHSAYoCQVVfeXFMT1JvUGdqTy1obUN3T1J3TjIxdFo0blJHTXFMQmh3UENiMC13MUtUSjVvajZGODZ0aHRJQ25NR01vMUpjemdEU1FWclFDUG05bHRlcDc1aGVmUlluZWxXYy1CZWI5bGZ4dklHNEl2NFJuaGV4a1gxbENTSjgtX25IcDlta0txSGxoQ3NNWkFfSjJSYTNZbVZLcjdjcEVhNTFiQkxQWjYwX0Y5T2dRZzV6MGtKTDdpSGMtQWsxWVpRMkdySXl5VFVwSjcxV1doX3p3Q0czZTh3YXJWdXRvSTNJN3FfcXVqa3dQdjEyVWRWbWJOTFpwZ0prYmtBYllYR3lrQ0FtRlljNGVqd3c?oc=5","entities":[{"offset":284,"length":753,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
-2026-05-05 13:20:40,707 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:20:50,868 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:21:11,025 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:21:45,678 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":99,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777969305,"text":"\ud83e\udde0 EVENT: GLOBAL\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \ud83d\udd34 HIGH RISK-OFF\n\n\ud83d\udcca Score: 454.6369302202955\n\ud83d\udcc8 Impact: 100%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 Oil prices surged on the first day of Trump\u2019s \u2018Project Freedom\u2019 plan to unblock Hormuz - CNN\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMifEFVX3lxTE9tM3Rka2UtQlpFUmtmR2w2V05RM2NRSTFUNnpoVnk3SEJPdEZzVUcxUFAxMUJNVm9fa3BJSUZCYUNZd2ZTRUtTUk9ocGk3WFhUUnRaVkRRNGFJM2c3VUowbE9jVGVUNVJCQmtmQmZueFZIU3FGSzVRMHpyN0c?oc=5","entities":[{"offset":289,"length":213,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
-2026-05-05 13:22:51,907 [INFO] GTS 4.0 scanning...
-2026-05-05 13:23:56,514 [INFO] GTS 4.0 scanning...
-2026-05-05 13:25:00,227 [INFO] GTS 4.0 scanning...
-2026-05-05 13:26:04,651 [INFO] GTS 4.0 scanning...
-2026-05-05 13:27:08,193 [INFO] GTS 4.0 scanning...
-2026-05-05 13:27:09,933 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:27:20,102 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:27:40,266 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:28:16,895 [INFO] TELEGRAM: {"ok":false,"error_code":401,"description":"Unauthorized"}
-2026-05-05 13:28:17,065 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:30:50,240 [INFO] --- Выбрана модель: models/gemini-pro-latest (JSON Mode OFF) ---
-2026-05-05 13:30:50,241 [INFO] Текущая активная модель: models/gemini-pro-latest
-2026-05-05 13:30:50,244 [INFO] --- Веса загружены: {'US_IRAN': 2.5, 'HORMUZ': 3.0, 'OIL': 2.0, 'GLOBAL': 4.587206550934026, 'Unknown': 0.5} ---
-2026-05-05 13:30:50,245 [INFO] GTS 4.0 scanning...
-2026-05-05 13:30:52,257 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:31:02,422 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:31:22,588 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:31:59,684 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":100,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777969919,"text":"\ud83e\udde0 EVENT: GLOBAL\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \ud83d\udd34 HIGH RISK-OFF\n\n\ud83d\udcca Score: 458.0597991064377\n\ud83d\udcc8 Impact: 100%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 Markets on Edge, With U.S.-Iran Cease-Fire at Risk of Collapse - WSJ\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMipwFBVV95cUxQSm92c0JuNUVXdVkwdHFZeGdxV1ZrS2w3SHZ0eGlVV3JDakZwMmw5YjdadXNtUHB6WDlfZDFCaDc3YTdTOEFEWDRQZ0pwampxQzNnTmkyQmpZc25vQ1pvYmk5WGFIZ1V5WWZrR2M2dzRsZmpncHdKVXc0ZnBCelFYLW9fLXRiLTRhdWNUNFh0VzlZaGZOTjVjRjVGYkt2a3M2VHhYTDZ2MA?oc=5","entities":[{"offset":265,"length":272,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
-2026-05-05 13:31:59,862 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:32:10,034 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:32:30,196 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:33:05,822 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:33:15,985 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:33:36,152 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:34:10,335 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:34:20,501 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:34:40,671 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:35:14,842 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:35:24,999 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:35:45,161 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:36:19,334 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:36:29,503 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:36:49,671 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:37:24,368 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":101,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777970244,"text":"\ud83e\udde0 EVENT: GLOBAL\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \ud83d\udd34 HIGH RISK-OFF\n\n\ud83d\udcca Score: 458.0597991064377\n\ud83d\udcc8 Impact: 100%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 2-US flagged ships cross Strait of Hormuz, US military officials say - KY3\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMipAFBVV95cUxNbmhxUE1jRlY0YVd4WTlGZFhnbWNhekVUUFlyUHprMnNXa2JHWF9kWlZaSjdsOXBFMVNEYTRkd2QxRVhPTEJtampsd2kxbTNqV0NEZ1dpWkUtSy10LXZESVluazU1R1Z2Vldxc3llcVZRekNhRlhKQ0lzNDVrNWo3eDU3MW54Vlh5elB6aFBSQk8wbG1zWVZRMGhFc1V3dExubG4xSg?oc=5","entities":[{"offset":271,"length":268,"type":"url"}],"link_preview_options":{"url":"https://news.google.com/rss/articles/CBMipAFBVV95cUxNbmhxUE1jRlY0YVd4WTlGZFhnbWNhekVUUFlyUHprMnNXa2JHWF9kWlZaSjdsOXBFMVNEYTRkd2QxRVhPTEJtampsd2kxbTNqV0NEZ1dpWkUtSy10LXZESVluazU1R1Z2Vldxc3llcVZRekNhRlhKQ0lzNDVrNWo3eDU3MW54Vlh5elB6aFBSQk8wbG1zWVZRMGhFc1V3dExubG4xSg?oc=5"}}}
-2026-05-05 13:37:24,535 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:37:34,706 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:37:54,870 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:38:29,041 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:38:39,197 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:38:59,354 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:39:33,525 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:39:43,689 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:40:03,855 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 3/3)
-2026-05-05 13:40:38,025 [WARNING] ⚠️ Rate limit hit (429). Retrying in 10s... (Attempt 1/3)
-2026-05-05 13:40:48,194 [WARNING] ⚠️ Rate limit hit (429). Retrying in 20s... (Attempt 2/3)
-2026-05-05 13:41:09,282 [CRITICAL] ⚠️ КРИТИЧЕСКАЯ ОШИБКА: Ваш API-ключ заблокирован из-за утечки!
-2026-05-05 13:41:09,283 [CRITICAL] 1. Создайте новый ключ: https://aistudio.google.com/app/apikey
-2026-05-05 13:41:09,283 [CRITICAL] 2. Обновите GEMINI_API_KEY в файле .env
-2026-05-05 13:41:09,283 [CRITICAL] 3. Добавьте .env в .gitignore
-2026-05-05 13:41:09,283 [INFO] Текущая активная модель: models/gemini-pro
-2026-05-05 13:41:09,287 [INFO] --- Веса загружены: {'US_IRAN': 2.5, 'HORMUZ': 3.0, 'OIL': 2.0, 'GLOBAL': 4.587206550934026, 'Unknown': 0.5} ---
-2026-05-05 13:41:09,287 [INFO] GTS 4.0 scanning...
-2026-05-05 13:41:13,847 [ERROR] AI Analysis Error: 404 models/gemini-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
-2026-05-05 13:41:13,848 [INFO] Waiting 32s for next AI call...
-2026-05-05 13:41:49,830 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":102,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777970509,"text":"\ud83e\udde0 EVENT: Unknown\n\ud83e\udd16 Model: models/gemini-pro\n\n\ud83d\udea8 SIGNAL: \u26aa NEUTRAL\n\n\ud83d\udcca Score: 4.0\n\ud83d\udcc8 Impact: 24.0%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 Iran warns US that 'we are just getting started' after attacks in <b>Strait</b> of <b>Hormuz</b> - BBC\n\n\ud83d\udd17 https://www.google.com/url?rct=j&sa=t&url=https://www.bbc.com/news/live/c1wz2ld4535t%3Fpage%3D2&ct=ga&cd=CAIyGjhmMjg2MTA1YzNmY2ViMzE6Y29tOmVuOlVT&usg=AOvVaw0noocIz_3_YJRcyOrlDhTU","entities":[{"offset":273,"length":178,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
-2026-05-05 13:41:49,976 [ERROR] AI Analysis Error: 404 models/gemini-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
-2026-05-05 13:41:49,976 [INFO] Waiting 32s for next AI call...
-2026-05-05 13:42:22,121 [ERROR] AI Analysis Error: 404 models/gemini-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
-2026-05-05 13:42:22,122 [INFO] Waiting 32s for next AI call...
-2026-05-05 13:42:55,381 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":103,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777970575,"text":"\ud83e\udde0 EVENT: GLOBAL\n\ud83e\udd16 Model: models/gemini-pro\n\n\ud83d\udea8 SIGNAL: \ud83d\udd34 HIGH RISK-OFF\n\n\ud83d\udcca Score: 435.4547614760231\n\ud83d\udcc8 Impact: 100%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 Trump's Project Freedom Isn't Going to Open the <b>Strait</b> of <b>Hormuz</b>\n\n\ud83d\udd17 https://www.google.com/url?rct=j&sa=t&url=https://www.cfr.org/articles/trumps-project-freedom-isnt-going-to-open-the-strait-of-hormuz&ct=ga&cd=CAIyGjhmMjg2MTA1YzNmY2ViMzE6Y29tOmVuOlVT&usg=AOvVaw1x7mg41wplYjo5Um6EwXcq","entities":[{"offset":268,"length":216,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
-2026-05-05 13:42:55,525 [ERROR] AI Analysis Error: 404 models/gemini-pro is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.
-2026-05-05 13:42:55,525 [INFO] Waiting 32s for next AI call...
-2026-05-05 13:43:30,132 [INFO] --- База данных оптимизирована: удалены данные старше 14 дней ---
+2026-05-05 16:51:08,327 [INFO] --- Выбрана модель: models/gemini-pro-latest (JSON Mode OFF) ---
+2026-05-05 16:51:08,328 [INFO] Текущая активная модель: models/gemini-pro-latest
+2026-05-05 16:51:08,332 [INFO] --- Веса загружены: {'US_IRAN': 2.5, 'HORMUZ': 3.0, 'OIL': 2.0, 'GLOBAL': 4.125561077492365, 'Unknown': 0.5} ---
+2026-05-05 16:51:08,332 [INFO] GTS 4.0 scanning...
+2026-05-05 16:51:13,857 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 1/3)
+2026-05-05 16:51:44,091 [WARNING] ⚠️ Rate limit hit (429). Retrying in 60s... (Attempt 2/3)
+2026-05-05 16:52:44,350 [WARNING] ⚠️ Rate limit hit (429). Retrying in 90s... (Attempt 3/3)
+2026-05-05 16:54:14,350 [INFO] Waiting 32s for next AI call...
+2026-05-05 16:54:47,305 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":106,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777982087,"text":"\ud83e\udde0 EVENT: Unknown\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \u26aa NEUTRAL\n\n\ud83d\udcca Score: 4.0\n\ud83d\udcc8 Impact: 24.0%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 Iran War Live Updates: Iranian Official Warns of Escalation in Strait of Hormuz Standoff - The New York Times\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMidkFVX3lxTFBsaDhvV2VlZnF4V2l5UTlPWE9qZzkyM3dPWndXSnd4NEVKSXlaVFdRczBlZDFsdFI5dndsQm9SSEx2ZHE5c0Foa1RHZmtfQk1WajhQdjB4VUxUX1dNXzBNd3JfVEMwYk1fMjNEdEtyRkhFS2lxU3c?oc=5","entities":[{"offset":287,"length":205,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
+2026-05-05 16:54:47,534 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 1/3)
+2026-05-05 16:55:17,755 [WARNING] ⚠️ Rate limit hit (429). Retrying in 60s... (Attempt 2/3)
+2026-05-05 16:56:18,013 [WARNING] ⚠️ Rate limit hit (429). Retrying in 90s... (Attempt 3/3)
+2026-05-05 16:57:48,014 [INFO] Waiting 32s for next AI call...
+2026-05-05 16:58:21,938 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 1/3)
+2026-05-05 16:58:52,283 [WARNING] ⚠️ Rate limit hit (429). Retrying in 60s... (Attempt 2/3)
+2026-05-05 16:59:52,470 [WARNING] ⚠️ Rate limit hit (429). Retrying in 90s... (Attempt 3/3)
+2026-05-05 17:01:22,471 [INFO] Waiting 32s for next AI call...
+2026-05-05 17:01:55,519 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":107,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777982515,"text":"\ud83e\udde0 EVENT: GLOBAL\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \ud83d\udd34 HIGH RISK-OFF\n\n\ud83d\udcca Score: 366.6040864406619\n\ud83d\udcc8 Impact: 100%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 Oil risks rise as Hormuz tensions disrupt flows and rattle markets - CNBC\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMirgFBVV95cUxOYVFpZlBiTkZidGc0Z2s5WU16TklRUUU4RzBLZWNycUZSMDlMYVN3QTBGVW1lZC1iVHl3RkkzNkpXeVI5bW5Pamg2b3ZKX1VrYjJRdF9SZUhmYnZwWTRjd3hzQUYtbjFWLTVudUFkSXU2dDJ4Y3pKYXlTajE1MXhlamNFajR4SEI4YWRWdzBERl8yc0szNjl2WEdiUmJwUXVhRGlPaFN3SXp2VzBVR3c?oc=5","entities":[{"offset":270,"length":281,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
+2026-05-05 17:01:56,549 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 1/3)
+2026-05-05 17:02:26,746 [WARNING] ⚠️ Rate limit hit (429). Retrying in 60s... (Attempt 2/3)
+2026-05-05 17:03:26,952 [WARNING] ⚠️ Rate limit hit (429). Retrying in 90s... (Attempt 3/3)
+2026-05-05 17:04:56,953 [INFO] Waiting 32s for next AI call...
+2026-05-05 17:05:29,234 [WARNING] ⚠️ Rate limit hit (429). Retrying in 30s... (Attempt 1/3)
+2026-05-05 17:05:59,476 [WARNING] ⚠️ Rate limit hit (429). Retrying in 60s... (Attempt 2/3)
+2026-05-05 17:06:59,713 [WARNING] ⚠️ Rate limit hit (429). Retrying in 90s... (Attempt 3/3)
+2026-05-05 17:07:46,931 [INFO] --- Выбрана модель: models/gemini-pro-latest (JSON Mode OFF) ---
+2026-05-05 17:07:46,932 [INFO] Текущая активная модель: models/gemini-pro-latest
+2026-05-05 17:07:46,935 [INFO] --- Веса загружены: {'US_IRAN': 2.5, 'HORMUZ': 3.0, 'OIL': 2.0, 'GLOBAL': 4.125561077492365, 'Unknown': 0.5} ---
+2026-05-05 17:07:46,936 [INFO] GTS 4.0 scanning...
+2026-05-05 17:07:52,724 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 17:09:52,962 [WARNING] ⚠️ Rate limit hit (429). Retrying in 240s... (Attempt 2/3)
+2026-05-05 17:13:53,211 [WARNING] ⚠️ Rate limit hit (429). Retrying in 360s... (Attempt 3/3)
+2026-05-05 17:19:30,916 [INFO] --- Выбрана модель: models/gemini-pro-latest (JSON Mode OFF) ---
+2026-05-05 17:19:30,916 [INFO] Текущая активная модель: models/gemini-pro-latest
+2026-05-05 17:19:30,918 [INFO] --- Веса загружены: {'US_IRAN': 2.5, 'HORMUZ': 3.0, 'OIL': 2.0, 'GOLD': 1.5, 'BTC': 1.2, 'GLOBAL': 1.0} ---
+2026-05-05 17:19:30,918 [INFO] GTS 4.0 scanning...
+2026-05-05 17:19:33,643 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 17:21:33,891 [WARNING] ⚠️ Rate limit hit (429). Retrying in 240s... (Attempt 2/3)
+2026-05-05 17:25:34,805 [WARNING] ⚠️ Rate limit hit (429). Retrying in 360s... (Attempt 3/3)
+2026-05-05 17:31:34,806 [INFO] Waiting 60s for next AI call...
+2026-05-05 17:32:36,539 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":108,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777984356,"text":"\ud83e\udde0 EVENT: GLOBAL\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \u26aa NEUTRAL\n\n\ud83d\udcca Score: 0.0\n\ud83d\udcc8 Impact: 0.0%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish\n\u2728 Gold: flat\n\u20bf BTC: flat\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 US and Iranian militaries trade shots as Strait of Hormuz tensions escalate - CNN\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMid0FVX3lxTE9BRHBLbV80eVhCWEdzNzRVZndFU19MM3B2STl2ME9vdnNySUE4Z05pYVI3SVIzUEc5NXA2QW5NQzZSbFRQVXhJTDdoMUlQY3VfcjBvNXBhaE9XLXBjbzZ0bzNvb1hoUnRkVzA2VHNxNHMtUVkyUWtN?oc=5","entities":[{"offset":282,"length":206,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
+2026-05-05 17:32:38,524 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 17:34:38,746 [WARNING] ⚠️ Rate limit hit (429). Retrying in 240s... (Attempt 2/3)
+2026-05-05 17:38:38,975 [WARNING] ⚠️ Rate limit hit (429). Retrying in 360s... (Attempt 3/3)
+2026-05-05 17:44:38,976 [INFO] Waiting 60s for next AI call...
+2026-05-05 17:45:39,904 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":109,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777985139,"text":"\ud83e\udde0 EVENT: Unknown\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \ud83d\udfe0 MEDIUM RISK\n\n\ud83d\udcca Score: 4.0\n\ud83d\udcc8 Impact: 48.0%\n\n\ud83d\udcc9 Nasdaq: bearish\n\ud83d\udee2 Oil: bullish\n\u26a1 SOXS: bullish\n\u2728 Gold: bullish\n\u20bf BTC: flat\n\ud83d\udcca VIX: bullish\n\n\ud83d\udcf0 Iran war live: \u2018US military adventurism\u2019 responsible for new attacks on UAE - Al Jazeera\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMitwFBVV95cUxQdmRpRkhuTGluWFQ4endRY0lSaW1BVG1KTDdOLTZEQVc1QXlmaXd5Q2ZsMlJNa3cyMHEwR05HZFRRUFBDS0syaWRPdGdBel9fRkdqNzk1anNuN2JvdW9Id19KZURKVjkzb2V4bE9lczBwU3lHSjMzS2k2TXZDRlFxbFFLbUx3NDVhVVJ6T0E4cjBGTHJrOUtYS3JwVDNCRGhWNm04SnNwTmY4N0g1T1VTSzhTdXJvT2fSAbwBQVVfeXFMT1gzTVdUbGZIZE9vVU9PelBYSkNYQzdJcGJ5WUdqQlhTeGdEMkZOZmZQbVo2UDF6ZWpYNDJlb1JodlhId2dnVTdBNUhZSG9SQ09iMy1ES2VCRkJQNDVUbUFuNVNuNUtfRlc5SFVuMmlwWUUzdEp5UmtVZjRsVkZmLUdUVElLUTdnc0tScy04RmxjNlhsRXJvLUE2UlcyRHJ4UlV0WWZTdE1XWXlKcTZqdVltWmRvWlRsa0hvcW0?oc=5","entities":[{"offset":305,"length":549,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
+2026-05-05 17:45:40,774 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 17:46:36,197 [INFO] --- Выбрана модель: models/gemini-pro-latest (JSON Mode OFF) ---
+2026-05-05 17:46:36,198 [INFO] Текущая активная модель: models/gemini-pro-latest
+2026-05-05 17:46:36,199 [INFO] --- Веса загружены: {'US_IRAN': 2.5, 'HORMUZ': 3.0, 'OIL': 2.0, 'GOLD': 1.5, 'BTC': 1.2, 'GLOBAL': 1.0} ---
+2026-05-05 17:46:36,199 [INFO] GTS 4.0 scanning...
+2026-05-05 17:46:50,054 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 17:48:50,281 [WARNING] ⚠️ Rate limit hit (429). Retrying in 240s... (Attempt 2/3)
+2026-05-05 17:52:50,532 [WARNING] ⚠️ Rate limit hit (429). Retrying in 360s... (Attempt 3/3)
+2026-05-05 18:02:49,656 [INFO] --- Выбрана модель: models/gemini-pro-latest (JSON Mode OFF) ---
+2026-05-05 18:02:49,656 [INFO] Текущая активная модель: models/gemini-pro-latest
+2026-05-05 18:02:49,658 [INFO] --- Веса загружены: {'US_IRAN': 2.5, 'HORMUZ': 3.0, 'OIL': 2.0, 'GOLD': 1.5, 'BTC': 1.2, 'GLOBAL': 1.0} ---
+2026-05-05 18:02:49,658 [INFO] GTS 4.0 scanning...
+2026-05-05 18:02:57,118 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 18:04:57,342 [WARNING] ⚠️ Rate limit hit (429). Retrying in 240s... (Attempt 2/3)
+2026-05-05 18:15:48,767 [INFO] --- Выбрана модель: models/gemini-pro-latest (JSON Mode OFF) ---
+2026-05-05 18:15:48,767 [INFO] Текущая активная модель: models/gemini-pro-latest
+2026-05-05 18:15:48,769 [INFO] --- Веса загружены: {'US_IRAN': 2.5, 'HORMUZ': 3.0, 'OIL': 2.0, 'GOLD': 1.5, 'BTC': 1.2, 'GLOBAL': 1.0} ---
+2026-05-05 18:15:48,769 [INFO] GTS 4.0 scanning...
+2026-05-05 18:15:55,279 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 18:17:55,491 [WARNING] ⚠️ Rate limit hit (429). Retrying in 240s... (Attempt 2/3)
+2026-05-05 18:21:55,745 [WARNING] ⚠️ Rate limit hit (429). Retrying in 360s... (Attempt 3/3)
+2026-05-05 18:27:55,746 [INFO] Waiting 60s for next AI call...
+2026-05-05 18:28:56,629 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":110,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777987736,"text":"\ud83e\udde0 EVENT: GLOBAL\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \u26aa NEUTRAL\n\n\ud83d\udcca Score: 0.0\n\ud83d\udcc8 Impact: 0.0%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish (+2.16%)\n\u2728 Gold: flat (+1.49%)\n\u20bf BTC: flat (+1.39%)\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 Middle East crisis live: Hegseth says US-Iran ceasefire \u2018is not over\u2019 despite growing tensions in strait of Hormuz - The Guardian\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMiwgFBVV95cUxOZVNNNFNuaGY3ekVlTlJra3NuT3ItcGJycnBFSF9YSHpqSzFxR3YtYjVJQjRQbl8zSTNOOWRHRkVvQ1o0ZWQ1bjMyUkk5bXRIOF94RkNTYms2cjZsNEpIc010TzJKUHF6WXVmU0FtaUs1eERwUGxJZWNESVRiOWlORVc4UUdnR2VGb3dacFVHS2NhQWhjcjl4TWpiSU4xZVpId01HVXJoeUJiVWtnZjF3V1ljUG9GX19ib3hSVzZ2bW9lZw?oc=5","entities":[{"offset":357,"length":308,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
+2026-05-05 18:28:57,272 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 18:30:57,813 [WARNING] ⚠️ Rate limit hit (429). Retrying in 240s... (Attempt 2/3)
+2026-05-05 18:34:58,456 [WARNING] ⚠️ Rate limit hit (429). Retrying in 360s... (Attempt 3/3)
+2026-05-05 18:40:58,456 [INFO] Waiting 60s for next AI call...
+2026-05-05 18:41:59,662 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":111,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777988519,"text":"\ud83e\udde0 EVENT: Unknown\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \ud83d\udfe0 MEDIUM RISK\n\n\ud83d\udcca Score: 4.0\n\ud83d\udcc8 Impact: 48.0%\n\n\ud83d\udcc9 Nasdaq: bearish\n\ud83d\udee2 Oil: bullish\n\u26a1 SOXS: bullish (+2.16%)\n\u2728 Gold: bullish (+1.49%)\n\u20bf BTC: flat (+1.39%)\n\ud83d\udcca VIX: bullish\n\n\ud83d\udcf0 Iran War Live Updates: Hegseth Calls Strait of Hormuz Efforts 'Temporary' After Iran Warns of Escalation - The New York Times\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMidkFVX3lxTFBsaDhvV2VlZnF4V2l5UTlPWE9qZzkyM3dPWndXSnd4NEVKSXlaVFdRczBlZDFsdFI5dndsQm9SSEx2ZHE5c0Foa1RHZmtfQk1WajhQdjB4VUxUX1dNXzBNd3JfVEMwYk1fMjNEdEtyRkhFS2lxU3c?oc=5","entities":[{"offset":369,"length":205,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
+2026-05-05 18:42:03,928 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 18:44:04,189 [WARNING] ⚠️ Rate limit hit (429). Retrying in 240s... (Attempt 2/3)
+2026-05-05 18:48:04,926 [WARNING] ⚠️ Rate limit hit (429). Retrying in 360s... (Attempt 3/3)
+2026-05-05 18:54:04,927 [INFO] Waiting 60s for next AI call...
+2026-05-05 18:55:05,912 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":112,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777989305,"text":"\ud83e\udde0 EVENT: GLOBAL\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \u26aa NEUTRAL\n\n\ud83d\udcca Score: 0.0\n\ud83d\udcc8 Impact: 0.0%\n\n\ud83d\udcc9 Nasdaq: flat\n\ud83d\udee2 Oil: bearish\n\u26a1 SOXS: bearish (+2.16%)\n\u2728 Gold: flat (+1.49%)\n\u20bf BTC: flat (+1.39%)\n\ud83d\udcca VIX: flat\n\n\ud83d\udcf0 Iraq Slashes Oil Prices for Buyers Willing to Transit Hormuz - Bloomberg.com\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMisAFBVV95cUxQNzc5ZlhDakg1RXBLRzA3NGsxbFFTYTd4YnlqUlRNVkVZMWdXb29Sa3FOS3ZPMEpzRXJoTml6MUhnU3Exa3BlY1NzZm45ZjVNU2FlTkFUZEFIUjJuQk1hdG9jZkdrWVdneUxJcndxYUNzei1xRXExREhIV29ZRkpoWFMwaVZWaGxXSjZKVkRBRURsNDlsWE5tMVkxYnBWN1FIclZiRF81d2p5VkoxLVRzSg?oc=5","entities":[{"offset":286,"length":13,"type":"url"},{"offset":304,"length":284,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
+2026-05-05 18:55:06,888 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 18:57:07,119 [WARNING] ⚠️ Rate limit hit (429). Retrying in 240s... (Attempt 2/3)
+2026-05-05 19:01:07,786 [WARNING] ⚠️ Rate limit hit (429). Retrying in 360s... (Attempt 3/3)
+2026-05-05 19:07:07,787 [INFO] Waiting 60s for next AI call...
+2026-05-05 19:08:10,778 [INFO] TELEGRAM: {"ok":true,"result":{"message_id":113,"author_signature":"Sox","sender_chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"chat":{"id":-1003866686586,"title":"SoxUS","type":"channel"},"date":1777990090,"text":"\ud83e\udde0 EVENT: Unknown\n\ud83e\udd16 Model: models/gemini-pro-latest\n\n\ud83d\udea8 SIGNAL: \ud83d\udd34 HIGH RISK-OFF\n\n\ud83d\udcca Score: 8.0\n\ud83d\udcc8 Impact: 96.0%\n\n\ud83d\udcc9 Nasdaq: bearish\n\ud83d\udee2 Oil: bullish\n\u26a1 SOXS: bullish (+2.16%)\n\u2728 Gold: bullish (+1.49%)\n\u20bf BTC: flat (+1.39%)\n\ud83d\udcca VIX: bullish\n\n\ud83d\udcf0 U.S. Warns China Over Iranian Oil as Sanctions Fight Intensifies - The New York Times\n\n\ud83d\udd17 https://news.google.com/rss/articles/CBMiigFBVV95cUxNLVJiX2RoYlBfYVpNUW9jaktnQkhoSWhpcTVQa2I2VU9fcVViU2dKek9NYXBZTTh5VWJwRDVUdUFOeVk0X1FDUzUyRjdsTmRFb0FHeXdRMHMtQlU1blY4a21pMzFFWExVSkgtWTV6TFo3YjFtOW9DMERyYkRzQ3A4cmpjclVwOWQwdFE?oc=5","entities":[{"offset":331,"length":233,"type":"url"}],"link_preview_options":{"is_disabled":true}}}
+2026-05-05 19:08:11,443 [WARNING] ⚠️ Rate limit hit (429). Retrying in 120s... (Attempt 1/3)
+2026-05-05 19:10:11,698 [WARNING] ⚠️ Rate limit hit (429). Retrying in 240s... (Attempt 2/3)
+2026-05-05 19:14:12,587 [WARNING] ⚠️ Rate limit hit (429). Retrying in 360s... (Attempt 3/3)

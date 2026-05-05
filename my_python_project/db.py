@@ -24,6 +24,8 @@ def init_db():
             nasdaq TEXT,
             oil TEXT,
             soxs TEXT,
+            gold TEXT,
+            btc TEXT,
             vix TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
