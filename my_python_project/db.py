@@ -1,18 +1,18 @@
 import sqlite3
 from contextlib import contextmanager
-
-DB_PATH = "gts.db"
+import config
 
 @contextmanager
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
     try:
+        conn.row_factory = sqlite3.Row  # Позволяет обращаться к полям по именам
         yield conn
     finally:
         conn.close()
 
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
+    with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS events (
@@ -27,6 +27,7 @@ def init_db():
             gold TEXT,
             btc TEXT,
             vix TEXT,
+            fear_greed REAL,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -51,4 +52,36 @@ def init_db():
         """)
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_link ON events(link)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_resolved ON predictions(resolved)")
+
+        # Словарь миграций: описываем колонки, которые должны быть в таблицах
+        # Это позволяет добавлять новые активы просто дополняя этот список
+        required_columns = {
+            "events": {
+                "nasdaq": "TEXT",
+                "oil": "TEXT",
+                "soxs": "TEXT",
+                "gold": "TEXT",
+                "btc": "TEXT",
+                "vix": "TEXT",
+                "fear_greed": "REAL"
+            },
+            "predictions": {
+                "actual_move": "REAL DEFAULT 0",
+                "resolved": "INTEGER DEFAULT 0"
+            }
+        }
+
+        for table_name, columns in required_columns.items():
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            existing_columns = [info[1] for info in cursor.fetchall()]
+            
+            for column_name, column_type in columns.items():
+                if column_name not in existing_columns:
+                    try:
+                        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+                    except sqlite3.OperationalError:
+                        # Безопасный пропуск, если колонка была добавлена другим процессом
+                        pass
+
         conn.commit()

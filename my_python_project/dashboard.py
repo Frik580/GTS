@@ -20,12 +20,15 @@ df = load_data()
 # вычисляем текущий режим
 if not df.empty:
     avg_score = df["score"].head(10).mean()
+    last_fng = df["fear_greed"].iloc[0] if "fear_greed" in df.columns else 50
 else:
     avg_score = 0
+    last_fng = 50
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 
 col1.metric("Risk Score", round(avg_score, 2))
+col4.metric("Fear & Greed", int(last_fng))
 
 col2.metric("Regime",
     "🔴 RISK-OFF" if avg_score > 3 else
