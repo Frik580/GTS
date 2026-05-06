@@ -1,0 +1,8 @@
+aiohttp
+google-generativeai
+feedparser
+yfinance
+pandas
+streamlit
+python-dotenv
+requests
