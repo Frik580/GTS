@@ -159,10 +159,16 @@ def init_state() -> Dict[str, float]:
 
 event_scores = init_state()
 event_last_sent = {}
-learning_rate = 0.05
+learning_rate = config.LEARNING_RATE
 
 def load_weights() -> Dict[str, float]:
-    weights = {"US_IRAN": 2.5, "HORMUZ": 3.0, "OIL": 2.0, "GOLD": 1.5, "BTC": 1.2, "GLOBAL": 1.0}
+    # Создаем базовые веса из TRACKED_KEYWORDS, преобразуя ключи в формат EVENT_KEY (например, "US Iran" -> "US_IRAN")
+    weights = {k.upper().replace(" ", "_"): v for k, v in config.TRACKED_KEYWORDS.items()}
+    
+    # Синхронизация специфичных имен (если в конфиге Bitcoin, а в логике BTC)
+    if "BITCOIN" in weights: weights["BTC"] = weights.pop("BITCOIN")
+    if "GLOBAL" not in weights: weights["GLOBAL"] = 1.0
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT event_key, weight FROM weights")
@@ -182,11 +188,43 @@ def save_weights():
         conn.commit()
 
 event_weights = load_weights()
+save_weights()  # Автоматическая синхронизация конфига с базой данных при старте
 logging.info(f"--- Веса загружены: {event_weights} ---")
 
 # =========================
 # AI ENGINE
 # =========================
+
+def _get_fallback_entity_search_map() -> Dict[str, str]:
+    """
+    Generates a mapping from lowercase search terms (words/phrases) to
+    canonical entity names (as expected by make_event_key) for fallback.
+    """
+    search_map = {}
+    for phrase in config.TRACKED_KEYWORDS.keys():
+        # Add the full phrase as a search term, mapping to itself
+        search_map[phrase.lower()] = phrase
+
+        # Split multi-word phrases into individual canonical entities if relevant
+        words = phrase.split()
+        if len(words) > 1:
+            if phrase == "US Iran": # Special case for US Iran
+                search_map["us"] = "US"
+                search_map["usa"] = "US"
+                search_map["iran"] = "Iran"
+            # For other multi-word phrases, we generally want the full phrase as an entity
+        
+        # Add common aliases for single-word entities
+        if phrase.lower() == "bitcoin":
+            search_map["btc"] = "Bitcoin"
+        if phrase.lower() == "gold":
+            search_map["xau"] = "Gold"
+        if phrase.lower() == "oil":
+            search_map["cl=f"] = "Oil" # Futures symbol
+
+    return search_map
+
+fallback_entity_map = _get_fallback_entity_search_map()
 
 def local_ai_analyze(text: str) -> Tuple[float, str, List[str], str]:
     """
@@ -202,8 +240,7 @@ def local_ai_analyze(text: str) -> Tuple[float, str, List[str], str]:
         # Простой NER на базе ключевых слов (как в фоллбеке, но интегрированный)
         found_entities = []
         text_low = text.lower()
-        mapping = {"iran": "Iran", "us": "US", "usa": "US", "hormuz": "Hormuz", "oil": "Oil", "btc": "Bitcoin", "bitcoin": "Bitcoin", "gold": "Gold"}
-        for key, val in mapping.items():
+        for key, val in fallback_entity_map.items():
             if re.search(rf'\b{key}\b', text_low):
                 if val not in found_entities: found_entities.append(val)
         
@@ -219,9 +256,11 @@ async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], 
     """
     Uses Gemini AI to perform deep sentiment analysis and NER.
     """
+    # Формируем строку с тегами из конфига для подсказки нейросети
+    tags_hint = ", ".join([f'"{k}"' for k in config.TRACKED_KEYWORDS.keys()])
     prompt = f"""
     Analyze this financial news snippet: "{text}"
-    Identify key entities. Use these standardized tags if applicable: "US", "Iran", "Hormuz", "Oil", "Gold", "Bitcoin".
+    Identify key entities. Use these standardized tags if applicable: {tags_hint}.
     Return ONLY a JSON object with this structure:
     {{
       "score": float (-10.0 to 10.0, where positive is risk-off/escalation, negative is risk-on/peace),
@@ -303,13 +342,10 @@ async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], 
     # Fallback logic
     text_low = text.lower()
     found_entities = []
-    # Используем регулярные выражения для поиска целых слов (\b)
-    if re.search(r'\biran\b', text_low): found_entities.append("Iran")
-    if re.search(r'\b(us|usa)\b', text_low): found_entities.append("US")
-    if re.search(r'\bhormuz\b', text_low): found_entities.append("Hormuz")
-    if re.search(r'\boil\b', text_low): found_entities.append("Oil")
-    if re.search(r'\b(bitcoin|btc)\b', text_low): found_entities.append("Bitcoin")
-    if re.search(r'\b(gold|xau)\b', text_low): found_entities.append("Gold")
+    for search_term, canonical_name in fallback_entity_map.items():
+        if re.search(rf'\b{re.escape(search_term)}\b', text_low):
+            if canonical_name not in found_entities:
+                found_entities.append(canonical_name)
     
     # Улучшенный скоринг в фоллбеке
     is_critical = re.search(r'\b(war|strike|attack|conflict|escalation|sanctions|emergency)\b', text_low)
@@ -348,7 +384,8 @@ def make_event_key(entities: List[str]) -> str:
     if "bitcoin" in ents_str or "btc" in ents_str:
         return "BTC"
 
-    return "_".join(sorted(list(set(entities)))) # Убираем дубликаты и сортируем
+    # Приводим к верхнему регистру, чтобы ключ совпадал с весами из load_weights
+    return "_".join(sorted(list(set(e.upper().replace(" ", "_") for e in entities))))
 
 # =========================
 # MARKET SIGNAL ENGINE
@@ -360,12 +397,13 @@ def market_signals(score: float, event_key: str) -> Dict[str, str]:
     intensity = score * mult
 
     return {
-        "nasdaq": "bearish" if intensity > 3 else "bullish" if intensity < -2 else "flat",
-        "oil": "bullish" if intensity > 2 else "bearish",
-        "soxs": "bullish" if intensity > 3 else "bearish",
-        "vix": "bullish" if intensity > 2 else "flat",
-        "gold": "bullish" if intensity > 1.5 else "bearish" if intensity < -3 else "flat",
-        "btc": "bearish" if intensity > 4 else "bullish" if intensity < -2 else "flat"
+        "nasdaq": "bearish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
+        "oil": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish",
+        "soxs": "bullish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bearish",
+        "vix": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "flat",
+        "gold": "bullish" if intensity > config.SIGNAL_THRESHOLD_LOW else "bearish" if intensity < -config.SIGNAL_THRESHOLD_HIGH else "flat",
+        "btc": "bearish" if intensity > 4.0 else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
+        "hbm": "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "bearish" if intensity > config.SIGNAL_THRESHOLD_MED else "flat"
     }
 
 # =========================
@@ -377,7 +415,7 @@ def get_weight(event_key: str) -> float:
 
 
 def predict_impact(score: float, event_key: str) -> float:
-    return min(abs(score) * get_weight(event_key) * 12, 100)
+    return min(abs(score) * get_weight(event_key) * config.IMPACT_MULTIPLIER, 100)
 
 # =========================
 # SIGNAL ENGINE
@@ -468,8 +506,6 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
     Returns a dictionary with percentage changes for relevant assets.
     """
     market_data = {}
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=5)
 
     tickers_to_fetch = {
         "^IXIC": "nasdaq_change",
@@ -477,7 +513,8 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
         "^VIX": "vix_change",
         "GC=F": "gold_change",
         "BTC-USD": "btc_change",
-        "SOXS": "soxs_change"
+        "SOXS": "soxs_change",
+        "SMH": "hbm_change"
     }
 
     try:
@@ -485,18 +522,21 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
         loop = asyncio.get_event_loop()
         all_data = await loop.run_in_executor(
             sync_executor, 
-            lambda: yf.download(list(tickers_to_fetch.keys()), start=start_date, end=end_date, interval="1d", progress=False)
+            lambda: yf.download(list(tickers_to_fetch.keys()), period="1wk", interval="1h", progress=False)
         )
         
+        lookback = config.MARKET_LOOKBACK_HOURS
+
         for ticker_symbol, data_key in tickers_to_fetch.items():
             try:
                 if ticker_symbol in all_data['Close'].columns:
                     ticker_data = all_data['Close'][ticker_symbol].dropna()
-                    if len(ticker_data) >= 2:
-                        yesterday_close = float(ticker_data.iloc[-2])
-                        today_close = float(ticker_data.iloc[-1])
-                        if yesterday_close != 0:
-                            market_data[data_key] = ((today_close - yesterday_close) / yesterday_close) * 100
+                    # Нам нужно как минимум lookback + 1 свечей, чтобы вычислить разницу
+                    if len(ticker_data) > lookback:
+                        current_price = float(ticker_data.iloc[-1])
+                        past_price = float(ticker_data.iloc[-(lookback + 1)])
+                        if past_price != 0:
+                            market_data[data_key] = ((current_price - past_price) / past_price) * 100
                 else:
                     logging.warning(f"Ticker {ticker_symbol} missing in downloaded data")
             except Exception as e:
@@ -529,31 +569,51 @@ async def learning_cycle(session: aiohttp.ClientSession):
         for row in rows:
             event_key = row['event_key']
             predicted = row['predicted_impact']
+            score = row['score']
             actual = 0
+            raw_change = 0
+            
+            # Определение корреляции: 
+            # -1: Положительный score (риск) = падение цены (Nasdaq, BTC)
+            #  1: Положительный score (риск) = рост цены (Gold, Oil, VIX, SOXS)
+            correlation = -1 if event_key in ["NASDAQ", "BTC", "NVIDIA", "OPENAI", "GLOBAL"] else 1
 
             if event_key == "OIL" and 'oil_change' in raw_market_data:
-                actual = min(abs(raw_market_data['oil_change']) * config.SCALING_FACTOR, 100)
+                raw_change = raw_market_data['oil_change']
             elif event_key == "GOLD" and 'gold_change' in raw_market_data:
-                actual = min(abs(raw_market_data['gold_change']) * config.SCALING_FACTOR, 100)
+                raw_change = raw_market_data['gold_change']
             elif event_key == "BTC" and 'btc_change' in raw_market_data:
-                actual = min(abs(raw_market_data['btc_change']) * (config.SCALING_FACTOR / 2), 100)
+                raw_change = raw_market_data['btc_change']
+                correlation = -1 # Для BTC риск обычно означает падение
+            elif event_key in ["NVIDIA", "OPENAI"]:
+                hbm_c = raw_market_data.get('hbm_change', 0)
+                soxs_c = raw_market_data.get('soxs_change', 0) / -3 # Инвертируем SOXS для сопоставления с ростом сектора
+                raw_change = hbm_c if abs(hbm_c) > abs(soxs_c) else soxs_c
+                correlation = -1 # Рост риска = падение чипмейкеров
             elif event_key in ["US_IRAN", "HORMUZ", "GLOBAL"]:
-                # Учитываем также изменение индекса страха (падение индекса = рост страха)
-                fng_impact = abs(raw_market_data.get('fng_change', 0)) * 2
-                if 'vix_change' in raw_market_data:
-                    vix_impact = abs(raw_market_data['vix_change']) * config.SCALING_FACTOR
-                    actual = min((vix_impact + fng_impact) / 2, 100)
-                elif 'nasdaq_change' in raw_market_data:
-                    actual = min(abs(raw_market_data['nasdaq_change']) * config.SCALING_FACTOR, 100)
+                vix_c = raw_market_data.get('vix_change', 0)
+                nasdaq_c = raw_market_data.get('nasdaq_change', 0)
+                if vix_c != 0:
+                    raw_change = vix_c
+                    correlation = 1 # Риск = Рост VIX
+                else:
+                    raw_change = nasdaq_c
+                    correlation = -1 # Риск = Падение Nasdaq
 
-            logging.info(f"Resolving prediction for {event_key}: Predicted {predicted:.2f}, Actual {actual:.2f}")
+            actual = min(abs(raw_change) * config.SCALING_FACTOR, 100)
+            
+            # Проверка совпадения направления: (Score * Change * Correlation) > 0
+            is_correct = 1 if (score * raw_change * correlation) > 0 else 0
+
+            status_icon = "✅" if is_correct else "❌"
+            logging.info(f"Result for {event_key}: {status_icon} (Score: {score:.1f}, Change: {raw_change:.2f}%)")
             update_weights(event_key, predicted, actual)
 
             cursor.execute("""
                 UPDATE predictions
-                SET resolved = 1, actual_move = ?
+                SET resolved = 1, actual_move = ?, is_correct = ?
                 WHERE id = ?
-            """, (actual, row['id']))
+            """, (actual, is_correct, row['id']))
         conn.commit()
 
     save_weights()
@@ -590,6 +650,10 @@ async def main():
     loop = asyncio.get_running_loop()
 
     async with aiohttp.ClientSession() as session:
+        # Запускаем цикл обучения сразу при старте, чтобы обработать старые записи
+        logging.info("Первичный запуск цикла обучения...")
+        await learning_cycle(session)
+
         while True:
             logging.info("GTS 4.0 scanning...")
 
@@ -599,6 +663,7 @@ async def main():
             current_market_data = await get_market_data(session)
             btc_change = current_market_data.get("btc_change", 0)
             gold_change = current_market_data.get("gold_change", 0)
+            hbm_change = current_market_data.get("hbm_change", 0)
             soxs_change = current_market_data.get("soxs_change", 0)
             fng_val = current_market_data.get("fng_val", 50)
             fng_label = current_market_data.get("fng_label", "Neutral")
@@ -640,9 +705,9 @@ async def main():
                     with get_db_connection() as conn:
                         cursor = conn.cursor()
                         cursor.execute("""
-                            INSERT INTO events (title, link, score, event, nasdaq, oil, soxs, gold, btc, vix, fear_greed)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["oil"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val))
+                            INSERT INTO events (title, link, score, event, nasdaq, oil, hbm, soxs, gold, btc, vix, fear_greed)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val))
                         cursor.execute("INSERT INTO predictions (event_key, score, predicted_impact) VALUES (?, ?, ?)", (event_key, event_scores[event_key], prob))
                         conn.commit()
 
@@ -658,6 +723,7 @@ async def main():
 😨 Fear & Greed: {fng_val} ({fng_label})
 📈 Impact: {prob}%
 📉 Nasdaq: {market['nasdaq']}
+🧊 HBM Index: {market['hbm']} ({hbm_change:+.2f}%)
 🛢 Oil: {market['oil']}
 ⚡ SOXS: {market['soxs']} ({soxs_change:+.2f}%)
 ✨ Gold: {market['gold']} ({gold_change:+.2f}%)

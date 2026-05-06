@@ -23,6 +23,7 @@ def init_db():
             event TEXT,
             nasdaq TEXT,
             oil TEXT,
+            hbm TEXT,
             soxs TEXT,
             gold TEXT,
             btc TEXT,
@@ -60,6 +61,7 @@ def init_db():
             "events": {
                 "nasdaq": "TEXT",
                 "oil": "TEXT",
+                "hbm": "TEXT",
                 "soxs": "TEXT",
                 "gold": "TEXT",
                 "btc": "TEXT",
@@ -68,7 +70,8 @@ def init_db():
             },
             "predictions": {
                 "actual_move": "REAL DEFAULT 0",
-                "resolved": "INTEGER DEFAULT 0"
+                "resolved": "INTEGER DEFAULT 0",
+                "is_correct": "INTEGER DEFAULT 0"
             }
         }
 
