@@ -141,12 +141,14 @@ def init_state() -> Dict[str, float]:
     with get_db_connection() as conn:
         cursor = conn.cursor()
         # Восстанавливаем состояние из таблицы predictions, где уже есть event_key
+        # Группируем по timestamp, чтобы не суммировать дубликаты от разных активов одной новости
         cursor.execute("""
             SELECT event_key, SUM(weighted_score) FROM (
                 SELECT 
-                    score * (1.0 - (julianday('now') - julianday(timestamp))) as weighted_score,
-                    event_key
+                    MAX(score * (1.0 - (julianday('now') - julianday(timestamp)))) as weighted_score,
+                    event_key, timestamp
                 FROM predictions WHERE timestamp > datetime('now', '-1 day')
+                GROUP BY event_key, timestamp
             ) GROUP BY event_key
         """)
         for key, val in cursor.fetchall():
@@ -163,21 +165,35 @@ event_asset_map = {}
 def load_weights() -> Dict[str, float]:
     # Создаем базовые веса из TRACKED_KEYWORDS, преобразуя ключи в формат EVENT_KEY (например, "US Iran" -> "US_IRAN")
     weights = {}
-    for k, v in config.TRACKED_KEYWORDS.items():
-        # Сортируем части ключа (например, "US Iran" -> "IRAN_US"), чтобы они всегда совпадали с выходом make_event_key
     for k, info in config.TRACKED_KEYWORDS.items():
-        weight, target_asset = info if isinstance(info, tuple) else (info, "global")
+        if isinstance(info, tuple):
+            weight = info[0]
+            target_assets = info[1] if len(info) > 1 else ["global"]
+        else:
+            weight = info
+            target_assets = ["global"]
+        
+        if not isinstance(target_assets, list):
+            target_assets = [target_assets]
         
         key_parts = sorted(k.upper().replace(" ", "_").split("_"))
-        weights["_".join(key_parts)] = v
         canonical_key = "_".join(key_parts)
         
         weights[canonical_key] = weight
-        event_asset_map[canonical_key] = target_asset
+        event_asset_map[canonical_key] = target_assets
     
     # Синхронизация специфичных имен (если в конфиге Bitcoin, а в логике BTC)
-    if "BITCOIN" in weights: weights["BTC"] = weights.pop("BITCOIN")
+    if "BITCOIN" in weights:
+        if "BTC" not in weights: # Только если BTC еще не определен явно
+            weights["BTC"] = weights.pop("BITCOIN")
+        else: # Если оба существуют, оставляем BTC и удаляем BITCOIN
+            weights.pop("BITCOIN")
+        if "BITCOIN" in event_asset_map:
+            event_asset_map["BTC"] = event_asset_map.pop("BITCOIN")
+
+    # Гарантируем наличие ключа GLOBAL
     if "GLOBAL" not in weights: weights["GLOBAL"] = 1.0
+    if "GLOBAL" not in event_asset_map: event_asset_map["GLOBAL"] = ["global"]
 
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -371,7 +387,6 @@ async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], 
     text_low = text.lower()
     found_entities = []
     for search_term, canonical_name in fallback_entity_map.items():
-        if re.search(rf'\b{re.escape(search_term)}\b', text_low):
         if re.search(r'\b' + re.escape(search_term) + r'\b', text_low):
             if canonical_name not in found_entities:
                 found_entities.append(canonical_name)
@@ -701,43 +716,37 @@ async def learning_cycle(session: aiohttp.ClientSession):
             event_key = row['event_key']
             predicted = row['predicted_impact']
             score = row['score']
+            target = row['target_asset'] if row['target_asset'] else "global"
+            
             actual = 0
             raw_change = 0
-            
-            # Определение корреляции: 
-            # -1: Положительный score (риск) = падение цены (Nasdaq, BTC)
-            #  1: Положительный score (риск) = рост цены (Gold, Oil, VIX, SOXS)
-            correlation = -1 if event_key in ["NASDAQ", "BTC", "NVIDIA", "OPENAI", "GLOBAL"] else 1
+            correlation = 0
 
-            if event_key == "OIL" and 'oil_change' in raw_market_data:
-            # Берем целевой актив из нашей новой карты (по умолчанию global)
-            target = event_asset_map.get(event_key, "global")
-            
-            # Логика выбора данных для обучения на основе привязанного актива
+            # Обучение на основе конкретного актива, указанного в прогнозе
             if target == "oil" and 'oil_change' in raw_market_data:
                 raw_change = raw_market_data['oil_change']
-            elif event_key == "GOLD" and 'gold_change' in raw_market_data:
                 correlation = 1
             elif target == "gold" and 'gold_change' in raw_market_data:
                 raw_change = raw_market_data['gold_change']
-            elif event_key == "BTC" and 'btc_change' in raw_market_data:
                 correlation = 1
             elif target == "btc" and 'btc_change' in raw_market_data:
                 raw_change = raw_market_data['btc_change']
-                correlation = -1 # Для BTC риск обычно означает падение
-            elif event_key in ["NVIDIA", "OPENAI"]:
                 correlation = -1
-            elif target == "hbm":
+            elif target == "nasdaq" and 'nasdaq_change' in raw_market_data:
+                raw_change = raw_market_data['nasdaq_change']
+                correlation = -1
+            elif target == "soxs" and 'soxs_change' in raw_market_data:
+                raw_change = raw_market_data['soxs_change']
+                correlation = 1
+            elif target == "vix" and 'vix_change' in raw_market_data:
+                raw_change = raw_market_data['vix_change']
+                correlation = 1
+            elif target == "hbm" and ('hbm_change' in raw_market_data or 'soxs_change' in raw_market_data):
                 hbm_c = raw_market_data.get('hbm_change', 0)
                 soxs_c = raw_market_data.get('soxs_change', 0) / -3 # Инвертируем SOXS для сопоставления с ростом сектора
                 raw_change = hbm_c if abs(hbm_c) > abs(soxs_c) else soxs_c
-                correlation = -1 # Рост риска = падение чипмейкеров
-            elif event_key in ["US_IRAN", "HORMUZ", "GLOBAL"]:
                 correlation = -1
-            elif target == "nasdaq":
-                raw_change = raw_market_data.get('nasdaq_change', 0)
-                correlation = -1
-            else: # target == "global" или "vix"
+            else: # "global" logic
                 vix_c = raw_market_data.get('vix_change', 0)
                 nasdaq_c = raw_market_data.get('nasdaq_change', 0)
                 if vix_c != 0:
@@ -857,13 +866,22 @@ async def main():
                     prob = predict_impact(event_scores[event_key], event_key) 
                     sig_type = generate_signal(prob, event_scores[event_key])
 
+                    # Получаем список целевых активов для данного ключа
+                    target_assets_for_event = event_asset_map.get(event_key, ["global"])
+
                     with get_db_connection() as conn:
                         cursor = conn.cursor()
                         cursor.execute("""
                             INSERT INTO events (title, link, score, event, nasdaq, oil, hbm, soxs, gold, btc, vix, fear_greed)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val))
-                        cursor.execute("INSERT INTO predictions (event_key, score, predicted_impact) VALUES (?, ?, ?)", (event_key, event_scores[event_key], prob))
+                        
+                        # Создаем отдельный прогноз для каждого целевого актива
+                        for asset_name in target_assets_for_event:
+                            cursor.execute("""
+                                INSERT INTO predictions (event_key, score, predicted_impact, target_asset, resolved) 
+                                VALUES (?, ?, ?, ?, 0)
+                            """, (event_key, event_scores[event_key], prob, asset_name))
                         conn.commit()
 
                     if should_send(event_key, score):

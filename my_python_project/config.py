@@ -18,17 +18,9 @@ LOG_FILE = "gts.log"
 # Формат: "Ключевое слово": (Вес, ["целевой_актив_1", "целевой_актив_2"])
 # Доступные активы: "nasdaq", "oil", "soxs", "vix", "gold", "btc", "hbm", "global"
 TRACKED_KEYWORDS = {
-    "US Iran": 2.5,
-    # "Hormuz": 3.0,
-    "Nvidia": 2.0,
-    "OpenAI": 2.0,
-    "Oil": 2.0,
-    "Gold": 1.5,
-    "Bitcoin": 1.2,
-    "Nasdaq": 1.0
     "US Iran": (2.5, ["global", "oil"]), # Пример: влияет на общий риск и нефть
-    "Nvidia": (2.0, ["hbm", "nasdaq"]), # Пример: влияет на полупроводники и Nasdaq
-    "OpenAI": (2.0, ["hbm"]),
+    "Nvidia": (2.0, ["hbm", "nasdaq", "soxs"]), # Пример: влияет на полупроводники и Nasdaq
+    "OpenAI": (2.0, ["hbm", "soxs"]), # Пример: влияет на AI и полупроводники
     "Oil": (2.0, ["oil"]),
     "Gold": (1.5, ["gold"]),
     "Bitcoin": (1.2, ["btc"]),
