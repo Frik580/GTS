@@ -112,4 +112,7 @@ def init_db():
         # Устанавливаем начальное значение множителя из конфига, если таблицы не было
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (config.IMPACT_MULTIPLIER,))
 
+        # Очистка существующих пустых значений в активах (миграция данных)
+        cursor.execute("UPDATE predictions SET target_asset = 'global' WHERE target_asset IS NULL OR target_asset = ''")
+
         conn.commit()

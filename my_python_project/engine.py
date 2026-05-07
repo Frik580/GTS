@@ -406,7 +406,10 @@ async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], 
 # =========================
 
 def make_event_key(entities: List[str]) -> str:
-    if not entities or "Unknown" in entities:
+    # Очистка входного списка от пустых значений, None и заглушек
+    valid_entities = [str(e).strip() for e in (entities or []) if e and str(e).strip() != "Unknown"]
+
+    if not valid_entities:
         return "GLOBAL"
 
     # Список известных макро-сущностей для нормализации
@@ -420,7 +423,8 @@ def make_event_key(entities: List[str]) -> str:
         "BITCOIN": "BTC", "BTC": "BTC",
         "GOLD": "GOLD", "XAU": "GOLD",
         "OIL": "OIL", "CRUDE": "OIL",
-        "NVDA": "NVIDIA", "NVIDIA": "NVIDIA"
+        "NVDA": "NVIDIA", "NVIDIA": "NVIDIA",
+        "DONALD_TRUMP": "TRUMP", "MAGA": "TRUMP"
     }
 
     # Автоматически добавляем все отслеживаемые слова из конфига в мапу нормализации
@@ -431,7 +435,7 @@ def make_event_key(entities: List[str]) -> str:
 
     # 1. Нормализация и фильтрация
     normalized = []
-    for ent in entities:
+    for ent in valid_entities:
         ent_up = ent.upper().replace(" ", "_")
         # Проверяем по мапе синонимов
         found_canonical = False
@@ -455,7 +459,12 @@ def make_event_key(entities: List[str]) -> str:
     # либо сущность является частью темы (US -> US_IRAN)
     matches = [e for e in unique_ents if any(t in e or e in t for t in tracked_upper)]
     
+    # Если есть совпадения с отслеживаемыми темами — берем их.
+    # Если нет — берем первые две сущности для формирования ключа.
+    # Если после всей фильтрации список пуст — возвращаем GLOBAL.
     result_ents = matches if matches else unique_ents[:2]
+    if not result_ents:
+        return "GLOBAL"
 
     return "_".join(result_ents)
 
@@ -470,7 +479,7 @@ def market_signals(score: float, event_key: str) -> Dict[str, str]:
 
     return {
         "nasdaq": "bearish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
-        "oil": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish",
+        "oil": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "soxs": "bullish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "vix": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "flat",
         "gold": "bullish" if intensity > config.SIGNAL_THRESHOLD_LOW else "bearish" if intensity < -config.SIGNAL_THRESHOLD_HIGH else "flat",
@@ -653,6 +662,13 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
 
     return market_data
 
+def count_eligible_predictions() -> int:
+    """Возвращает количество новостей, готовых к обучению (старше MARKET_LOOKBACK_HOURS)."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"SELECT COUNT(*) FROM predictions WHERE resolved = 0 AND timestamp < datetime('now', '-{config.MARKET_LOOKBACK_HOURS} hours')")
+        return cursor.fetchone()[0]
+
 
 async def learning_cycle(session: aiohttp.ClientSession):
     raw_market_data = await get_market_data(session)
@@ -670,6 +686,7 @@ async def learning_cycle(session: aiohttp.ClientSession):
             ORDER BY timestamp DESC LIMIT 100
         """)
         rows = cursor.fetchall()
+        logging.info(f"🧠 Начало цикла обучения. Найдено кандидатов для обработки: {len(rows)}")
 
         for row in rows:
             event_key = row['event_key']
@@ -701,9 +718,13 @@ async def learning_cycle(session: aiohttp.ClientSession):
                 raw_change = raw_market_data['vix_change']
                 correlation = 1
             elif target == "hbm" and ('hbm_change' in raw_market_data or 'soxs_change' in raw_market_data):
-                hbm_c = raw_market_data.get('hbm_change', 0)
-                soxs_c = raw_market_data.get('soxs_change', 0) / -3 # Инвертируем SOXS для сопоставления с ростом сектора
-                raw_change = hbm_c if abs(hbm_c) > abs(soxs_c) else soxs_c
+                # Получаем данные, гарантируя, что берем не None
+                hbm_c = float(raw_market_data.get('hbm_change') or 0)
+                # SOXS — это 3x инверсия, делим на -3 для получения 1x long эквивалента
+                soxs_raw = float(raw_market_data.get('soxs_change') or 0)
+                soxs_c = soxs_raw / -3.0 
+                # Берем наиболее выраженное движение в секторе
+                raw_change = hbm_c if abs(hbm_c) >= abs(soxs_c) else soxs_c
                 correlation = -1
             else: # "global" logic
                 vix_c = raw_market_data.get('vix_change', 0)
@@ -788,11 +809,12 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         logging.error(f"Feed error {url}: {e}")
         return
 
-    for entry in feed.entries[:3]:
+    for entry in feed.entries[:config.RSS_MAX_ENTRIES]:
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id FROM events WHERE link = ?", (entry.link,))
             if cursor.fetchone():
+                logging.debug(f"Новость уже в базе: {entry.title}")
                 continue
 
         text = entry.title + " " + entry.get("summary", "")
@@ -817,6 +839,10 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         
         # Применяем коэффициент доверия к баллу новости
         score *= trust_factor
+        
+        # Дополнительное снижение веса для нефинансовых типов событий
+        if event_type in ["neutral", "diplomatic"] and abs(score) > config.NEUTRAL_SCORE_THRESHOLD:
+            score *= config.NON_FINANCIAL_SCORE_DECAY_FACTOR
         
         current_delay = config.AI_DELAY_JSON if get_active_model()["supports_json"] else config.AI_DELAY_NO_JSON
         await asyncio.sleep(current_delay)
@@ -844,7 +870,10 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         if event_key in event_asset_map:
             target_assets_set.update(event_asset_map[event_key])
         
-        target_assets = list(target_assets_set) if target_assets_set else ["global"]
+        # Гарантируем наличие хотя бы одного актива и исключаем пустые значения/None
+        target_assets = [a for a in target_assets_set if a]
+        if not target_assets:
+            target_assets = ["global"]
 
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -857,7 +886,7 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                 cursor.execute("""
                     INSERT INTO predictions (event_key, score, predicted_impact, target_asset, resolved) 
                     VALUES (?, ?, ?, ?, 0)
-                """, (event_key, event_scores[event_key], prob, asset_name))
+                """, (event_key, event_scores[event_key], prob, str(asset_name)))
             conn.commit()
 
         # Не отправляем в Telegram, если Score слишком низкий (шум)
@@ -889,7 +918,7 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             msg = (
                 f"🧠 EVENT: {event_key}\n"
                 f"🤖 Model: {source}\n"
-                f"Score: {event_scores[event_key]:.2f} | Impact: {prob:+.2f}%\n"
+                f"Score: {event_scores[event_key]:.2f} (News: {score:+.2f}) | Impact: {prob:+.2f}%\n"
                 f"-------------------\n"
                 f"{forecast_str}\n"
                 f"-------------------\n"
@@ -908,9 +937,14 @@ async def main():
         # Запускаем цикл обучения сразу при старте, чтобы обработать старые записи
         logging.info("Первичный запуск цикла обучения...")
         await learning_cycle(session)
+        last_learning_run = time.time()
 
         while True:
-            logging.info("GTS 4.0 scanning...")
+            eligible_count = count_eligible_predictions()
+            time_to_next = max(0, config.LEARNING_INTERVAL - (time.time() - last_learning_run))
+            minutes_left = int(time_to_next // 60)
+            
+            logging.info(f"📡 GTS 4.0 scanning... [До обучения: {minutes_left} мин | Готово новостей: {eligible_count}]")
 
             for key in event_scores:
                 event_scores[key] *= config.DECAY_FACTOR

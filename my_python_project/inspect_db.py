@@ -27,6 +27,33 @@ def inspect_gts():
         events = pd.read_sql("SELECT title, score, event, timestamp FROM events ORDER BY timestamp DESC LIMIT 5", conn)
         print(events)
         
+        print("\n--- АНАЛИЗ ОТКЛОНЕНИЙ (PREDICTED VS ACTUAL) ---")
+        # Показываем последние 10 разрешенных прогнозов и их ошибку
+        accuracy_query = """
+            SELECT event_key, target_asset, score, predicted_impact, actual_move, 
+                   (actual_move - predicted_impact) as error, is_correct, timestamp 
+            FROM predictions 
+            WHERE resolved = 1 
+            ORDER BY timestamp DESC LIMIT 10
+        """
+        accuracy_df = pd.read_sql(accuracy_query, conn)
+        if not accuracy_df.empty:
+            print(accuracy_df)
+
+        print("\n--- СТАТИСТИКА ПО АКТИВАМ ---")
+        asset_stats_query = """
+            SELECT target_asset, 
+                   COUNT(*) as total_cases, 
+                   ROUND(AVG(is_correct) * 100, 1) as win_rate_pct, 
+                   ROUND(AVG(abs(actual_move - predicted_impact)), 2) as avg_abs_error
+            FROM predictions 
+            WHERE resolved = 1
+            GROUP BY target_asset
+        """
+        asset_stats = pd.read_sql(asset_stats_query, conn)
+        if not asset_stats.empty:
+            print(asset_stats)
+
         print("\n--- СТАТИСТИКА ПРОГНОЗОВ ---")
         total = pd.read_sql("SELECT COUNT(*) as total FROM predictions", conn).iloc[0]['total']
         
