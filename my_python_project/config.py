@@ -18,13 +18,14 @@ LOG_FILE = "gts.log"
 # Формат: "Ключевое слово": (Вес, ["целевой_актив_1", "целевой_актив_2"])
 # Доступные активы: "nasdaq", "oil", "soxs", "vix", "gold", "btc", "hbm", "global"
 TRACKED_KEYWORDS = {
-    "US Iran": (2.5, ["global", "oil"]), # Пример: влияет на общий риск и нефть
-    "Nvidia": (2.0, ["hbm", "nasdaq", "soxs"]), # Пример: влияет на полупроводники и Nasdaq
+    "US Iran": (2.5, ["global", "oil", "vix"]), # Пример: влияет на общий риск и нефть
+    "Nvidia": (2.0, ["hbm", "nasdaq", "soxs", "global"]), # Пример: влияет на полупроводники и Nasdaq
     "OpenAI": (2.0, ["hbm", "soxs"]), # Пример: влияет на AI и полупроводники
-    "Oil": (2.0, ["oil"]),
+    "Oil": (2.0, ["oil", "global"]), # Пример: влияет на нефть и общий риск
     "Gold": (1.5, ["gold"]),
-    "Bitcoin": (1.2, ["btc"]),
-    "Nasdaq": (1.0, ["nasdaq"])
+    "Bitcoin": (1.2, ["btc", "global"]),
+    "Nasdaq": (1.0, ["nasdaq"]),
+    "AI": (1.8, ["global", "hbm", "nasdaq", "soxs"]),
 }
 
 RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}" for k in TRACKED_KEYWORDS.keys()]
@@ -49,7 +50,8 @@ SCALING_FACTOR = 10.0 # Увеличиваем масштаб для более 
 LEARNING_RATE = 0.05  # Увеличиваем скорость обучения для более быстрой адаптации
 IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
 LEARNING_THRESHOLD = 0.1 # Минимальное движение цены (%) для учета в обучении
-MIN_WEIGHT_THRESHOLD = 0.9 # Порог веса, ниже которого ключ удаляется из БД
+MIN_WEIGHT_THRESHOLD = 0.5 # Порог веса, ниже которого ключ удаляется из БД
+NEUTRAL_SCORE_THRESHOLD = 0.5 # Новости со Score ниже этого порога не участвуют в обучении
 
 # Thresholds for market signals (Empirical sensitivity)
 SIGNAL_THRESHOLD_HIGH = 3.0  # For Indices (Nasdaq, SOXS)

@@ -401,55 +401,6 @@ async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], 
     
     return score, "neutral", found_entities, "Fallback (Regex)"
 
-async def run_global_research():
-    """
-    Просит ИИ проанализировать глобальные рынки и предложить ключевые слова,
-    которые окажут наибольшее влияние на отслеживаемые активы.
-    """
-    assets = ["nasdaq", "oil", "soxs", "vix", "gold", "btc", "hbm"]
-    prompt = f"""
-    As a senior macro strategist, identify the top 15 global entities, geopolitical triggers, or economic factors 
-    that will most significantly impact these assets over the next 30 days: {assets}.
-    
-    Return ONLY a JSON list of objects:
-    [
-      {{
-        "keyword": "Entity Name (e.g., TSMC, Strait of Hormuz, US Jobless Claims)",
-        "asset": "target asset from the list",
-        "impact_direction": "bullish/bearish",
-        "reasoning": "Short professional explanation of the correlation"
-      }}
-    ]
-    """
-    
-    logging.info("--- Starting Global AI Research ---")
-    try:
-        active = get_active_model()
-        gen_config = {"response_mime_type": "application/json"} if active["supports_json"] else {}
-        
-        response = await client.aio.models.generate_content(
-            model=active["name"],
-            contents=prompt,
-            config=gen_config
-        )
-        
-        res_text = response.text.strip()
-        start = res_text.find('[')
-        end = res_text.rfind(']') + 1
-        suggestions = json.loads(res_text[start:end])
-
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            for s in suggestions:
-                cursor.execute("""
-                    INSERT INTO ai_global_suggestions (keyword, asset, impact_direction, reasoning)
-                    VALUES (?, ?, ?, ?)
-                """, (s['keyword'], s['asset'], s['impact_direction'], s['reasoning']))
-            conn.commit()
-        logging.info(f"✅ AI Global Research finished. Found {len(suggestions)} new suggestions.")
-    except Exception as e:
-        logging.error(f"Error during global research: {e}")
-
 # =========================
 # EVENT ENGINE
 # =========================
@@ -606,13 +557,15 @@ def should_send(key: str, current_score: float) -> bool:
 # LEARNING SYSTEM
 # =========================
 
-def update_weights(event_key: str, predicted: float, actual: float):
+def update_weights(event_key: str, predicted: float, actual: float,score: float):
     global global_impact_multiplier
+
     error = actual - predicted
     adjustment = learning_rate * error * 0.01
 
     # Обновляем основной ключ
     event_weights[event_key] = max(0.5, min(5.0, event_weights.get(event_key, 1.0) + adjustment))
+    logging.info(f"📈 Weight adjustment for {event_key}: {adjustment:+.4f} (New weight: {event_weights[event_key]:.2f})")
 
     # Обучаем глобальный множитель:
     # Если ошибка положительная (actual > predicted), множитель должен расти.
@@ -708,8 +661,13 @@ async def learning_cycle(session: aiohttp.ClientSession):
 
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        # Берем только последние 100 неразрешенных прогнозов, чтобы не перегружать цикл
-        cursor.execute("SELECT * FROM predictions WHERE resolved = 0 ORDER BY timestamp DESC LIMIT 100")
+        # Берем только неразрешенные прогнозы, созданные более MARKET_LOOKBACK_HOURS назад.
+        # Это исключает преждевременную оценку новостей, которые только что вышли.
+        cursor.execute(f"""
+            SELECT * FROM predictions 
+            WHERE resolved = 0 AND timestamp < datetime('now', '-{config.MARKET_LOOKBACK_HOURS} hours')
+            ORDER BY timestamp DESC LIMIT 100
+        """)
         rows = cursor.fetchall()
 
         for row in rows:
@@ -760,14 +718,19 @@ async def learning_cycle(session: aiohttp.ClientSession):
             if abs(raw_change) < config.LEARNING_THRESHOLD:
                 continue
 
+            # Если новость нейтральная (Score в пределах [-0.5, 0.5]), помечаем как resolved,
+            # но не считаем это ошибкой прогноза и не логируем в результат обучения.
+            if abs(score) < config.NEUTRAL_SCORE_THRESHOLD:
+                cursor.execute("UPDATE predictions SET resolved = 1 WHERE id = ?", (row['id'],))
+                continue
+
             actual = min(abs(raw_change) * config.SCALING_FACTOR, 100)
             
             # Проверка совпадения направления: (Score * Change * Correlation) > 0
             is_correct = 1 if (score * raw_change * correlation) > 0 else 0
-
             status_icon = "✅" if is_correct else "❌"
-            logging.info(f"Result for {event_key}: {status_icon} (Score: {score:.1f}, Change: {raw_change:.2f}%)")
-            update_weights(event_key, predicted, actual)
+            logging.info(f"Result for {event_key} [{target}]: {status_icon} (Score: {score:.1f}, Change: {raw_change:.2f}%)")
+            update_weights(event_key, predicted, actual, score)
 
             cursor.execute("""
                 UPDATE predictions
@@ -819,7 +782,6 @@ def cleanup_db():
 async def main():
     last_learning_run = 0
     last_cleanup_run = 0
-    last_research_run = 0
     loop = asyncio.get_running_loop()
 
     async with aiohttp.ClientSession() as session:
@@ -926,10 +888,6 @@ async def main():
             if current_time - last_cleanup_run >= config.CLEANUP_INTERVAL:
                 cleanup_db()
                 last_cleanup_run = current_time
-
-            if current_time - last_research_run >= config.RESEARCH_INTERVAL:
-                await run_global_research()
-                last_research_run = current_time
 
             await asyncio.sleep(config.CHECK_INTERVAL)
 
