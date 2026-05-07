@@ -15,6 +15,8 @@ LOG_FILE = "gts.log"
 # Feeds
 # Список ключевых слов для отслеживания. Можно менять, добавлять или удалять.
 # Теперь это словарь: "Ключевое слово": Вес (приоритет)
+# Формат: "Ключевое слово": (Вес, ["целевой_актив_1", "целевой_актив_2"])
+# Доступные активы: "nasdaq", "oil", "soxs", "vix", "gold", "btc", "hbm", "global"
 TRACKED_KEYWORDS = {
     "US Iran": 2.5,
     # "Hormuz": 3.0,
@@ -24,20 +26,28 @@ TRACKED_KEYWORDS = {
     "Gold": 1.5,
     "Bitcoin": 1.2,
     "Nasdaq": 1.0
+    "US Iran": (2.5, ["global", "oil"]), # Пример: влияет на общий риск и нефть
+    "Nvidia": (2.0, ["hbm", "nasdaq"]), # Пример: влияет на полупроводники и Nasdaq
+    "OpenAI": (2.0, ["hbm"]),
+    "Oil": (2.0, ["oil"]),
+    "Gold": (1.5, ["gold"]),
+    "Bitcoin": (1.2, ["btc"]),
+    "Nasdaq": (1.0, ["nasdaq"])
 }
 
 RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}" for k in TRACKED_KEYWORDS.keys()]
 
 # Time Intervals (in seconds)
-CHECK_INTERVAL = 300
-COOLDOWN = 600
-LEARNING_INTERVAL = 3600
-CLEANUP_INTERVAL = 86400
-RETENTION_DAYS = 14
+CHECK_INTERVAL = 300 # Интервал проверки новостей (5 минут)
+COOLDOWN = 600 # Интервал между действиями (10 минут)
+LEARNING_INTERVAL = 3600 # Интервал обучения (1 час)
+CLEANUP_INTERVAL = 86400 # Интервал очистки (24 часа)
+RESEARCH_INTERVAL = 86400 # Интервал глобального исследования ИИ (раз в сутки)
+RETENTION_DAYS = 14 # Количество дней хранения данных
 
 # AI Delays
-AI_DELAY_JSON = 15
-AI_DELAY_NO_JSON = 60
+AI_DELAY_JSON = 15 # Время ожидания ответа от модели при запросе JSON (15 секунд)
+AI_DELAY_NO_JSON = 60 # Время ожидания ответа от модели при отсутствии JSON (60 секунд)
 
 # Logic Factors
 MARKET_LOOKBACK_HOURS = 4
@@ -45,12 +55,15 @@ DECAY_FACTOR = 0.95 # Увеличиваем скорость затухания
 MAX_SCORE_THRESHOLD = 25.0 # Увеличиваем порог для отправки сигналов, чтобы уменьшить количество ложных срабатываний
 SCALING_FACTOR = 10.0 # Увеличиваем масштаб для более заметного влияния предсказаний
 LEARNING_RATE = 0.05  # Увеличиваем скорость обучения для более быстрой адаптации
-IMPACT_MULTIPLIER = 4.0 # Сбалансировано: MAX_SCORE (25) * 4.0 = 100%
+IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
+LEARNING_THRESHOLD = 0.1 # Минимальное движение цены (%) для учета в обучении
 
 # Thresholds for market signals (Empirical sensitivity)
 SIGNAL_THRESHOLD_HIGH = 3.0  # For Indices (Nasdaq, SOXS)
 SIGNAL_THRESHOLD_MED = 2.0   # For Commodities and VIX
 SIGNAL_THRESHOLD_LOW = 1.5   # For Safe-havens (Gold)
+SIGNAL_THRESHOLD_BTC = 4.0   # For Crypto (Volatility buffer)
+BTC_MIN_VOLATILITY_FOR_ALERT = 5.0 # Минимальное изменение цены BTC (%) для отправки уведомления
 
 
 # В системе GTS 4.0 влияние ключей (событий) на рыночные сигналы реализовано через механизм интенсивности, которая объединяет оценку нейросети и накопленные веса важности.

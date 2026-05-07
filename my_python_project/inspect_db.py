@@ -10,6 +10,13 @@ def inspect_gts():
         weights = pd.read_sql("SELECT * FROM weights", conn)
         print(weights if not weights.empty else "Таблица весов пуста (используются дефолтные)")
         
+        print("\n--- ГЛОБАЛЬНЫЕ ПРЕДЛОЖЕНИЯ ИИ (AI GLOBAL SUGGESTIONS) ---")
+        suggestions = pd.read_sql("SELECT keyword, asset, impact_direction, reasoning, timestamp FROM ai_global_suggestions ORDER BY timestamp DESC LIMIT 10", conn)
+        if not suggestions.empty:
+            print(suggestions)
+        else:
+            print("Предложений пока нет. Дождитесь завершения цикла RESEARCH_INTERVAL.")
+
         print("\n--- ПОСЛЕДНИЕ 5 СОБЫТИЙ ---")
         events = pd.read_sql("SELECT title, score, event, timestamp FROM events ORDER BY timestamp DESC LIMIT 5", conn)
         print(events)
