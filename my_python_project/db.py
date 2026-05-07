@@ -86,5 +86,15 @@ def init_db():
                     except sqlite3.OperationalError:
                         # Безопасный пропуск, если колонка была добавлена другим процессом
                         pass
+        
+        # Создаем таблицу для системных настроек, если её нет
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value REAL
+        )
+        """)
+        # Устанавливаем начальное значение множителя из конфига, если таблицы не было
+        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (config.IMPACT_MULTIPLIER,))
 
         conn.commit()

@@ -298,3 +298,136 @@
 2026-05-07 03:01:31,454 [INFO] Получен сигнал завершения (Ctrl+C или системный).
 2026-05-07 03:01:31,455 [INFO] Закрытие соединений и остановка фоновых задач...
 2026-05-07 03:01:31,457 [INFO] GTS 4.0 остановлен.
+2026-05-07 03:09:52,153 [INFO] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/models "HTTP/1.1 200 OK"
+2026-05-07 03:09:52,171 [INFO] Доступные модели в API: 32
+2026-05-07 03:09:52,173 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-flash-lite-preview (Приоритет 1)
+2026-05-07 03:09:52,175 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-pro-preview (Приоритет 2)
+2026-05-07 03:09:52,176 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-flash-preview (Приоритет 3)
+2026-05-07 03:09:52,176 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-pro-preview (Приоритет 4)
+2026-05-07 03:09:52,178 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-flash (Приоритет 5)
+2026-05-07 03:09:52,179 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-pro (Приоритет 6)
+2026-05-07 03:09:52,180 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.0-flash (Приоритет 7)
+2026-05-07 03:09:52,181 [INFO] ✅ Добавлена в пул ротации: models/gemini-flash-latest (Приоритет 11)
+2026-05-07 03:09:52,181 [INFO] ✅ Добавлена в пул ротации: models/gemini-pro-latest (Приоритет 12)
+2026-05-07 03:09:52,184 [INFO] Пул моделей готов: ['models/gemini-3.1-flash-lite-preview', 'models/gemini-3.1-pro-preview', 'models/gemini-3-flash-preview', 'models/gemini-3-pro-preview', 'models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/gemini-2.0-flash', 'models/gemini-flash-latest', 'models/gemini-pro-latest']. Старт с: models/gemini-3.1-flash-lite-preview
+2026-05-07 03:09:52,196 [INFO] --- Веса загружены: {'US_IRAN': 1.7503564163038874, 'NVIDIA': 1.9766905416288039, 'OPENAI': 1.935430440332279, 'OIL': 1.653196478561007, 'GOLD': 1.4946053086440725, 'NASDAQ': 0.988, 'BTC': 0.9765771846542807, 'GLOBAL': 1.2881001911728456, 'HORMUZ': 2.952143846797536, 'Unknown': 0.7144319999999997, 'Iran': 0.8302837879425057, 'US': 1.0, 'NASDAQ_NVIDIA': 0.958, 'ELON_MUSK_OPENAI': 0.994, 'NVIDIA_SUPER_MICRO': 0.985, 'CORNING_NVIDIA': 0.982, 'MICHIGAN_OPENAI_ORACLE': 0.994, 'ELON_MUSK_GREG_BROCKMAN_OPENAI_TESLA': 0.994, 'ELON_MUSK_OPENAI_SAM_ALTMAN': 0.997, 'MIRA_MURATI_OPENAI_SAM_ALTMAN': 0.997} ---
+2026-05-07 03:09:52,206 [INFO] Первичный запуск цикла обучения...
+2026-05-07 03:09:55,456 [INFO] Result for BTC: ✅ (Score: -21.9, Change: 0.04%)
+2026-05-07 03:09:55,469 [INFO] Result for OIL: ✅ (Score: 22.2, Change: 0.35%)
+2026-05-07 03:09:55,488 [INFO] GTS 4.0 scanning...
+2026-05-07 03:10:13,889 [INFO] --- База данных оптимизирована: удалены данные старше 14 дней ---
+2026-05-07 03:15:13,892 [INFO] GTS 4.0 scanning...
+2026-05-07 03:20:26,085 [INFO] GTS 4.0 scanning...
+2026-05-07 03:20:40,204 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 03:26:11,413 [INFO] GTS 4.0 scanning...
+2026-05-07 03:26:20,633 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 03:26:51,117 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 03:31:54,196 [INFO] GTS 4.0 scanning...
+2026-05-07 03:31:57,697 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 03:32:28,984 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 03:37:38,400 [INFO] GTS 4.0 scanning...
+2026-05-07 03:37:41,457 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 03:43:18,742 [INFO] GTS 4.0 scanning...
+2026-05-07 03:43:22,205 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 03:43:55,136 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 03:44:04,207 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 03:49:30,123 [INFO] GTS 4.0 scanning...
+2026-05-07 03:49:39,581 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 03:50:16,159 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 03:55:42,523 [INFO] GTS 4.0 scanning...
+2026-05-07 03:55:52,535 [ERROR] $^IXIC: possibly delisted; no price data found  (period=1wk)
+2026-05-07 03:55:52,536 [ERROR] $BTC-USD: possibly delisted; no price data found  (period=1wk)
+2026-05-07 03:55:52,551 [ERROR] $CL=F: possibly delisted; no price data found  (period=1wk)
+2026-05-07 03:55:52,552 [ERROR] $GC=F: possibly delisted; no price data found  (period=1wk)
+2026-05-07 03:55:52,553 [ERROR] $SMH: possibly delisted; no price data found  (period=1wk)
+2026-05-07 03:55:52,554 [ERROR] $SOXS: possibly delisted; no price data found  (period=1wk)
+2026-05-07 03:55:52,556 [ERROR] $^VIX: possibly delisted; no price data found  (period=1wk)
+2026-05-07 03:55:52,563 [ERROR] 
+7 Failed downloads:
+2026-05-07 03:55:52,564 [ERROR] ['^IXIC', 'BTC-USD', 'CL=F', 'GC=F', 'SMH', 'SOXS', '^VIX']: possibly delisted; no price data found  (period=1wk)
+2026-05-07 03:56:03,374 [ERROR] Error fetching Fear & Greed: 
+2026-05-07 04:03:13,631 [INFO] Получен сигнал завершения (Ctrl+C или системный).
+2026-05-07 04:03:13,632 [INFO] Закрытие соединений и остановка фоновых задач...
+2026-05-07 04:18:06,328 [INFO] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/models "HTTP/1.1 200 OK"
+2026-05-07 04:18:06,334 [INFO] Доступные модели в API: 32
+2026-05-07 04:18:06,334 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-flash-lite-preview (Приоритет 1)
+2026-05-07 04:18:06,334 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-pro-preview (Приоритет 2)
+2026-05-07 04:18:06,335 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-flash-preview (Приоритет 3)
+2026-05-07 04:18:06,335 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-pro-preview (Приоритет 4)
+2026-05-07 04:18:06,335 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-flash (Приоритет 5)
+2026-05-07 04:18:06,335 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-pro (Приоритет 6)
+2026-05-07 04:18:06,336 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.0-flash (Приоритет 7)
+2026-05-07 04:18:06,336 [INFO] ✅ Добавлена в пул ротации: models/gemini-flash-latest (Приоритет 11)
+2026-05-07 04:18:06,336 [INFO] ✅ Добавлена в пул ротации: models/gemini-pro-latest (Приоритет 12)
+2026-05-07 04:18:06,337 [INFO] Пул моделей готов: ['models/gemini-3.1-flash-lite-preview', 'models/gemini-3.1-pro-preview', 'models/gemini-3-flash-preview', 'models/gemini-3-pro-preview', 'models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/gemini-2.0-flash', 'models/gemini-flash-latest', 'models/gemini-pro-latest']. Старт с: models/gemini-3.1-flash-lite-preview
+2026-05-07 04:18:06,345 [INFO] --- Веса загружены: {'IRAN_US': 2.5, 'NVIDIA': 1.9766905416288039, 'OPENAI': 1.935430440332279, 'OIL': 1.6049696939993612, 'GOLD': 1.4946053086440725, 'NASDAQ': 0.988, 'BTC': 0.9267996081927479, 'GLOBAL': 1.2881001911728456, 'US_IRAN': 1.7503564163038874, 'HORMUZ': 2.952143846797536, 'Unknown': 0.7144319999999997, 'Iran': 0.8302837879425057, 'US': 1.0, 'NASDAQ_NVIDIA': 0.958, 'ELON_MUSK_OPENAI': 0.994, 'NVIDIA_SUPER_MICRO': 0.985, 'CORNING_NVIDIA': 0.982, 'MICHIGAN_OPENAI_ORACLE': 0.994, 'ELON_MUSK_GREG_BROCKMAN_OPENAI_TESLA': 0.994, 'ELON_MUSK_OPENAI_SAM_ALTMAN': 0.997, 'MIRA_MURATI_OPENAI_SAM_ALTMAN': 0.997} ---
+2026-05-07 04:18:06,347 [INFO] Первичный запуск цикла обучения...
+2026-05-07 04:18:08,744 [INFO] Result for BTC: ✅ (Score: -22.0, Change: 0.04%)
+2026-05-07 04:18:08,745 [INFO] Result for US_IRAN: ❌ (Score: -21.0, Change: 1.40%)
+2026-05-07 04:18:08,746 [INFO] Result for BTC: ✅ (Score: -21.1, Change: 0.04%)
+2026-05-07 04:18:08,746 [INFO] Result for US_IRAN: ❌ (Score: -18.5, Change: 1.40%)
+2026-05-07 04:18:08,746 [INFO] Result for US_IRAN: ❌ (Score: -15.8, Change: 1.40%)
+2026-05-07 04:18:08,746 [INFO] Result for US_IRAN: ❌ (Score: -11.8, Change: 1.40%)
+2026-05-07 04:18:08,746 [INFO] Result for GOLD: ❌ (Score: -7.0, Change: 0.20%)
+2026-05-07 04:18:08,747 [INFO] Result for BTC: ✅ (Score: -23.4, Change: 0.04%)
+2026-05-07 04:18:08,758 [INFO] GTS 4.0 scanning...
+2026-05-07 04:18:16,240 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 04:18:57,503 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 04:19:00,404 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 04:19:55,261 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 04:19:55,263 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 04:20:37,309 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 04:21:06,491 [INFO] Result for BTC_MICROSTRATEGY: ❌ (Score: -4.0, Change: 0.00%)
+2026-05-07 04:21:06,496 [INFO] Result for BTC: ✅ (Score: -25.0, Change: 0.04%)
+2026-05-07 04:21:06,496 [INFO] Result for BTC_MICROSTRATEGY: ❌ (Score: -2.0, Change: 0.00%)
+2026-05-07 04:21:06,496 [INFO] Result for OIL: ✅ (Score: 25.0, Change: 0.76%)
+2026-05-07 04:21:06,514 [INFO] --- База данных оптимизирована: удалены данные старше 14 дней ---
+2026-05-07 04:26:06,525 [INFO] GTS 4.0 scanning...
+2026-05-07 04:26:17,349 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 04:26:40,162 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 04:27:08,976 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 04:29:40,191 [INFO] Получен сигнал завершения (Ctrl+C или системный).
+2026-05-07 04:29:40,191 [INFO] Закрытие соединений и остановка фоновых задач...
+2026-05-07 04:29:40,192 [INFO] GTS 4.0 остановлен.
+2026-05-07 04:51:29,823 [INFO] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/models "HTTP/1.1 200 OK"
+2026-05-07 04:51:29,831 [INFO] Доступные модели в API: 32
+2026-05-07 04:51:29,831 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-flash-lite-preview (Приоритет 1)
+2026-05-07 04:51:29,832 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-pro-preview (Приоритет 2)
+2026-05-07 04:51:29,832 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-flash-preview (Приоритет 3)
+2026-05-07 04:51:29,832 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-pro-preview (Приоритет 4)
+2026-05-07 04:51:29,832 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-flash (Приоритет 5)
+2026-05-07 04:51:29,833 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-pro (Приоритет 6)
+2026-05-07 04:51:29,833 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.0-flash (Приоритет 7)
+2026-05-07 04:51:29,833 [INFO] ✅ Добавлена в пул ротации: models/gemini-flash-latest (Приоритет 11)
+2026-05-07 04:51:29,833 [INFO] ✅ Добавлена в пул ротации: models/gemini-pro-latest (Приоритет 12)
+2026-05-07 04:51:29,834 [INFO] Пул моделей готов: ['models/gemini-3.1-flash-lite-preview', 'models/gemini-3.1-pro-preview', 'models/gemini-3-flash-preview', 'models/gemini-3-pro-preview', 'models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/gemini-2.0-flash', 'models/gemini-flash-latest', 'models/gemini-pro-latest']. Старт с: models/gemini-3.1-flash-lite-preview
+2026-05-07 04:51:29,838 [INFO] --- Веса загружены: {'IRAN_US': 2.5, 'NVIDIA': 1.9766905416288039, 'OPENAI': 1.935430440332279, 'OIL': 1.558750815875354, 'GOLD': 1.4456272914893566, 'NASDAQ': 0.988, 'BTC': 0.7268159584062093, 'GLOBAL': 1.2881001911728456, 'US_IRAN': 1.578344728427096, 'HORMUZ': 2.952143846797536, 'Unknown': 0.7144319999999997, 'Iran': 0.8302837879425057, 'US': 1.0, 'NASDAQ_NVIDIA': 0.958, 'ELON_MUSK_OPENAI': 0.994, 'NVIDIA_SUPER_MICRO': 0.985, 'CORNING_NVIDIA': 0.982, 'MICHIGAN_OPENAI_ORACLE': 0.994, 'ELON_MUSK_GREG_BROCKMAN_OPENAI_TESLA': 0.994, 'ELON_MUSK_OPENAI_SAM_ALTMAN': 0.997, 'MIRA_MURATI_OPENAI_SAM_ALTMAN': 0.997, 'IRAN': 0.8279883121232081, 'BTC_MICROSTRATEGY': 0.988, 'MICROSTRATEGY': 0.988} ---
+2026-05-07 04:51:29,842 [INFO] Первичный запуск цикла обучения...
+2026-05-07 04:51:32,681 [INFO] Result for NASDAQ: ❌ (Score: -4.1, Change: 0.00%)
+2026-05-07 04:51:32,683 [INFO] Result for BTC: ❌ (Score: -23.8, Change: -0.41%)
+2026-05-07 04:51:32,692 [INFO] GTS 4.0 scanning...
+2026-05-07 04:51:38,816 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 04:52:20,728 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 04:52:26,726 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 04:53:03,927 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 04:53:38,330 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 04:53:40,022 [INFO] Result for IRAN_NASDAQ_US: ❌ (Score: 2.5, Change: 0.00%)
+2026-05-07 04:53:40,024 [INFO] Result for BTC: ✅ (Score: -23.8, Change: 0.27%)
+2026-05-07 04:53:40,024 [INFO] Result for OPENAI: ✅ (Score: -18.5, Change: 1.34%)
+2026-05-07 04:53:40,044 [INFO] --- База данных оптимизирована: удалены данные старше 14 дней ---
+2026-05-07 04:58:40,050 [INFO] GTS 4.0 scanning...
+2026-05-07 04:58:47,008 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 05:04:43,782 [INFO] GTS 4.0 scanning...
+2026-05-07 05:10:00,025 [INFO] GTS 4.0 scanning...
+2026-05-07 05:10:11,861 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 05:10:45,512 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 05:10:53,470 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 05:12:55,837 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 05:17:55,839 [INFO] GTS 4.0 scanning...
+2026-05-07 05:23:09,546 [INFO] GTS 4.0 scanning...
+2026-05-07 05:23:22,326 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-07 05:23:42,559 [INFO] TELEGRAM ASYNC: 200
+2026-05-07 05:28:48,765 [INFO] GTS 4.0 scanning...
+2026-05-07 05:30:03,919 [INFO] Получен сигнал завершения (Ctrl+C или системный).
+2026-05-07 05:30:03,920 [INFO] Закрытие соединений и остановка фоновых задач...
+2026-05-07 05:30:03,921 [INFO] GTS 4.0 остановлен.

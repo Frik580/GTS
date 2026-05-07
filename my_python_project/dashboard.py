@@ -1,7 +1,6 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-import time
 
 st.set_page_config(layout="wide", page_title="GTS 3.0 Terminal")
 
@@ -13,7 +12,7 @@ def load_data():
 
 st.title("📊 GTS 3.0 LIVE Terminal")
 
-refresh = st.button("🔄 Refresh")
+st.button("🔄 Refresh")
 
 df = load_data()
 
