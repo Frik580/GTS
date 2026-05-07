@@ -40,6 +40,7 @@ def init_db():
             score REAL,
             predicted_impact REAL,
             actual_move REAL DEFAULT 0,
+            target_asset TEXT,
             resolved INTEGER DEFAULT 0,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -49,6 +50,17 @@ def init_db():
         CREATE TABLE IF NOT EXISTS weights (
             event_key TEXT PRIMARY KEY,
             weight REAL
+        )
+        """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ai_global_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            keyword TEXT,
+            asset TEXT,
+            impact_direction TEXT,
+            reasoning TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
 

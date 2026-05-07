@@ -157,14 +157,23 @@ def init_state() -> Dict[str, float]:
 event_scores = init_state()
 event_last_sent = {}
 learning_rate = config.LEARNING_RATE
+# Карта связей: какой ключ к какому активу привязан для обучения
+event_asset_map = {}
 
 def load_weights() -> Dict[str, float]:
     # Создаем базовые веса из TRACKED_KEYWORDS, преобразуя ключи в формат EVENT_KEY (например, "US Iran" -> "US_IRAN")
     weights = {}
     for k, v in config.TRACKED_KEYWORDS.items():
         # Сортируем части ключа (например, "US Iran" -> "IRAN_US"), чтобы они всегда совпадали с выходом make_event_key
+    for k, info in config.TRACKED_KEYWORDS.items():
+        weight, target_asset = info if isinstance(info, tuple) else (info, "global")
+        
         key_parts = sorted(k.upper().replace(" ", "_").split("_"))
         weights["_".join(key_parts)] = v
+        canonical_key = "_".join(key_parts)
+        
+        weights[canonical_key] = weight
+        event_asset_map[canonical_key] = target_asset
     
     # Синхронизация специфичных имен (если в конфиге Bitcoin, а в логике BTC)
     if "BITCOIN" in weights: weights["BTC"] = weights.pop("BITCOIN")
@@ -182,7 +191,11 @@ def load_system_settings() -> float:
         cursor = conn.cursor()
         cursor.execute("SELECT value FROM settings WHERE key = 'impact_multiplier'")
         row = cursor.fetchone()
-        return row[0] if row else config.IMPACT_MULTIPLIER
+        if row:
+            logging.info(f"✅ IMPACT_MULTIPLIER загружен из БД: {row[0]}")
+            return row[0]
+        logging.info(f"⚠️ Настройки в БД не найдены, использую default из config: {config.IMPACT_MULTIPLIER}")
+        return config.IMPACT_MULTIPLIER
 
 global_impact_multiplier = load_system_settings()
 
@@ -359,6 +372,7 @@ async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], 
     found_entities = []
     for search_term, canonical_name in fallback_entity_map.items():
         if re.search(rf'\b{re.escape(search_term)}\b', text_low):
+        if re.search(r'\b' + re.escape(search_term) + r'\b', text_low):
             if canonical_name not in found_entities:
                 found_entities.append(canonical_name)
     
@@ -371,6 +385,55 @@ async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], 
         return None, None, None, "No Relevance"
     
     return score, "neutral", found_entities, "Fallback (Regex)"
+
+async def run_global_research():
+    """
+    Просит ИИ проанализировать глобальные рынки и предложить ключевые слова,
+    которые окажут наибольшее влияние на отслеживаемые активы.
+    """
+    assets = ["nasdaq", "oil", "soxs", "vix", "gold", "btc", "hbm"]
+    prompt = f"""
+    As a senior macro strategist, identify the top 15 global entities, geopolitical triggers, or economic factors 
+    that will most significantly impact these assets over the next 30 days: {assets}.
+    
+    Return ONLY a JSON list of objects:
+    [
+      {{
+        "keyword": "Entity Name (e.g., TSMC, Strait of Hormuz, US Jobless Claims)",
+        "asset": "target asset from the list",
+        "impact_direction": "bullish/bearish",
+        "reasoning": "Short professional explanation of the correlation"
+      }}
+    ]
+    """
+    
+    logging.info("--- Starting Global AI Research ---")
+    try:
+        active = get_active_model()
+        gen_config = {"response_mime_type": "application/json"} if active["supports_json"] else {}
+        
+        response = await client.aio.models.generate_content(
+            model=active["name"],
+            contents=prompt,
+            config=gen_config
+        )
+        
+        res_text = response.text.strip()
+        start = res_text.find('[')
+        end = res_text.rfind(']') + 1
+        suggestions = json.loads(res_text[start:end])
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            for s in suggestions:
+                cursor.execute("""
+                    INSERT INTO ai_global_suggestions (keyword, asset, impact_direction, reasoning)
+                    VALUES (?, ?, ?, ?)
+                """, (s['keyword'], s['asset'], s['impact_direction'], s['reasoning']))
+            conn.commit()
+        logging.info(f"✅ AI Global Research finished. Found {len(suggestions)} new suggestions.")
+    except Exception as e:
+        logging.error(f"Error during global research: {e}")
 
 # =========================
 # EVENT ENGINE
@@ -442,10 +505,10 @@ def market_signals(score: float, event_key: str) -> Dict[str, str]:
     return {
         "nasdaq": "bearish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "oil": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish",
-        "soxs": "bullish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bearish",
+        "soxs": "bullish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "vix": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "flat",
         "gold": "bullish" if intensity > config.SIGNAL_THRESHOLD_LOW else "bearish" if intensity < -config.SIGNAL_THRESHOLD_HIGH else "flat",
-        "btc": "bearish" if intensity > 4.0 else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
+        "btc": "bearish" if intensity > config.SIGNAL_THRESHOLD_BTC else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "hbm": "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "bearish" if intensity > config.SIGNAL_THRESHOLD_MED else "flat"
     }
 
@@ -647,18 +710,34 @@ async def learning_cycle(session: aiohttp.ClientSession):
             correlation = -1 if event_key in ["NASDAQ", "BTC", "NVIDIA", "OPENAI", "GLOBAL"] else 1
 
             if event_key == "OIL" and 'oil_change' in raw_market_data:
+            # Берем целевой актив из нашей новой карты (по умолчанию global)
+            target = event_asset_map.get(event_key, "global")
+            
+            # Логика выбора данных для обучения на основе привязанного актива
+            if target == "oil" and 'oil_change' in raw_market_data:
                 raw_change = raw_market_data['oil_change']
             elif event_key == "GOLD" and 'gold_change' in raw_market_data:
+                correlation = 1
+            elif target == "gold" and 'gold_change' in raw_market_data:
                 raw_change = raw_market_data['gold_change']
             elif event_key == "BTC" and 'btc_change' in raw_market_data:
+                correlation = 1
+            elif target == "btc" and 'btc_change' in raw_market_data:
                 raw_change = raw_market_data['btc_change']
                 correlation = -1 # Для BTC риск обычно означает падение
             elif event_key in ["NVIDIA", "OPENAI"]:
+                correlation = -1
+            elif target == "hbm":
                 hbm_c = raw_market_data.get('hbm_change', 0)
                 soxs_c = raw_market_data.get('soxs_change', 0) / -3 # Инвертируем SOXS для сопоставления с ростом сектора
                 raw_change = hbm_c if abs(hbm_c) > abs(soxs_c) else soxs_c
                 correlation = -1 # Рост риска = падение чипмейкеров
             elif event_key in ["US_IRAN", "HORMUZ", "GLOBAL"]:
+                correlation = -1
+            elif target == "nasdaq":
+                raw_change = raw_market_data.get('nasdaq_change', 0)
+                correlation = -1
+            else: # target == "global" или "vix"
                 vix_c = raw_market_data.get('vix_change', 0)
                 nasdaq_c = raw_market_data.get('nasdaq_change', 0)
                 if vix_c != 0:
@@ -667,6 +746,10 @@ async def learning_cycle(session: aiohttp.ClientSession):
                 else:
                     raw_change = nasdaq_c
                     correlation = -1 # Риск = Падение Nasdaq
+
+            # Пропускаем обучение, если движение цены ниже порога (рынок закрыт или шум).
+            if abs(raw_change) < config.LEARNING_THRESHOLD:
+                continue
 
             actual = min(abs(raw_change) * config.SCALING_FACTOR, 100)
             
@@ -716,6 +799,7 @@ def cleanup_db():
 async def main():
     last_learning_run = 0
     last_cleanup_run = 0
+    last_research_run = 0
     loop = asyncio.get_running_loop()
 
     async with aiohttp.ClientSession() as session:
@@ -783,16 +867,16 @@ async def main():
                         conn.commit()
 
                     if should_send(event_key, score):
-                        if event_key == "BTC" and abs(btc_change) < 5.0:
+                        if event_key == "BTC" and abs(btc_change) < config.BTC_MIN_VOLATILITY_FOR_ALERT:
                             continue
 
                         msg = f"""
 🧠 EVENT: {event_key}
 🤖 Model: {source}
 � SIGNAL: {sig_type}
- Score: {event_scores[event_key]}
+ Score: {event_scores[event_key]:.2f}
 😨 Fear & Greed: {fng_val} ({fng_label})
-📈 Impact: {prob}%
+📈 Impact: {prob:+.2f}%
 📉 Nasdaq: {market['nasdaq']}
 🧊 HBM Index: {market['hbm']} ({hbm_change:+.2f}%)
 🛢 Oil: {market['oil']}
@@ -813,6 +897,10 @@ async def main():
             if current_time - last_cleanup_run >= config.CLEANUP_INTERVAL:
                 cleanup_db()
                 last_cleanup_run = current_time
+
+            if current_time - last_research_run >= config.RESEARCH_INTERVAL:
+                await run_global_research()
+                last_research_run = current_time
 
             await asyncio.sleep(config.CHECK_INTERVAL)
 
