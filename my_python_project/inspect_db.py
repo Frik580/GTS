@@ -1,13 +1,19 @@
 import pandas as pd
+import config
 from db import get_db_connection, init_db
 
 def inspect_gts():
+    # Настраиваем Pandas, чтобы он не скрывал колонки и показывал текст полностью
+    pd.set_option('display.max_columns', None)  # Показывать все колонки
+    pd.set_option('display.expand_frame_repr', False)  # Не переносить таблицу на новую строку
+    pd.set_option('display.max_colwidth', 100)  # Увеличить ширину текста в колонках
+
     # Инициализируем БД, чтобы автоматически добавить недостающие колонки (is_correct)
     init_db()
 
     with get_db_connection() as conn:
         print("--- ТЕКУЩИЕ ВЕСА (ПОСЛЕ ОБУЧЕНИЯ) ---")
-        weights = pd.read_sql("SELECT * FROM weights", conn)
+        weights = pd.read_sql("SELECT * FROM weights ORDER BY weight DESC", conn)
         print(weights if not weights.empty else "Таблица весов пуста (используются дефолтные)")
         
         print("\n--- ГЛОБАЛЬНЫЕ ПРЕДЛОЖЕНИЯ ИИ (AI GLOBAL SUGGESTIONS) ---")
@@ -23,7 +29,10 @@ def inspect_gts():
         
         print("\n--- СТАТИСТИКА ПРОГНОЗОВ ---")
         total = pd.read_sql("SELECT COUNT(*) as total FROM predictions", conn).iloc[0]['total']
-        resolved_df = pd.read_sql("SELECT COUNT(*) as resolved, AVG(actual_move) as avg_move, SUM(is_correct) as correct FROM predictions WHERE resolved = 1", conn)
+        
+        # Считаем статистику только по тем новостям, которые были признаны значимыми (score >= 0.5)
+        query = f"SELECT COUNT(*) as resolved, AVG(actual_move) as avg_move, SUM(is_correct) as correct FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD}"
+        resolved_df = pd.read_sql(query, conn)
         
         resolved_count = resolved_df['resolved'].iloc[0]
         avg_move = resolved_df['avg_move'].iloc[0]
