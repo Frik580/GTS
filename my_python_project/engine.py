@@ -2,10 +2,7 @@ import feedparser
 import logging
 import re
 import time
-import os
 import json
-import signal
-import sys
 import asyncio
 import aiohttp
 from google import genai
@@ -18,7 +15,7 @@ except ImportError:
     HAS_TRANSFORMERS = False
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Tuple, Optional, Dict, Any
 from collections import defaultdict
 from db import get_db_connection, init_db
@@ -163,7 +160,11 @@ learning_rate = config.LEARNING_RATE
 
 def load_weights() -> Dict[str, float]:
     # Создаем базовые веса из TRACKED_KEYWORDS, преобразуя ключи в формат EVENT_KEY (например, "US Iran" -> "US_IRAN")
-    weights = {k.upper().replace(" ", "_"): v for k, v in config.TRACKED_KEYWORDS.items()}
+    weights = {}
+    for k, v in config.TRACKED_KEYWORDS.items():
+        # Сортируем части ключа (например, "US Iran" -> "IRAN_US"), чтобы они всегда совпадали с выходом make_event_key
+        key_parts = sorted(k.upper().replace(" ", "_").split("_"))
+        weights["_".join(key_parts)] = v
     
     # Синхронизация специфичных имен (если в конфиге Bitcoin, а в логике BTC)
     if "BITCOIN" in weights: weights["BTC"] = weights.pop("BITCOIN")
@@ -176,20 +177,34 @@ def load_weights() -> Dict[str, float]:
             weights[key] = val
     return weights
 
-def save_weights():
+def load_system_settings() -> float:
     with get_db_connection() as conn:
         cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = 'impact_multiplier'")
+        row = cursor.fetchone()
+        return row[0] if row else config.IMPACT_MULTIPLIER
+
+global_impact_multiplier = load_system_settings()
+
+def save_state():
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        # Сохраняем веса
         for key, val in event_weights.items():
             cursor.execute("""
                 INSERT INTO weights (event_key, weight) 
                 VALUES (?, ?) 
                 ON CONFLICT(event_key) DO UPDATE SET weight = excluded.weight
             """, (key, val))
+        
+        # Сохраняем глобальный множитель
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (global_impact_multiplier,))
         conn.commit()
 
 event_weights = load_weights()
-save_weights()  # Автоматическая синхронизация конфига с базой данных при старте
+save_state()  # Автоматическая синхронизация конфига с базой данных при старте
 logging.info(f"--- Веса загружены: {event_weights} ---")
+logging.info(f"--- Текущий IMPACT_MULTIPLIER: {global_impact_multiplier:.2f} ---")
 
 # =========================
 # AI ENGINE
@@ -365,27 +380,55 @@ def make_event_key(entities: List[str]) -> str:
     if not entities or "Unknown" in entities:
         return "GLOBAL"
 
-    # Приводим всё к нижнему регистру для поиска
-    ents_low = [e.lower() for e in entities]
-    ents_str = " ".join(ents_low)
+    # Список известных макро-сущностей для нормализации
+    canonical_map = {
+        "USA": "US", "UNITED STATES": "US",
+        "IRAN": "IRAN",
+        "ISRAEL": "ISRAEL",
+        "CHINA": "CHINA",
+        "RUSSIA": "RUSSIA",
+        "FED": "FED", "FEDERAL RESERVE": "FED",
+        "BITCOIN": "BTC", "BTC": "BTC",
+        "GOLD": "GOLD", "XAU": "GOLD",
+        "OIL": "OIL", "CRUDE": "OIL",
+        "NVDA": "NVIDIA", "NVIDIA": "NVIDIA"
+    }
 
-    if "iran" in ents_str and ("us" in ents_str or "usa" in ents_str):
-        return "US_IRAN"
+    # Автоматически добавляем все отслеживаемые слова из конфига в мапу нормализации
+    for kw in config.TRACKED_KEYWORDS.keys():
+        kw_up = kw.upper().replace(" ", "_")
+        if kw_up not in canonical_map:
+            canonical_map[kw_up] = kw_up
 
-    if "hormuz" in ents_str:
-        return "HORMUZ"
+    # 1. Нормализация и фильтрация
+    normalized = []
+    for ent in entities:
+        ent_up = ent.upper().replace(" ", "_")
+        # Проверяем по мапе синонимов
+        found_canonical = False
+        for syn, canonical in canonical_map.items():
+            if syn in ent_up:
+                normalized.append(canonical)
+                found_canonical = True
+                break
+        if not found_canonical:
+            normalized.append(ent_up)
 
-    if "oil" in ents_str:
-        return "OIL"
+    # 2. Удаляем дубликаты после нормализации
+    unique_ents = sorted(list(set(normalized)))
 
-    if "gold" in ents_str or "xau" in ents_str:
-        return "GOLD"
+    # 3. ОБОБЩЕНИЕ: 
+    # Если в списке есть ключевые слова из TRACKED_KEYWORDS, оставляем только их.
+    # Если нет — берем максимум 2 первые сущности, чтобы не плодить длинные ключи.
+    tracked_upper = [k.upper().replace(" ", "_") for k in config.TRACKED_KEYWORDS.keys()]
+    
+    # Проверяем в обе стороны: либо тема входит в сущность (NVIDIA -> NVIDIA_CORP), 
+    # либо сущность является частью темы (US -> US_IRAN)
+    matches = [e for e in unique_ents if any(t in e or e in t for t in tracked_upper)]
+    
+    result_ents = matches if matches else unique_ents[:2]
 
-    if "bitcoin" in ents_str or "btc" in ents_str:
-        return "BTC"
-
-    # Приводим к верхнему регистру, чтобы ключ совпадал с весами из load_weights
-    return "_".join(sorted(list(set(e.upper().replace(" ", "_") for e in entities))))
+    return "_".join(result_ents)
 
 # =========================
 # MARKET SIGNAL ENGINE
@@ -411,11 +454,24 @@ def market_signals(score: float, event_key: str) -> Dict[str, str]:
 # =========================
 
 def get_weight(event_key: str) -> float:
-    return event_weights.get(event_key, 1.0)
-
+    """
+    Возвращает вес для ключа. Если точного ключа нет, 
+    ищет максимальный вес среди отдельных сущностей в этом ключе.
+    """
+    if event_key in event_weights:
+        return event_weights[event_key]
+    
+    # Если ключа нет (например, это длинная комбинация), 
+    # проверяем веса отдельных компонентов (MIRA, OPENAI и т.д.)
+    parts = event_key.split('_')
+    if len(parts) > 1:
+        sub_weights = [event_weights.get(p, 1.0) for p in parts]
+        return max(sub_weights) # Возвращаем самое сильное влияние из известных
+        
+    return 1.0
 
 def predict_impact(score: float, event_key: str) -> float:
-    return min(abs(score) * get_weight(event_key) * config.IMPACT_MULTIPLIER, 100)
+    return min(abs(score) * get_weight(event_key) * global_impact_multiplier, 100)
 
 # =========================
 # SIGNAL ENGINE
@@ -473,13 +529,25 @@ def should_send(key: str, current_score: float) -> bool:
 # =========================
 
 def update_weights(event_key: str, predicted: float, actual: float):
+    global global_impact_multiplier
     error = actual - predicted
+    adjustment = learning_rate * error * 0.01
 
-    event_weights[event_key] = event_weights.get(event_key, 1.0)
-    event_weights[event_key] += learning_rate * error * 0.01
+    # Обновляем основной ключ
+    event_weights[event_key] = max(0.5, min(5.0, event_weights.get(event_key, 1.0) + adjustment))
 
-    # clamp
-    event_weights[event_key] = max(0.5, min(5.0, event_weights[event_key]))
+    # Обучаем глобальный множитель:
+    # Если ошибка положительная (actual > predicted), множитель должен расти.
+    # Используем меньший шаг для стабильности (0.005)
+    global_impact_multiplier = max(1.0, min(10.0, global_impact_multiplier + (learning_rate * error * 0.005)))
+
+    # Атомарное обучение: обновляем веса каждой отдельной сущности в ключе
+    # Это позволяет системе выучить, что "OPENAI" важен, даже если он встретился в новом контексте
+    parts = event_key.split('_')
+    if len(parts) > 1:
+        for part in parts:
+            if len(part) > 2: # Игнорируем слишком короткие сущности
+                event_weights[part] = max(0.5, min(5.0, event_weights.get(part, 1.0) + adjustment))
 
 async def get_fear_greed_index(session: aiohttp.ClientSession) -> Tuple[Optional[float], Optional[str], float]:
     """
@@ -616,7 +684,8 @@ async def learning_cycle(session: aiohttp.ClientSession):
             """, (actual, is_correct, row['id']))
         conn.commit()
 
-    save_weights()
+    save_state()
+    logging.info(f"System settings saved. New IMPACT_MULTIPLIER: {global_impact_multiplier:.2f}")
 
 def cleanup_db():
     """
@@ -698,8 +767,10 @@ async def main():
                     event_key = make_event_key(entities)
                     event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + score))
                     
-                    market = market_signals(score, event_key)
-                    prob = predict_impact(event_scores[event_key], event_key)
+                    # Для сигналов используем кумулятивный балл (состояние рынка)
+                    # Для вероятности (Impact) теперь тоже, но с исправленным множителем 4.0
+                    market = market_signals(event_scores[event_key], event_key)
+                    prob = predict_impact(event_scores[event_key], event_key) 
                     sig_type = generate_signal(prob, event_scores[event_key])
 
                     with get_db_connection() as conn:
