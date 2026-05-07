@@ -507,14 +507,15 @@ def predict_impact(score: float, event_key: str) -> float:
 # =========================
 
 def generate_signal(prob: float, score: float) -> str:
-    if prob > 70 and score > 0:
-        return "🔴 HIGH RISK-OFF"
-    elif prob > 40:
-        return "🟠 MEDIUM RISK"
-    elif score < 0:
+    if score > 0:  # Медвежий сценарий (Risk-Off)
+        if prob > 70: return "🔴 HIGH RISK-OFF"
+        if prob > 40: return "🟠 MEDIUM RISK"
+        return "🟡 CAUTION"
+    elif score < 0:  # Бычий сценарий (Risk-On)
+        if prob > 70: return "🚀 STRONG RISK-ON"
         return "🟢 RISK-ON"
-    else:
-        return "⚪ NEUTRAL"
+    
+    return "⚪ NEUTRAL"
 
 # =========================
 # TELEGRAM
@@ -779,6 +780,125 @@ def cleanup_db():
 # MAIN LOOP
 # =========================
 
+async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop, fng_val: float, fng_label: str, market_context: Dict[str, Any]):
+    """Обрабатывает одну RSS ленту."""
+    try:
+        feed = await loop.run_in_executor(sync_executor, lambda: feedparser.parse(url))
+    except Exception as e:
+        logging.error(f"Feed error {url}: {e}")
+        return
+
+    for entry in feed.entries[:3]:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM events WHERE link = ?", (entry.link,))
+            if cursor.fetchone():
+                continue
+
+        text = entry.title + " " + entry.get("summary", "")
+        analysis = await ai_analyze(text)
+        
+        if analysis[0] is None:
+            continue
+
+        score, event_type, entities, source = analysis
+
+        # Определение рейтинга доверия источнику новости
+        # Google News RSS обычно указывает источник в конце заголовка через дефис или в поле source
+        news_source = entry.get('source', {}).get('title', '').lower()
+        if not news_source and ' - ' in entry.title:
+            news_source = entry.title.split(' - ')[-1].lower()
+            
+        trust_factor = config.DEFAULT_TRUST_SCORE
+        for s_key, s_weight in config.SOURCE_TRUST_LEVELS.items():
+            if s_key.lower() in news_source:
+                trust_factor = s_weight
+                break
+        
+        # Применяем коэффициент доверия к баллу новости
+        score *= trust_factor
+        
+        current_delay = config.AI_DELAY_JSON if get_active_model()["supports_json"] else config.AI_DELAY_NO_JSON
+        await asyncio.sleep(current_delay)
+
+        event_key = make_event_key(entities)
+
+        # Фильтр шума: если новость нейтральная и не относится к списку отслеживаемых тем,
+        # мы полностью пропускаем её, чтобы не засорять БД и таблицу весов (KEYWORDS).
+        is_tracked = any(part in event_weights for part in event_key.split('_')) or event_key in event_weights
+        if abs(score) < config.NEUTRAL_SCORE_THRESHOLD and not is_tracked:
+            logging.info(f"Skipping noise event: {event_key}")
+            continue
+
+        event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + score))
+        
+        market = market_signals(event_scores[event_key], event_key)
+        prob = predict_impact(event_scores[event_key], event_key) 
+        sig_type = generate_signal(prob, event_scores[event_key])
+
+        # Улучшенный поиск активов: проверяем части составного ключа
+        target_assets_set = set()
+        for part in event_key.split('_'):
+            if part in event_asset_map:
+                target_assets_set.update(event_asset_map[part])
+        if event_key in event_asset_map:
+            target_assets_set.update(event_asset_map[event_key])
+        
+        target_assets = list(target_assets_set) if target_assets_set else ["global"]
+
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO events (title, link, score, event, nasdaq, oil, hbm, soxs, gold, btc, vix, fear_greed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val))
+            
+            for asset_name in target_assets:
+                cursor.execute("""
+                    INSERT INTO predictions (event_key, score, predicted_impact, target_asset, resolved) 
+                    VALUES (?, ?, ?, ?, 0)
+                """, (event_key, event_scores[event_key], prob, asset_name))
+            conn.commit()
+
+        # Не отправляем в Telegram, если Score слишком низкий (шум)
+        # и это не накопленный критический балл по ключу.
+        is_significant = abs(score) >= config.NEUTRAL_SCORE_THRESHOLD or abs(event_scores[event_key]) >= config.SIGNAL_THRESHOLD_LOW
+        if is_significant and should_send(event_key, score):
+            if event_key == "BTC" and abs(market_context.get("btc_change", 0)) < config.BTC_MIN_VOLATILITY_FOR_ALERT:
+                continue
+            
+            # Собираем прогнозы и текущие изменения по целевым активам
+            forecast_details = []
+
+            # 1. Сначала всегда добавляем глобальный рынок (Market) первым и без процентов
+            if any(a.lower() == "global" for a in target_assets):
+                forecast_details.append(f"🌍 MARKET: {sig_type}")
+
+            # 2. Добавляем остальные активы
+            for asset in target_assets:
+                a_key = asset.lower()
+                if a_key == "global":
+                    continue
+                
+                change = market_context.get(f"{a_key}_change", 0.0)
+                signal = market.get(a_key, "flat").upper()
+                icon = "🟢" if "BULLISH" in signal else "🔴" if "BEARISH" in signal else "⚪"
+                forecast_details.append(f"{icon} {a_key.upper()}: {signal} ({change:+.2f}%)")
+            
+            forecast_str = "\n".join(forecast_details)
+            msg = (
+                f"🧠 EVENT: {event_key}\n"
+                f"🤖 Model: {source}\n"
+                f"Score: {event_scores[event_key]:.2f} | Impact: {prob:+.2f}%\n"
+                f"-------------------\n"
+                f"{forecast_str}\n"
+                f"-------------------\n"
+                f"📰 {entry.title}\n"
+                f"🔗 {entry.link}"
+            )
+            await send_telegram(session, msg)
+
+
 async def main():
     last_learning_run = 0
     last_cleanup_run = 0
@@ -796,89 +916,15 @@ async def main():
                 event_scores[key] *= config.DECAY_FACTOR
 
             current_market_data = await get_market_data(session)
-            btc_change = current_market_data.get("btc_change", 0)
-            gold_change = current_market_data.get("gold_change", 0)
-            hbm_change = current_market_data.get("hbm_change", 0)
-            soxs_change = current_market_data.get("soxs_change", 0)
             fng_val = current_market_data.get("fng_val", 50)
             fng_label = current_market_data.get("fng_label", "Neutral")
 
-            for url in config.RSS_FEEDS:
-                try:
-                    # feedparser блокирующий, запускаем в экзекуторе
-                    feed = await loop.run_in_executor(sync_executor, lambda: feedparser.parse(url))
-                except Exception as e:
-                    logging.error(f"Feed error {url}: {e}")
-                    continue
-
-                for entry in feed.entries[:3]:
-                    with get_db_connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT id FROM events WHERE link = ?", (entry.link,))
-                        if cursor.fetchone():
-                            continue
-
-                    text = entry.title + " " + entry.get("summary", "")
-                    analysis = await ai_analyze(text)
-                    
-                    if analysis[0] is None:
-                        continue
-
-                    score, event_type, entities, source = analysis
-                    
-                    # Динамическая задержка: 15с для Flash (JSON), 60с для Pro (No JSON)
-                    current_delay = config.AI_DELAY_JSON if get_active_model()["supports_json"] else config.AI_DELAY_NO_JSON
-                    await asyncio.sleep(current_delay)
-
-                    event_key = make_event_key(entities)
-                    event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + score))
-                    
-                    # Для сигналов используем кумулятивный балл (состояние рынка)
-                    # Для вероятности (Impact) теперь тоже, но с исправленным множителем 4.0
-                    market = market_signals(event_scores[event_key], event_key)
-                    prob = predict_impact(event_scores[event_key], event_key) 
-                    sig_type = generate_signal(prob, event_scores[event_key])
-
-                    # Получаем список целевых активов для данного ключа
-                    target_assets_for_event = event_asset_map.get(event_key, ["global"])
-
-                    with get_db_connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                            INSERT INTO events (title, link, score, event, nasdaq, oil, hbm, soxs, gold, btc, vix, fear_greed)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val))
-                        
-                        # Создаем отдельный прогноз для каждого целевого актива
-                        for asset_name in target_assets_for_event:
-                            cursor.execute("""
-                                INSERT INTO predictions (event_key, score, predicted_impact, target_asset, resolved) 
-                                VALUES (?, ?, ?, ?, 0)
-                            """, (event_key, event_scores[event_key], prob, asset_name))
-                        conn.commit()
-
-                    if should_send(event_key, score):
-                        if event_key == "BTC" and abs(btc_change) < config.BTC_MIN_VOLATILITY_FOR_ALERT:
-                            continue
-
-                        msg = f"""
-🧠 EVENT: {event_key}
-🤖 Model: {source}
-� SIGNAL: {sig_type}
- Score: {event_scores[event_key]:.2f}
-😨 Fear & Greed: {fng_val} ({fng_label})
-📈 Impact: {prob:+.2f}%
-📉 Nasdaq: {market['nasdaq']}
-🧊 HBM Index: {market['hbm']} ({hbm_change:+.2f}%)
-🛢 Oil: {market['oil']}
-⚡ SOXS: {market['soxs']} ({soxs_change:+.2f}%)
-✨ Gold: {market['gold']} ({gold_change:+.2f}%)
-₿ BTC: {market['btc']} ({btc_change:+.2f}%)
-📊 VIX: {market['vix']}
-📰 {entry.title}
-🔗 {entry.link}
-"""
-                        await send_telegram(session, msg)
+            # Параллельный запуск обработки всех лент
+            tasks = [
+                process_single_feed(url, session, loop, fng_val, fng_label, current_market_data)
+                for url in config.RSS_FEEDS
+            ]
+            await asyncio.gather(*tasks)
 
             current_time = time.time()
             if current_time - last_learning_run >= config.LEARNING_INTERVAL:

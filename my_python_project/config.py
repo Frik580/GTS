@@ -43,7 +43,7 @@ AI_DELAY_JSON = 15 # Время ожидания ответа от модели 
 AI_DELAY_NO_JSON = 60 # Время ожидания ответа от модели при отсутствии JSON (60 секунд)
 
 # Logic Factors
-MARKET_LOOKBACK_HOURS = 4
+MARKET_LOOKBACK_HOURS = 4 # Количество часов для анализа рыночных данных вокруг события
 DECAY_FACTOR = 0.95 # Увеличиваем скорость затухания для более быстрой адаптации к новым данным
 MAX_SCORE_THRESHOLD = 25.0 # Увеличиваем порог для отправки сигналов, чтобы уменьшить количество ложных срабатываний
 SCALING_FACTOR = 10.0 # Увеличиваем масштаб для более заметного влияния предсказаний
@@ -52,6 +52,20 @@ IMPACT_MULTIPLIER = 4.0 # Начальное значение. После ста
 LEARNING_THRESHOLD = 0.1 # Минимальное движение цены (%) для учета в обучении
 MIN_WEIGHT_THRESHOLD = 0.5 # Порог веса, ниже которого ключ удаляется из БД
 NEUTRAL_SCORE_THRESHOLD = 0.5 # Новости со Score ниже этого порога не участвуют в обучении
+
+# Рейтинг доверия источникам (Trust Factor)
+SOURCE_TRUST_LEVELS = {
+    "reuters": 1.3,        # Повышенное доверие
+    "bloomberg": 1.3,
+    "wsj": 1.2,
+    "financial times": 1.2,
+    "cnbc": 1.0,           # Стандарт
+    "yahoo finance": 1.0,
+    "reddit": 0.5,         # Пониженное доверие (высокий риск шума)
+    "twitter": 0.4,
+    "x.com": 0.4
+}
+DEFAULT_TRUST_SCORE = 0.8  # Значение для неизвестных источников
 
 # Thresholds for market signals (Empirical sensitivity)
 SIGNAL_THRESHOLD_HIGH = 3.0  # For Indices (Nasdaq, SOXS)
