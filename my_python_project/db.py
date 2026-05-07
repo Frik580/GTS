@@ -83,7 +83,8 @@ def init_db():
             "predictions": {
                 "actual_move": "REAL DEFAULT 0",
                 "resolved": "INTEGER DEFAULT 0",
-                "is_correct": "INTEGER DEFAULT 0"
+                "is_correct": "INTEGER DEFAULT 0",
+                "target_asset": "TEXT"
             }
         }
 
