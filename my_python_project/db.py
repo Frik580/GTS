@@ -66,6 +66,8 @@ def init_db():
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_link ON events(link)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_resolved ON predictions(resolved)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_key ON predictions(event_key)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_timestamp ON predictions(timestamp)")
 
         # Словарь миграций: описываем колонки, которые должны быть в таблицах
         # Это позволяет добавлять новые активы просто дополняя этот список
