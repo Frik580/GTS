@@ -782,13 +782,20 @@ async def learning_cycle(session: aiohttp.ClientSession):
 def cleanup_db():
     """
     Удаляет записи из БД, которые старше RETENTION_DAYS, чтобы предотвратить разрастание файла.
+    Также удаляет ключи из таблицы весов, значение которых ниже MIN_WEIGHT_THRESHOLD.
     """
     try:
+        global event_weights
         with get_db_connection() as conn:
             cursor = conn.cursor()
             # Удаляем старые события и прогнозы
             cursor.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
             cursor.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+            
+            # Удаляем ключи с критически низким весом
+            cursor.execute("DELETE FROM weights WHERE weight < ?", (config.MIN_WEIGHT_THRESHOLD,))
+            deleted_weights = cursor.rowcount
+            
             conn.commit()  # Завершаем транзакцию после удаления
             
             # VACUUM пересобирает базу, освобождая место на диске
@@ -797,7 +804,11 @@ def cleanup_db():
             conn.execute("VACUUM")
             conn.isolation_level = old_isolation
             
-            logging.info(f"--- База данных оптимизирована: удалены данные старше {config.RETENTION_DAYS} дней ---")
+            # Обновляем веса в оперативной памяти после очистки БД
+            event_weights = load_weights()
+            
+            logging.info(f"--- База данных оптимизирована: удалены данные старше {config.RETENTION_DAYS} дней "
+                         f"и {deleted_weights} ключей с весом < {config.MIN_WEIGHT_THRESHOLD} ---")
     except Exception as e:
         logging.error(f"Ошибка при очистке БД: {e}")
 
