@@ -49,6 +49,7 @@ SCALING_FACTOR = 10.0 # Увеличиваем масштаб для более 
 LEARNING_RATE = 0.05  # Увеличиваем скорость обучения для более быстрой адаптации
 IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
 LEARNING_THRESHOLD = 0.1 # Минимальное движение цены (%) для учета в обучении
+MIN_WEIGHT_THRESHOLD = 0.9 # Порог веса, ниже которого ключ удаляется из БД
 
 # Thresholds for market signals (Empirical sensitivity)
 SIGNAL_THRESHOLD_HIGH = 3.0  # For Indices (Nasdaq, SOXS)
