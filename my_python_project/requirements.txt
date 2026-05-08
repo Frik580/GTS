@@ -1,8 +1,10 @@
-aiohttp
-google-generativeai
 feedparser
+google-genai
 yfinance
-pandas
+transformers
+torch
 streamlit
+aiohttp
 python-dotenv
-requests
+pandas
+sqlite3

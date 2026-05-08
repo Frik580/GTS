@@ -905,10 +905,13 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         if event_key in event_asset_map:
             target_assets_set.update(event_asset_map[event_key])
 
-        # 2. Поиск по частям event_key (например, "BTC" в "BTC_IRAN_US")
-        for part in event_key.split('_'):
-            if part in event_asset_map:
-                target_assets_set.update(event_asset_map[part])
+        # 2. Поиск по частям event_key, но только если сущностей немного
+        # Ограничение через MAX_ENTITY_PARTS делает систему строже, исключая случайные связи
+        parts = event_key.split('_')
+        if len(parts) <= config.MAX_ENTITY_PARTS:
+            for part in parts:
+                if part in event_asset_map:
+                    target_assets_set.update(event_asset_map[part])
 
         # 3. Поиск, если event_key является подстрокой или содержит ключ из event_asset_map
         # (например, event_key="IRAN", а в event_asset_map есть "IRAN_US")
