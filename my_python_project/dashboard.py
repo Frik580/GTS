@@ -1,13 +1,13 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
+from db import get_db_connection
 
 st.set_page_config(layout="wide", page_title="GTS 3.0 Terminal")
 
 @st.cache_data(ttl=30)
 def load_data():
     # Используем context manager для автоматического закрытия соединения
-    with sqlite3.connect("gts.db") as conn:
+    with get_db_connection() as conn:
         return pd.read_sql("SELECT * FROM events ORDER BY timestamp DESC LIMIT 50", conn)
 
 st.title("📊 GTS 3.0 LIVE Terminal")
