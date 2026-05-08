@@ -17494,3 +17494,383 @@
 2026-05-08 14:41:26,552 [INFO] Получен сигнал завершения (Ctrl+C или системный).
 2026-05-08 14:41:26,552 [INFO] Закрытие соединений и остановка фоновых задач...
 2026-05-08 14:41:26,553 [INFO] GTS 4.0 остановлен.
+2026-05-08 15:06:18,152 [INFO] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/models "HTTP/1.1 200 OK"
+2026-05-08 15:06:18,159 [INFO] Доступные модели в API: 33
+2026-05-08 15:06:18,159 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-flash-lite (Приоритет 1)
+2026-05-08 15:06:18,160 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-pro-preview (Приоритет 2)
+2026-05-08 15:06:18,160 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-flash-preview (Приоритет 3)
+2026-05-08 15:06:18,160 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-pro-preview (Приоритет 4)
+2026-05-08 15:06:18,161 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-flash (Приоритет 5)
+2026-05-08 15:06:18,161 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-pro (Приоритет 6)
+2026-05-08 15:06:18,161 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.0-flash (Приоритет 7)
+2026-05-08 15:06:18,161 [INFO] ✅ Добавлена в пул ротации: models/gemini-flash-latest (Приоритет 11)
+2026-05-08 15:06:18,161 [INFO] ✅ Добавлена в пул ротации: models/gemini-pro-latest (Приоритет 12)
+2026-05-08 15:06:18,162 [INFO] Пул моделей готов: ['models/gemini-3.1-flash-lite', 'models/gemini-3.1-pro-preview', 'models/gemini-3-flash-preview', 'models/gemini-3-pro-preview', 'models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/gemini-2.0-flash', 'models/gemini-flash-latest', 'models/gemini-pro-latest']. Старт с: models/gemini-3.1-flash-lite
+2026-05-08 15:06:18,164 [INFO] ✅ IMPACT_MULTIPLIER загружен из БД: 1.0
+2026-05-08 15:06:18,181 [INFO] --- Веса загружены: {'IRAN_US': 1.4722579286428443, 'NVIDIA': 1.0142176129351472, 'OPENAI': 0.9167962953279386, 'OIL': 1.5, 'GOLD': 1.0142544177902952, 'BTC': 0.5605021739031678, 'NASDAQ': 0.7451051216633899, 'AI': 1.5, 'TRUMP': 1.8821220677470816, 'MICRON': 1.1989714461457799, 'GLOBAL': 1.2881001911728456, 'US_IRAN': 1.578344728427096, 'HORMUZ': 2.952143846797536, 'US': 1.0, 'NASDAQ_NVIDIA': 0.958, 'ELON_MUSK_OPENAI': 0.994, 'NVIDIA_SUPER_MICRO': 0.985, 'CORNING_NVIDIA': 0.982, 'MICHIGAN_OPENAI_ORACLE': 0.994, 'ELON_MUSK_GREG_BROCKMAN_OPENAI_TESLA': 0.994, 'ELON_MUSK_OPENAI_SAM_ALTMAN': 0.997, 'MIRA_MURATI_OPENAI_SAM_ALTMAN': 0.997, 'BTC_MICROSTRATEGY': 0.9714444716465459, 'IRAN_NASDAQ_US': 0.9908797727010485, 'GOLD_US': 0.9943190719984832, 'GOLD_IRAN_US': 0.9919955196797373, 'REALTOR.COM': 1.006997078030802, 'IRAN_OIL_US': 0.8760753018422784, 'NASDAQ_OIL': 0.9892312335259991, 'BTC_TON': 1.0112688125976745, 'MARK_STEVENS_USC': 1.0135676718734294, 'IRAN_NASDAQ': 0.9769750518942358, 'AI_IRAN_OIL': 0.9812790678611779, 'IRAN_NASDAQ_OIL': 0.9701623313238459, 'GOLD_IRAN': 0.9323173367711869, 'AI_US': 0.9853107913210996, 'AI_IRAN': 0.992592981763546, 'AI_OIL': 0.9419143672849672, 'IRAN_OIL': 0.8507508112015403, 'GOLD_IRAN_OIL_US': 0.9970049467792869, 'AI_IRAN_NASDAQ_OIL': 0.9471068713738282, 'IRAN_TRUMP_US': 0.9839698693547525, 'IRAN_NASDAQ_OIL_US': 0.9926128232924715, 'AI_NVIDIA_US': 0.9785200478398981, 'NVIDIA_TRUMP': 0.9213610559587213, 'UNITED_STATES': 0.9964241464045268, 'IRAN_OIL_TRUMP_US': 0.9548321589145526} ---
+2026-05-08 15:06:18,181 [INFO] --- Текущий IMPACT_MULTIPLIER: 1.00 ---
+2026-05-08 15:06:18,183 [INFO] Первичный запуск цикла обучения...
+2026-05-08 15:06:21,263 [INFO] 🧠 Начало цикла обучения. Найдено кандидатов для обработки: 100
+2026-05-08 15:06:21,263 [INFO] Learning: AI | hbm | ✅ | MATCH | Score: -21.9 | Mkt: +0.42%
+2026-05-08 15:06:21,263 [INFO] 📈 Weight adjustment for AI: -0.0015 (New weight: 1.50)
+2026-05-08 15:06:21,268 [INFO] Learning: AI | soxs | ✅ | MATCH | Score: -21.9 | Mkt: -1.26%
+2026-05-08 15:06:21,269 [INFO] 📈 Weight adjustment for AI: -0.0002 (New weight: 1.50)
+2026-05-08 15:06:21,269 [INFO] Learning: IRAN_OIL | vix | ❌ | CONTRARY | Score: 19.3 | Mkt: -0.47%
+2026-05-08 15:06:21,270 [INFO] 📈 Weight adjustment for IRAN_OIL: -0.0028 (New weight: 0.85)
+2026-05-08 15:06:21,270 [INFO] Learning: IRAN_OIL | global | ❌ | CONTRARY | Score: 19.3 | Mkt: -0.47%
+2026-05-08 15:06:21,270 [INFO] 📈 Weight adjustment for IRAN_OIL: -0.0028 (New weight: 0.85)
+2026-05-08 15:06:21,270 [INFO] Learning: AI | hbm | ✅ | MATCH | Score: -21.1 | Mkt: +0.42%
+2026-05-08 15:06:21,270 [INFO] 📈 Weight adjustment for AI: -0.0014 (New weight: 1.50)
+2026-05-08 15:06:21,271 [INFO] Learning: AI | soxs | ✅ | MATCH | Score: -21.1 | Mkt: -1.26%
+2026-05-08 15:06:21,271 [INFO] 📈 Weight adjustment for AI: -0.0001 (New weight: 1.50)
+2026-05-08 15:06:21,271 [INFO] Learning: AI_NVIDIA | global | ✅ | MATCH | Score: -24.2 | Mkt: -0.47%
+2026-05-08 15:06:21,271 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0017 (New weight: 1.00)
+2026-05-08 15:06:21,271 [INFO] Learning: AI_NVIDIA | hbm | ✅ | MATCH | Score: -24.2 | Mkt: +0.42%
+2026-05-08 15:06:21,272 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0017 (New weight: 1.00)
+2026-05-08 15:06:21,272 [INFO] Learning: AI_NVIDIA | soxs | ✅ | MATCH | Score: -24.2 | Mkt: -1.26%
+2026-05-08 15:06:21,272 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0004 (New weight: 1.00)
+2026-05-08 15:06:21,272 [INFO] Learning: MICRON_NVIDIA | global | ✅ | MATCH | Score: -2.0 | Mkt: -0.47%
+2026-05-08 15:06:21,272 [INFO] 📈 Weight adjustment for MICRON_NVIDIA: +0.0003 (New weight: 1.00)
+2026-05-08 15:06:21,272 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 1.3)
+2026-05-08 15:06:21,273 [INFO] Learning: MICRON_NVIDIA | hbm | ✅ | MATCH | Score: -2.0 | Mkt: +0.42%
+2026-05-08 15:06:21,273 [INFO] 📈 Weight adjustment for MICRON_NVIDIA: +0.0002 (New weight: 1.00)
+2026-05-08 15:06:21,273 [INFO] Learning: MICRON_NVIDIA | soxs | ✅ | MATCH | Score: -2.0 | Mkt: -1.26%
+2026-05-08 15:06:21,273 [INFO] 📈 Weight adjustment for MICRON_NVIDIA: +0.0015 (New weight: 1.00)
+2026-05-08 15:06:21,273 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 7.6)
+2026-05-08 15:06:21,274 [INFO] Learning: IRAN_US | vix | ✅ | MATCH | Score: -6.9 | Mkt: -0.47%
+2026-05-08 15:06:21,274 [INFO] 📈 Weight adjustment for IRAN_US: -0.0014 (New weight: 1.47)
+2026-05-08 15:06:21,274 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -7.1)
+2026-05-08 15:06:21,274 [INFO] Learning: IRAN_US | global | ✅ | MATCH | Score: -6.9 | Mkt: -0.47%
+2026-05-08 15:06:21,275 [INFO] 📈 Weight adjustment for IRAN_US: -0.0014 (New weight: 1.47)
+2026-05-08 15:06:21,275 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -7.1)
+2026-05-08 15:06:21,275 [INFO] Learning: IRAN_OIL_US | vix | ❌ | CONTRARY | Score: 20.3 | Mkt: -0.47%
+2026-05-08 15:06:21,276 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0031 (New weight: 0.87)
+2026-05-08 15:06:21,276 [INFO] Learning: IRAN_OIL_US | global | ❌ | CONTRARY | Score: 20.3 | Mkt: -0.47%
+2026-05-08 15:06:21,276 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0031 (New weight: 0.87)
+2026-05-08 15:06:21,276 [INFO] Learning: AI_NVIDIA | global | ✅ | MATCH | Score: -24.1 | Mkt: -0.47%
+2026-05-08 15:06:21,277 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0017 (New weight: 0.99)
+2026-05-08 15:06:21,277 [INFO] Learning: AI_NVIDIA | hbm | ✅ | MATCH | Score: -24.1 | Mkt: +0.42%
+2026-05-08 15:06:21,277 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0017 (New weight: 0.99)
+2026-05-08 15:06:21,277 [INFO] Learning: AI_NVIDIA | soxs | ✅ | MATCH | Score: -24.1 | Mkt: -1.26%
+2026-05-08 15:06:21,277 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0004 (New weight: 0.99)
+2026-05-08 15:06:21,277 [INFO] Learning: TRUMP | vix | ❌ | CONTRARY | Score: 15.4 | Mkt: -0.47%
+2026-05-08 15:06:21,277 [INFO] 📈 Weight adjustment for TRUMP: -0.0052 (New weight: 1.88)
+2026-05-08 15:06:21,277 [INFO] Learning: TRUMP | global | ❌ | CONTRARY | Score: 15.4 | Mkt: -0.47%
+2026-05-08 15:06:21,278 [INFO] 📈 Weight adjustment for TRUMP: -0.0052 (New weight: 1.87)
+2026-05-08 15:06:21,278 [INFO] Learning: IRAN_TRUMP_US | vix | ❌ | CONTRARY | Score: 7.9 | Mkt: -0.47%
+2026-05-08 15:06:21,278 [INFO] 📈 Weight adjustment for IRAN_TRUMP_US: -0.0008 (New weight: 0.98)
+2026-05-08 15:06:21,278 [INFO] Learning: IRAN_TRUMP_US | global | ❌ | CONTRARY | Score: 7.9 | Mkt: -0.47%
+2026-05-08 15:06:21,278 [INFO] 📈 Weight adjustment for IRAN_TRUMP_US: -0.0008 (New weight: 0.98)
+2026-05-08 15:06:21,278 [INFO] Learning: IRAN_US | vix | ✅ | MATCH | Score: -12.7 | Mkt: -0.47%
+2026-05-08 15:06:21,278 [INFO] 📈 Weight adjustment for IRAN_US: -0.0033 (New weight: 1.47)
+2026-05-08 15:06:21,278 [INFO] Learning: IRAN_US | global | ✅ | MATCH | Score: -12.7 | Mkt: -0.47%
+2026-05-08 15:06:21,279 [INFO] 📈 Weight adjustment for IRAN_US: -0.0033 (New weight: 1.46)
+2026-05-08 15:06:21,279 [INFO] Learning: IRAN_OIL_US | vix | ❌ | CONTRARY | Score: 21.4 | Mkt: -0.47%
+2026-05-08 15:06:21,279 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0033 (New weight: 0.87)
+2026-05-08 15:06:21,279 [INFO] Learning: IRAN_OIL_US | global | ❌ | CONTRARY | Score: 21.4 | Mkt: -0.47%
+2026-05-08 15:06:21,279 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0033 (New weight: 0.86)
+2026-05-08 15:06:21,280 [INFO] Learning: AI_OPENAI | hbm | ✅ | MATCH | Score: -25.0 | Mkt: +0.42%
+2026-05-08 15:06:21,280 [INFO] 📈 Weight adjustment for AI_OPENAI: -0.0018 (New weight: 1.00)
+2026-05-08 15:06:21,280 [INFO] Learning: AI_OPENAI | soxs | ✅ | MATCH | Score: -25.0 | Mkt: -1.26%
+2026-05-08 15:06:21,280 [INFO] 📈 Weight adjustment for AI_OPENAI: -0.0005 (New weight: 1.00)
+2026-05-08 15:06:21,280 [INFO] Learning: AI_NVIDIA_US | global | ❌ | CONTRARY | Score: 7.5 | Mkt: -0.47%
+2026-05-08 15:06:21,280 [INFO] 📈 Weight adjustment for AI_NVIDIA_US: -0.0007 (New weight: 0.98)
+2026-05-08 15:06:21,281 [INFO] Learning: AI_NVIDIA_US | hbm | ❌ | CONTRARY | Score: 7.5 | Mkt: +0.42%
+2026-05-08 15:06:21,281 [INFO] 📈 Weight adjustment for AI_NVIDIA_US: -0.0008 (New weight: 0.98)
+2026-05-08 15:06:21,281 [INFO] Learning: AI_NVIDIA_US | soxs | ❌ | CONTRARY | Score: 7.5 | Mkt: -1.26%
+2026-05-08 15:06:21,281 [INFO] 📈 Weight adjustment for AI_NVIDIA_US: +0.0005 (New weight: 0.98)
+2026-05-08 15:06:21,282 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 2.7)
+2026-05-08 15:06:21,282 [INFO] Learning: IRAN_OIL_US | vix | ❌ | CONTRARY | Score: 18.8 | Mkt: -0.47%
+2026-05-08 15:06:21,282 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0028 (New weight: 0.86)
+2026-05-08 15:06:21,282 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -14.1)
+2026-05-08 15:06:21,282 [INFO] Learning: IRAN_OIL_US | global | ❌ | CONTRARY | Score: 18.8 | Mkt: -0.47%
+2026-05-08 15:06:21,282 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0028 (New weight: 0.86)
+2026-05-08 15:06:21,283 [INFO] Learning: GOLD_OIL | vix | ✅ | MATCH | Score: -1.6 | Mkt: -0.47%
+2026-05-08 15:06:21,283 [INFO] 📈 Weight adjustment for GOLD_OIL: +0.0004 (New weight: 1.00)
+2026-05-08 15:06:21,283 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 1.9)
+2026-05-08 15:06:21,283 [INFO] Learning: GOLD_OIL | global | ✅ | MATCH | Score: -1.6 | Mkt: -0.47%
+2026-05-08 15:06:21,283 [INFO] 📈 Weight adjustment for GOLD_OIL: +0.0004 (New weight: 1.00)
+2026-05-08 15:06:21,283 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 1.9)
+2026-05-08 15:06:21,284 [INFO] Learning: AI_IRAN_OIL | global | ❌ | CONTRARY | Score: 16.2 | Mkt: -0.47%
+2026-05-08 15:06:21,284 [INFO] 📈 Weight adjustment for AI_IRAN_OIL: -0.0024 (New weight: 0.98)
+2026-05-08 15:06:21,284 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -12.2)
+2026-05-08 15:06:21,284 [INFO] Learning: AI_IRAN_OIL | hbm | ❌ | CONTRARY | Score: 16.2 | Mkt: +0.42%
+2026-05-08 15:06:21,284 [INFO] 📈 Weight adjustment for AI_IRAN_OIL: -0.0025 (New weight: 0.98)
+2026-05-08 15:06:21,284 [INFO] Learning: AI_IRAN_OIL | vix | ❌ | CONTRARY | Score: 16.2 | Mkt: -0.47%
+2026-05-08 15:06:21,284 [INFO] 📈 Weight adjustment for AI_IRAN_OIL: -0.0024 (New weight: 0.97)
+2026-05-08 15:06:21,285 [INFO] Learning: AI_IRAN_OIL | soxs | ❌ | CONTRARY | Score: 16.2 | Mkt: -1.26%
+2026-05-08 15:06:21,285 [INFO] 📈 Weight adjustment for AI_IRAN_OIL: -0.0012 (New weight: 0.97)
+2026-05-08 15:06:21,285 [INFO] Learning: TRUMP | vix | ❌ | CONTRARY | Score: 18.0 | Mkt: -0.47%
+2026-05-08 15:06:21,285 [INFO] 📈 Weight adjustment for TRUMP: -0.0062 (New weight: 1.86)
+2026-05-08 15:06:21,285 [INFO] Learning: TRUMP | global | ❌ | CONTRARY | Score: 18.0 | Mkt: -0.47%
+2026-05-08 15:06:21,286 [INFO] 📈 Weight adjustment for TRUMP: -0.0062 (New weight: 1.86)
+2026-05-08 15:06:21,286 [INFO] Learning: AI | hbm | ✅ | MATCH | Score: -25.0 | Mkt: +0.42%
+2026-05-08 15:06:21,286 [INFO] 📈 Weight adjustment for AI: -0.0018 (New weight: 1.49)
+2026-05-08 15:06:21,286 [INFO] Learning: AI | soxs | ✅ | MATCH | Score: -25.0 | Mkt: -1.26%
+2026-05-08 15:06:21,286 [INFO] 📈 Weight adjustment for AI: -0.0005 (New weight: 1.49)
+2026-05-08 15:06:21,287 [INFO] Learning: BTC_MICROSTRATEGY | global | ❌ | CONTRARY | Score: 1.6 | Mkt: -0.47%
+2026-05-08 15:06:21,287 [INFO] 📈 Weight adjustment for BTC_MICROSTRATEGY: +0.0004 (New weight: 0.97)
+2026-05-08 15:06:21,287 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 2.2)
+2026-05-08 15:06:21,287 [INFO] Learning: GOLD | global | ✅ | MATCH | Score: -21.7 | Mkt: -0.47%
+2026-05-08 15:06:21,287 [INFO] 📈 Weight adjustment for GOLD: -0.0043 (New weight: 1.01)
+2026-05-08 15:06:21,287 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -21.4)
+2026-05-08 15:06:21,288 [INFO] Learning: NVIDIA | global | ✅ | MATCH | Score: -15.6 | Mkt: -0.47%
+2026-05-08 15:06:21,288 [INFO] 📈 Weight adjustment for NVIDIA: -0.0030 (New weight: 1.00)
+2026-05-08 15:06:21,288 [INFO] Learning: NVIDIA | hbm | ✅ | MATCH | Score: -15.6 | Mkt: +0.42%
+2026-05-08 15:06:21,288 [INFO] 📈 Weight adjustment for NVIDIA: -0.0031 (New weight: 1.00)
+2026-05-08 15:06:21,288 [INFO] Learning: NVIDIA | soxs | ✅ | MATCH | Score: -15.6 | Mkt: -1.26%
+2026-05-08 15:06:21,289 [INFO] 📈 Weight adjustment for NVIDIA: -0.0017 (New weight: 1.00)
+2026-05-08 15:06:21,289 [INFO] Learning: OIL | vix | ❌ | CONTRARY | Score: 19.3 | Mkt: -0.47%
+2026-05-08 15:06:21,289 [INFO] 📈 Weight adjustment for OIL: -0.0014 (New weight: 1.47)
+2026-05-08 15:06:21,289 [INFO] Learning: OIL | global | ❌ | CONTRARY | Score: 19.3 | Mkt: -0.47%
+2026-05-08 15:06:21,289 [INFO] 📈 Weight adjustment for OIL: -0.0014 (New weight: 1.47)
+2026-05-08 15:06:21,290 [INFO] Learning: IRAN | global | ❌ | CONTRARY | Score: 25.0 | Mkt: -0.47%
+2026-05-08 15:06:21,290 [INFO] 📈 Weight adjustment for IRAN: -0.0018 (New weight: 0.95)
+2026-05-08 15:06:21,290 [INFO] Learning: AI | hbm | ✅ | MATCH | Score: -23.4 | Mkt: +0.42%
+2026-05-08 15:06:21,291 [INFO] 📈 Weight adjustment for AI: -0.0017 (New weight: 1.49)
+2026-05-08 15:06:21,291 [INFO] Learning: AI | soxs | ✅ | MATCH | Score: -23.4 | Mkt: -1.26%
+2026-05-08 15:06:21,291 [INFO] 📈 Weight adjustment for AI: -0.0003 (New weight: 1.49)
+2026-05-08 15:06:21,291 [INFO] Learning: AI_OPENAI | hbm | ✅ | MATCH | Score: -24.4 | Mkt: +0.42%
+2026-05-08 15:06:21,292 [INFO] 📈 Weight adjustment for AI_OPENAI: -0.0018 (New weight: 1.00)
+2026-05-08 15:06:21,292 [INFO] Learning: AI_OPENAI | soxs | ✅ | MATCH | Score: -24.4 | Mkt: -1.26%
+2026-05-08 15:06:21,292 [INFO] 📈 Weight adjustment for AI_OPENAI: -0.0004 (New weight: 1.00)
+2026-05-08 15:06:21,292 [INFO] Learning: BTC | global | ✅ | MATCH | Score: -21.3 | Mkt: -0.47%
+2026-05-08 15:06:21,292 [INFO] 📈 Weight adjustment for BTC: -0.0021 (New weight: 0.56)
+2026-05-08 15:06:21,293 [INFO] Learning: IRAN | global | ❌ | CONTRARY | Score: 25.0 | Mkt: -0.47%
+2026-05-08 15:06:21,293 [INFO] 📈 Weight adjustment for IRAN: -0.0018 (New weight: 0.95)
+2026-05-08 15:06:21,293 [INFO] Learning: AI_NVIDIA | global | ✅ | MATCH | Score: -25.0 | Mkt: -0.47%
+2026-05-08 15:06:21,293 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0018 (New weight: 0.99)
+2026-05-08 15:06:21,293 [INFO] Learning: AI_NVIDIA | hbm | ✅ | MATCH | Score: -25.0 | Mkt: +0.42%
+2026-05-08 15:06:21,294 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0018 (New weight: 0.99)
+2026-05-08 15:06:21,294 [INFO] Learning: AI_NVIDIA | soxs | ✅ | MATCH | Score: -25.0 | Mkt: -1.26%
+2026-05-08 15:06:21,294 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0005 (New weight: 0.99)
+2026-05-08 15:06:21,294 [INFO] Learning: AI_IRAN_OIL | global | ❌ | CONTRARY | Score: 9.7 | Mkt: -0.47%
+2026-05-08 15:06:21,294 [INFO] 📈 Weight adjustment for AI_IRAN_OIL: -0.0012 (New weight: 0.97)
+2026-05-08 15:06:21,304 [INFO] System settings saved. New IMPACT_MULTIPLIER: 1.00
+2026-05-08 15:06:21,305 [INFO] 📡 GTS 4.0 scanning... [До обучения: 59 мин | Готово новостей: 73]
+2026-05-08 15:06:25,695 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:25,698 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:25,701 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:25,703 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:27,504 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:27,808 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:27,811 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:27,814 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:42,696 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:06:42,697 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:42,893 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:06:42,894 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:47,142 [INFO] Skipping low-score event: EUROPE_OPENAI (Score: 0.00)
+2026-05-08 15:06:47,143 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:47,458 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:06:48,394 [INFO] Skipping low-score event: CIENA_FIVE_BELOW_MICRON_SEAGATE_TECHNOLOGY_US_IRAN (Score: 0.00)
+2026-05-08 15:06:48,795 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:06:48,797 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:06:55,525 [INFO] Skipping low-score event: TRUMP_US_IRAN (Score: 0.00)
+2026-05-08 15:06:55,526 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:07:04,946 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:07:04,949 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:07:05,528 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:07:08,652 [INFO] Skipping low-score event: OPENAI (Score: 0.00)
+2026-05-08 15:07:10,124 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:07:23,217 [INFO] Skipping low-score event: TRUMP (Score: 0.00)
+2026-05-08 15:07:38,638 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:07:38,639 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:07:59,154 [INFO] --- База данных оптимизирована: удалены данные старше 14 дней и 0 ключей с весом < 0.5 ---
+2026-05-08 15:12:59,160 [INFO] 📡 GTS 4.0 scanning... [До обучения: 53 мин | Готово новостей: 79]
+2026-05-08 15:13:09,197 [ERROR] $BTC-USD: possibly delisted; no price data found  (period=1wk)
+2026-05-08 15:13:09,197 [ERROR] $CL=F: possibly delisted; no price data found  (period=1wk)
+2026-05-08 15:13:09,206 [ERROR] 
+2 Failed downloads:
+2026-05-08 15:13:09,207 [ERROR] ['BTC-USD', 'CL=F']: possibly delisted; no price data found  (period=1wk)
+2026-05-08 15:13:19,507 [ERROR] Error fetching Fear & Greed: 
+2026-05-08 15:13:23,737 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:13:38,916 [INFO] Retrying due to aiohttp error: Cannot connect to host generativelanguage.googleapis.com:443 ssl:<ssl.SSLContext object at 0x00000210AF19E490> [getaddrinfo failed]
+2026-05-08 15:13:47,174 [ERROR] Feed error https://news.google.com/rss/search?q=Nasdaq: [WinError 10060] Попытка установить соединение была безуспешной, т.к. от другого компьютера за требуемое время не получен нужный отклик, или было разорвано уже установленное соединение из-за неверного отклика уже подключенного компьютера
+2026-05-08 15:13:50,321 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: Cannot connect to host generativelanguage.googleapis.com:443 ssl:<ssl.SSLContext object at 0x0000021093EBFD90> [getaddrinfo failed]
+2026-05-08 15:13:50,322 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:13:51,877 [ERROR] Feed error https://news.google.com/rss/search?q=AI: Remote end closed connection without response
+2026-05-08 15:13:51,933 [ERROR] Feed error https://news.google.com/rss/search?q=Micron: Remote end closed connection without response
+2026-05-08 15:13:52,199 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 15:13:52,199 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:13:53,384 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:14:11,073 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:14:12,778 [INFO] Skipping low-score event: GOP_HOUSE_DEMOCRATS_POLITICO_TRUMP (Score: 0.00)
+2026-05-08 15:14:12,779 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:14:32,438 [INFO] Skipping low-score event: TRUMP (Score: 0.00)
+2026-05-08 15:19:32,449 [INFO] 📡 GTS 4.0 scanning... [До обучения: 46 мин | Готово новостей: 92]
+2026-05-08 15:19:37,838 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:37,996 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:38,023 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:38,653 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 1/9 в текущем цикле).
+2026-05-08 15:19:38,653 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:38,876 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 2/9 в текущем цикле).
+2026-05-08 15:19:38,876 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:39,528 [ERROR] ⚠️ Ошибка модели models/gemini-2.5-flash: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 15:19:39,528 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:39,763 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 4/9 в текущем цикле).
+2026-05-08 15:19:39,764 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:39,988 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 5/9 в текущем цикле).
+2026-05-08 15:19:39,988 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:40,184 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 6/9 в текущем цикле).
+2026-05-08 15:19:40,184 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:40,401 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 7/9 в текущем цикле).
+2026-05-08 15:19:40,401 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:56,331 [INFO] Skipping low-score event: EUROPE_OPENAI (Score: 0.00)
+2026-05-08 15:19:56,332 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:19:57,726 [INFO] Skipping low-score event: CIENA_FIVE_BELOW_MICRON_SEAGATE_TECHNOLOGY_US_IRAN (Score: 0.00)
+2026-05-08 15:20:08,422 [INFO] Skipping low-score event: TRUMP (Score: 0.20)
+2026-05-08 15:20:08,423 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:20:17,784 [INFO] Skipping low-score event: OPENAI (Score: 0.00)
+2026-05-08 15:20:35,535 [INFO] Skipping low-score event: TRUMP (Score: 0.00)
+2026-05-08 15:20:35,537 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:20:51,970 [INFO] Skipping low-score event: INTEL_OPENAI_TRUMP (Score: 0.00)
+2026-05-08 15:23:20,278 [INFO] Получен сигнал завершения (Ctrl+C или системный).
+2026-05-08 15:23:20,278 [INFO] Закрытие соединений и остановка фоновых задач...
+2026-05-08 15:23:20,280 [INFO] GTS 4.0 остановлен.
+2026-05-08 15:23:27,705 [INFO] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/models "HTTP/1.1 200 OK"
+2026-05-08 15:23:27,712 [INFO] Доступные модели в API: 33
+2026-05-08 15:23:27,712 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-flash-lite (Приоритет 1)
+2026-05-08 15:23:27,712 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-pro-preview (Приоритет 2)
+2026-05-08 15:23:27,712 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-flash-preview (Приоритет 3)
+2026-05-08 15:23:27,713 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-pro-preview (Приоритет 4)
+2026-05-08 15:23:27,713 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-flash (Приоритет 5)
+2026-05-08 15:23:27,713 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-pro (Приоритет 6)
+2026-05-08 15:23:27,713 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.0-flash (Приоритет 7)
+2026-05-08 15:23:27,713 [INFO] ✅ Добавлена в пул ротации: models/gemini-flash-latest (Приоритет 11)
+2026-05-08 15:23:27,714 [INFO] ✅ Добавлена в пул ротации: models/gemini-pro-latest (Приоритет 12)
+2026-05-08 15:23:27,714 [INFO] Пул моделей готов: ['models/gemini-3.1-flash-lite', 'models/gemini-3.1-pro-preview', 'models/gemini-3-flash-preview', 'models/gemini-3-pro-preview', 'models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/gemini-2.0-flash', 'models/gemini-flash-latest', 'models/gemini-pro-latest']. Старт с: models/gemini-3.1-flash-lite
+2026-05-08 15:23:27,716 [INFO] ✅ IMPACT_MULTIPLIER загружен из БД: 1.0
+2026-05-08 15:23:27,726 [INFO] --- Веса загружены: {'IRAN_US': 1.4629054662447851, 'NVIDIA': 0.9957381143739809, 'OPENAI': 0.9122619528865944, 'OIL': 1.4642528753823933, 'GOLD': 1.0107167281610598, 'BTC': 0.5588302849393363, 'NASDAQ': 0.7451051216633899, 'AI': 1.4924513151173118, 'TRUMP': 1.8576803667902557, 'MICRON': 1.2009551274209893, 'GLOBAL': 1.2881001911728456, 'US_IRAN': 1.578344728427096, 'HORMUZ': 2.952143846797536, 'US': 1.0, 'NASDAQ_NVIDIA': 0.958, 'ELON_MUSK_OPENAI': 0.994, 'NVIDIA_SUPER_MICRO': 0.985, 'CORNING_NVIDIA': 0.982, 'MICHIGAN_OPENAI_ORACLE': 0.994, 'ELON_MUSK_GREG_BROCKMAN_OPENAI_TESLA': 0.994, 'ELON_MUSK_OPENAI_SAM_ALTMAN': 0.997, 'MIRA_MURATI_OPENAI_SAM_ALTMAN': 0.997, 'BTC_MICROSTRATEGY': 0.9718778116289247, 'IRAN_NASDAQ_US': 0.9908797727010485, 'GOLD_US': 0.9943190719984832, 'GOLD_IRAN_US': 0.9919955196797373, 'REALTOR.COM': 1.006997078030802, 'IRAN_OIL_US': 0.8576366315715209, 'NASDAQ_OIL': 0.9892312335259991, 'BTC_TON': 1.0112688125976745, 'MARK_STEVENS_USC': 1.0135676718734294, 'IRAN_NASDAQ': 0.9769750518942358, 'AI_IRAN_OIL': 0.9715584464362902, 'IRAN_NASDAQ_OIL': 0.9701623313238459, 'GOLD_IRAN': 0.9323173367711869, 'AI_US': 0.9853107913210996, 'AI_IRAN': 0.992592981763546, 'AI_OIL': 0.9419143672849672, 'IRAN_OIL': 0.8451348532993832, 'GOLD_IRAN_OIL_US': 0.9970049467792869, 'AI_IRAN_NASDAQ_OIL': 0.9471068713738282, 'IRAN_TRUMP_US': 0.9823507949904546, 'IRAN_NASDAQ_OIL_US': 0.9926128232924715, 'AI_NVIDIA_US': 0.9775194088744725, 'NVIDIA_TRUMP': 0.9213610559587213, 'UNITED_STATES': 0.9964241464045268, 'IRAN_OIL_TRUMP_US': 0.9548321589145526, 'IRAN': 0.9517424501023537, 'AI_NVIDIA': 0.9882803410317533, 'MICRON_NVIDIA': 1.0019836812752094, 'AI_OPENAI': 0.9954656575586558, 'GOLD_OIL': 1.0007475118908817, 'MICROSTRATEGY': 1.0004333399823788} ---
+2026-05-08 15:23:27,726 [INFO] --- Текущий IMPACT_MULTIPLIER: 1.00 ---
+2026-05-08 15:23:27,728 [INFO] Первичный запуск цикла обучения...
+2026-05-08 15:23:30,397 [INFO] 🧠 Начало цикла обучения. Найдено кандидатов для обработки: 92
+2026-05-08 15:23:30,397 [INFO] Learning: IRAN_OIL_US | oil | ✅ | MATCH | Score: 25.0 | Mkt: +0.62%
+2026-05-08 15:23:30,398 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0037 (New weight: 0.85)
+2026-05-08 15:23:30,409 [INFO] Learning: MICRON | hbm | ✅ | MATCH | Score: -1.7 | Mkt: +0.42%
+2026-05-08 15:23:30,410 [INFO] 📈 Weight adjustment for MICRON: +0.0003 (New weight: 1.20)
+2026-05-08 15:23:30,410 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 1.3)
+2026-05-08 15:23:30,410 [INFO] Learning: MICRON | soxs | ✅ | MATCH | Score: -1.7 | Mkt: -1.26%
+2026-05-08 15:23:30,410 [INFO] 📈 Weight adjustment for MICRON: +0.0016 (New weight: 1.20)
+2026-05-08 15:23:30,411 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 8.0)
+2026-05-08 15:23:30,411 [INFO] Learning: IRAN_OIL_US | oil | ✅ | MATCH | Score: 21.6 | Mkt: +0.62%
+2026-05-08 15:23:30,411 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0031 (New weight: 0.85)
+2026-05-08 15:23:30,412 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -15.5)
+2026-05-08 15:23:30,412 [INFO] Learning: IRAN_OIL | oil | ✅ | MATCH | Score: 21.5 | Mkt: +0.62%
+2026-05-08 15:23:30,412 [INFO] 📈 Weight adjustment for IRAN_OIL: -0.0030 (New weight: 0.84)
+2026-05-08 15:23:30,412 [INFO] Learning: IRAN_TRUMP_US | oil | ✅ | MATCH | Score: 5.2 | Mkt: +0.62%
+2026-05-08 15:23:30,413 [INFO] 📈 Weight adjustment for IRAN_TRUMP_US: -0.0000 (New weight: 0.98)
+2026-05-08 15:23:30,413 [INFO] Learning: IRAN_OIL | oil | ✅ | MATCH | Score: 19.3 | Mkt: +0.62%
+2026-05-08 15:23:30,413 [INFO] 📈 Weight adjustment for IRAN_OIL: -0.0026 (New weight: 0.84)
+2026-05-08 15:23:30,413 [INFO] Learning: IRAN_US | oil | ❌ | CONTRARY | Score: -6.9 | Mkt: +0.62%
+2026-05-08 15:23:30,413 [INFO] 📈 Weight adjustment for IRAN_US: -0.0012 (New weight: 1.46)
+2026-05-08 15:23:30,414 [INFO] Learning: IRAN_OIL_US | oil | ✅ | MATCH | Score: 20.3 | Mkt: +0.62%
+2026-05-08 15:23:30,414 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0028 (New weight: 0.85)
+2026-05-08 15:23:30,414 [INFO] Learning: TRUMP | oil | ✅ | MATCH | Score: 15.4 | Mkt: +0.62%
+2026-05-08 15:23:30,414 [INFO] 📈 Weight adjustment for TRUMP: -0.0050 (New weight: 1.85)
+2026-05-08 15:23:30,414 [INFO] Learning: IRAN_TRUMP_US | oil | ✅ | MATCH | Score: 7.9 | Mkt: +0.62%
+2026-05-08 15:23:30,414 [INFO] 📈 Weight adjustment for IRAN_TRUMP_US: -0.0006 (New weight: 0.98)
+2026-05-08 15:23:30,414 [INFO] Learning: IRAN_US | oil | ❌ | CONTRARY | Score: -12.7 | Mkt: +0.62%
+2026-05-08 15:23:30,415 [INFO] 📈 Weight adjustment for IRAN_US: -0.0030 (New weight: 1.46)
+2026-05-08 15:23:30,415 [INFO] Learning: IRAN_OIL_US | oil | ✅ | MATCH | Score: 21.4 | Mkt: +0.62%
+2026-05-08 15:23:30,415 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0031 (New weight: 0.84)
+2026-05-08 15:23:30,415 [INFO] Learning: IRAN_OIL_US | oil | ✅ | MATCH | Score: 18.8 | Mkt: +0.62%
+2026-05-08 15:23:30,416 [INFO] 📈 Weight adjustment for IRAN_OIL_US: -0.0026 (New weight: 0.84)
+2026-05-08 15:23:30,416 [INFO] Learning: GOLD_OIL | oil | ❌ | CONTRARY | Score: -1.6 | Mkt: +0.62%
+2026-05-08 15:23:30,416 [INFO] 📈 Weight adjustment for GOLD_OIL: +0.0006 (New weight: 1.00)
+2026-05-08 15:23:30,416 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 3.1)
+2026-05-08 15:23:30,417 [INFO] Learning: AI_IRAN_OIL | oil | ✅ | MATCH | Score: 16.2 | Mkt: +0.62%
+2026-05-08 15:23:30,417 [INFO] 📈 Weight adjustment for AI_IRAN_OIL: -0.0022 (New weight: 0.97)
+2026-05-08 15:23:30,417 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -10.9)
+2026-05-08 15:23:30,418 [INFO] Learning: TRUMP | oil | ✅ | MATCH | Score: 18.0 | Mkt: +0.62%
+2026-05-08 15:23:30,418 [INFO] 📈 Weight adjustment for TRUMP: -0.0060 (New weight: 1.85)
+2026-05-08 15:23:30,418 [INFO] Learning: OIL | oil | ✅ | MATCH | Score: 19.3 | Mkt: +0.62%
+2026-05-08 15:23:30,418 [INFO] 📈 Weight adjustment for OIL: -0.0011 (New weight: 1.44)
+2026-05-08 15:23:30,419 [INFO] Learning: AI_IRAN_OIL | oil | ✅ | MATCH | Score: 9.7 | Mkt: +0.62%
+2026-05-08 15:23:30,419 [INFO] 📈 Weight adjustment for AI_IRAN_OIL: -0.0009 (New weight: 0.97)
+2026-05-08 15:23:30,419 [INFO] Learning: AI_IRAN_OIL | hbm | ❌ | CONTRARY | Score: 9.7 | Mkt: +0.42%
+2026-05-08 15:23:30,420 [INFO] 📈 Weight adjustment for AI_IRAN_OIL: -0.0012 (New weight: 0.97)
+2026-05-08 15:23:30,420 [INFO] Learning: AI_IRAN_OIL | soxs | ❌ | CONTRARY | Score: 9.7 | Mkt: -1.26%
+2026-05-08 15:23:30,420 [INFO] 📈 Weight adjustment for AI_IRAN_OIL: +0.0001 (New weight: 0.97)
+2026-05-08 15:23:30,420 [INFO] Learning: AI | hbm | ✅ | MATCH | Score: -25.0 | Mkt: +0.42%
+2026-05-08 15:23:30,421 [INFO] 📈 Weight adjustment for AI: -0.0018 (New weight: 1.49)
+2026-05-08 15:23:30,421 [INFO] Learning: AI | soxs | ✅ | MATCH | Score: -25.0 | Mkt: -1.26%
+2026-05-08 15:23:30,421 [INFO] 📈 Weight adjustment for AI: -0.0005 (New weight: 1.49)
+2026-05-08 15:23:30,422 [INFO] Learning: AI_OPENAI | hbm | ✅ | MATCH | Score: -23.8 | Mkt: +0.42%
+2026-05-08 15:23:30,422 [INFO] 📈 Weight adjustment for AI_OPENAI: -0.0017 (New weight: 0.99)
+2026-05-08 15:23:30,422 [INFO] Learning: AI_OPENAI | soxs | ✅ | MATCH | Score: -23.8 | Mkt: -1.26%
+2026-05-08 15:23:30,422 [INFO] 📈 Weight adjustment for AI_OPENAI: -0.0004 (New weight: 0.99)
+2026-05-08 15:23:30,423 [INFO] Learning: IRAN_TRUMP_US | oil | ✅ | MATCH | Score: 3.0 | Mkt: +0.62%
+2026-05-08 15:23:30,423 [INFO] 📈 Weight adjustment for IRAN_TRUMP_US: +0.0004 (New weight: 0.98)
+2026-05-08 15:23:30,423 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 2.0)
+2026-05-08 15:23:30,424 [INFO] Learning: AI_NVIDIA | hbm | ✅ | MATCH | Score: -23.0 | Mkt: +0.42%
+2026-05-08 15:23:30,424 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0016 (New weight: 0.99)
+2026-05-08 15:23:30,424 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -8.1)
+2026-05-08 15:23:30,424 [INFO] Learning: AI_NVIDIA | soxs | ✅ | MATCH | Score: -23.0 | Mkt: -1.26%
+2026-05-08 15:23:30,424 [INFO] 📈 Weight adjustment for AI_NVIDIA: -0.0003 (New weight: 0.99)
+2026-05-08 15:23:30,424 [INFO] Learning: IRAN_OIL | oil | ✅ | MATCH | Score: 19.4 | Mkt: +0.62%
+2026-05-08 15:23:30,425 [INFO] 📈 Weight adjustment for IRAN_OIL: -0.0026 (New weight: 0.84)
+2026-05-08 15:23:30,425 [INFO] Learning: OPENAI | hbm | ✅ | MATCH | Score: -2.1 | Mkt: +0.42%
+2026-05-08 15:23:30,425 [INFO] 📈 Weight adjustment for OPENAI: +0.0002 (New weight: 0.91)
+2026-05-08 15:23:30,425 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 1.1)
+2026-05-08 15:23:30,425 [INFO] Learning: OPENAI | soxs | ✅ | MATCH | Score: -2.1 | Mkt: -1.26%
+2026-05-08 15:23:30,426 [INFO] 📈 Weight adjustment for OPENAI: +0.0016 (New weight: 0.91)
+2026-05-08 15:23:30,426 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 7.8)
+2026-05-08 15:23:30,426 [INFO] Learning: IRAN_US | oil | ❌ | CONTRARY | Score: -12.8 | Mkt: +0.62%
+2026-05-08 15:23:30,426 [INFO] 📈 Weight adjustment for IRAN_US: -0.0030 (New weight: 1.46)
+2026-05-08 15:23:30,427 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -15.1)
+2026-05-08 15:23:30,427 [INFO] Learning: AI_NASDAQ_OIL | oil | ❌ | CONTRARY | Score: -1.5 | Mkt: +0.62%
+2026-05-08 15:23:30,427 [INFO] 📈 Weight adjustment for AI_NASDAQ_OIL: +0.0008 (New weight: 1.00)
+2026-05-08 15:23:30,427 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 3.8)
+2026-05-08 15:23:30,427 [INFO] Learning: AI_NASDAQ_OIL | hbm | ✅ | MATCH | Score: -1.5 | Mkt: +0.42%
+2026-05-08 15:23:30,428 [INFO] 📈 Weight adjustment for AI_NASDAQ_OIL: +0.0004 (New weight: 1.00)
+2026-05-08 15:23:30,428 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 2.2)
+2026-05-08 15:23:30,428 [INFO] Learning: AI_NASDAQ_OIL | soxs | ✅ | MATCH | Score: -1.5 | Mkt: -1.26%
+2026-05-08 15:23:30,428 [INFO] 📈 Weight adjustment for AI_NASDAQ_OIL: +0.0018 (New weight: 1.00)
+2026-05-08 15:23:30,428 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 8.9)
+2026-05-08 15:23:30,428 [INFO] Learning: AI_MICRON | hbm | ✅ | MATCH | Score: -2.3 | Mkt: +0.42%
+2026-05-08 15:23:30,428 [INFO] 📈 Weight adjustment for AI_MICRON: +0.0001 (New weight: 1.00)
+2026-05-08 15:23:30,428 [INFO] Learning: AI_MICRON | soxs | ✅ | MATCH | Score: -2.3 | Mkt: -1.26%
+2026-05-08 15:23:30,429 [INFO] 📈 Weight adjustment for AI_MICRON: +0.0015 (New weight: 1.00)
+2026-05-08 15:23:30,429 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 7.3)
+2026-05-08 15:23:30,429 [INFO] Learning: AI | hbm | ✅ | MATCH | Score: -25.0 | Mkt: +0.42%
+2026-05-08 15:23:30,429 [INFO] 📈 Weight adjustment for AI: -0.0018 (New weight: 1.49)
+2026-05-08 15:23:30,429 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -9.2)
+2026-05-08 15:23:30,429 [INFO] Learning: AI | soxs | ✅ | MATCH | Score: -25.0 | Mkt: -1.26%
+2026-05-08 15:23:30,429 [INFO] 📈 Weight adjustment for AI: -0.0005 (New weight: 1.49)
+2026-05-08 15:23:30,429 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -2.5)
+2026-05-08 15:23:30,439 [INFO] System settings saved. New IMPACT_MULTIPLIER: 1.00
+2026-05-08 15:23:30,440 [INFO] 📡 GTS 4.0 scanning... [До обучения: 59 мин | Готово новостей: 53]
+2026-05-08 15:23:34,885 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:23:35,521 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:23:35,585 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:23:35,589 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:23:54,751 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:23:57,447 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:23:59,591 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:23:59,592 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:24:25,032 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:24:27,650 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:25:08,884 [INFO] --- База данных оптимизирована: удалены данные старше 14 дней и 0 ключей с весом < 0.5 ---
+2026-05-08 15:30:08,897 [INFO] 📡 GTS 4.0 scanning... [До обучения: 53 мин | Готово новостей: 53]
+2026-05-08 15:30:20,015 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:30:20,018 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:30:20,022 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:30:21,117 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:30:21,292 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:30:21,620 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:30:21,623 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:30:38,516 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:30:42,987 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:30:42,989 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:30:43,803 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:30:43,805 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:30:46,953 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:30:46,955 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:30:56,482 [INFO] Skipping noise event: US_IRAN
+2026-05-08 15:30:59,046 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:30:59,048 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 15:31:29,041 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 15:36:02,510 [INFO] Получен сигнал завершения (Ctrl+C или системный).
+2026-05-08 15:36:02,511 [INFO] Закрытие соединений и остановка фоновых задач...
+2026-05-08 15:36:02,512 [INFO] GTS 4.0 остановлен.
