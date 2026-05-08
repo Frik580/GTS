@@ -1,8 +1,6 @@
 feedparser
 google-genai
 yfinance
-transformers
-torch
 streamlit
 aiohttp
 python-dotenv
