@@ -462,7 +462,7 @@ def make_event_key(entities: List[str]) -> str:
     for e in unique_ents:
         # Ищем совпадение: тег из конфига равен сущности, либо один является частью другого
         # Это позволит "Gold" из конфига поймать "Gold Price" от ИИ и наоборот.
-        matched_tag = next((t for t in tracked_upper if t == e or t in e or e in t), e)
+        matched_tag = next((t for t in tracked_upper if t == e or t in e), e)
         matches.append(matched_tag)
     
     # Если есть совпадения с отслеживаемыми темами — берем их.
@@ -891,6 +891,12 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         if abs(score) < config.NEUTRAL_SCORE_THRESHOLD and not is_tracked and event_key != "GLOBAL":
             logging.info(f"Skipping noise event: {event_key}")
             continue
+
+        # МЕХАНИЗМ ПОЛНОГО РАЗВОРОТА (PIVOT): Если новость сильная и против тренда — забываем историю
+        if event_scores[event_key] != 0 and (event_scores[event_key] * score) < 0:
+            if abs(score) >= config.PIVOT_THRESHOLD:
+                logging.info(f"💥 FULL PIVOT for {event_key}: Resetting accumulated score ({event_scores[event_key]:.2f}) due to high-impact opposite news ({score:+.2f})")
+                event_scores[event_key] = 0
 
         event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + score))
         
