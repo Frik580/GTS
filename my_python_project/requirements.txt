@@ -7,4 +7,3 @@ streamlit
 aiohttp
 python-dotenv
 pandas
-sqlite3
