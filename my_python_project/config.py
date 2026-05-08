@@ -31,14 +31,14 @@ TRACKED_KEYWORDS = {
 }
 
 RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}" for k in TRACKED_KEYWORDS.keys()]
-RSS_MAX_ENTRIES = 5 # Максимальное количество новостей из одной ленты за один цикл сканирования
+RSS_MAX_ENTRIES = 5 # Оптимально для баланса между охватом и лимитами API Gemini (RPM)
 
 # Time Intervals (in seconds)
 CHECK_INTERVAL = 300 # Интервал проверки новостей (5 минут)
 COOLDOWN = 600 # Интервал между действиями (10 минут)
 LEARNING_INTERVAL = 3600 # Интервал обучения (1 час)
 MARKET_LOOKBACK_HOURS = 2 # Окно анализа реакции рынка
-MAX_NEWS_AGE_HOURS = MARKET_LOOKBACK_HOURS # Новость должна быть не старше окна анализа
+MAX_NEWS_AGE_HOURS = MARKET_LOOKBACK_HOURS*6 # Новость должна быть не старше окна анализа
 CLEANUP_INTERVAL = 86400 # Интервал очистки (24 часа)
 RESEARCH_INTERVAL = 86400 # Интервал глобального исследования ИИ (раз в сутки)
 RETENTION_DAYS = 14 # Количество дней хранения данных
@@ -53,10 +53,10 @@ MAX_SCORE_THRESHOLD = 25.0 # Увеличиваем порог для отпра
 SCALING_FACTOR = 8.0 # Увеличиваем масштаб для более заметного влияния предсказаний
 LEARNING_RATE = 0.02  # Снижаем скорость, чтобы система не "дергалась" от каждой ошибки
 IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
-LEARNING_THRESHOLD = 0.1 # Минимальное движение цены (%) для учета в обучении
+LEARNING_THRESHOLD = 0.3 # Минимальное движение цены (%) для учета в обучении (защита от рыночного шума)
 MIN_WEIGHT_THRESHOLD = 0.5 # Порог веса, ниже которого ключ удаляется из БД
-NEUTRAL_SCORE_THRESHOLD = 1.2 # Снижаем порог, чтобы учитывать больше новостей средней важности
-MIN_NEWS_SCORE_FOR_ALERT = 0.0 # Минимальный балл конкретной новости для отправки в Telegram
+NEUTRAL_SCORE_THRESHOLD = 1.0 # Снижаем порог, чтобы учитывать больше новостей средней важности
+MIN_NEWS_SCORE_FOR_ALERT = 0.1 # Минимальный балл конкретной новости для отправки в Telegram
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
 # Рейтинг доверия источникам (Trust Factor)
@@ -80,7 +80,7 @@ SIGNAL_THRESHOLD_HIGH = 3.0  # For Indices (Nasdaq, SOXS)
 SIGNAL_THRESHOLD_MED = 2.0   # For Commodities and VIX
 SIGNAL_THRESHOLD_LOW = 1.5   # For Safe-havens (Gold)
 SIGNAL_THRESHOLD_BTC = 4.0   # For Crypto (Volatility buffer)
-BTC_MIN_VOLATILITY_FOR_ALERT = 5.0 # Минимальное изменение цены BTC (%) для отправки уведомления
+BTC_MIN_VOLATILITY_FOR_ALERT = 1.0 # Минимальное изменение цены BTC (%) для отправки уведомления
 
 
 

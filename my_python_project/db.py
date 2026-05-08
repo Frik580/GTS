@@ -6,6 +6,7 @@ import config
 def get_db_connection():
     conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
     try:
+        conn.execute("PRAGMA journal_mode=WAL")  # Включает конкурентный доступ на чтение и запись
         conn.row_factory = sqlite3.Row  # Позволяет обращаться к полям по именам
         yield conn
     finally:
