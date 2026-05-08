@@ -19900,3 +19900,687 @@
 2026-05-08 21:17:19,219 [INFO] Получен сигнал завершения (Ctrl+C или системный).
 2026-05-08 21:17:19,219 [INFO] Закрытие соединений и остановка фоновых задач...
 2026-05-08 21:17:19,220 [INFO] GTS 4.0 остановлен.
+2026-05-08 22:00:24,822 [INFO] HTTP Request: GET https://generativelanguage.googleapis.com/v1beta/models "HTTP/1.1 200 OK"
+2026-05-08 22:00:24,849 [INFO] Доступные модели в API: 33
+2026-05-08 22:00:24,850 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-flash-lite (Приоритет 1)
+2026-05-08 22:00:24,851 [INFO] ✅ Добавлена в пул ротации: models/gemini-3.1-pro-preview (Приоритет 2)
+2026-05-08 22:00:24,851 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-flash-preview (Приоритет 3)
+2026-05-08 22:00:24,852 [INFO] ✅ Добавлена в пул ротации: models/gemini-3-pro-preview (Приоритет 4)
+2026-05-08 22:00:24,852 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-flash (Приоритет 5)
+2026-05-08 22:00:24,853 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.5-pro (Приоритет 6)
+2026-05-08 22:00:24,853 [INFO] ✅ Добавлена в пул ротации: models/gemini-2.0-flash (Приоритет 7)
+2026-05-08 22:00:24,854 [INFO] ✅ Добавлена в пул ротации: models/gemini-flash-latest (Приоритет 11)
+2026-05-08 22:00:24,854 [INFO] ✅ Добавлена в пул ротации: models/gemini-pro-latest (Приоритет 12)
+2026-05-08 22:00:24,855 [INFO] Пул моделей готов: ['models/gemini-3.1-flash-lite', 'models/gemini-3.1-pro-preview', 'models/gemini-3-flash-preview', 'models/gemini-3-pro-preview', 'models/gemini-2.5-flash', 'models/gemini-2.5-pro', 'models/gemini-2.0-flash', 'models/gemini-flash-latest', 'models/gemini-pro-latest']. Старт с: models/gemini-3.1-flash-lite
+2026-05-08 22:00:24,869 [INFO] ✅ IMPACT_MULTIPLIER загружен из БД: 1.0009444122096796
+2026-05-08 22:00:24,895 [INFO] --- Веса загружены: {'IRAN_US': 1.4506579862628368, 'NVIDIA': 1.0045513310581067, 'OPENAI': 0.9380027924692751, 'OIL': 1.3615786541992967, 'GOLD': 1.003940753836599, 'BTC': 0.5556776355907936, 'NASDAQ': 0.7537108761120582, 'AI': 1.4833497164678615, 'TRUMP': 1.8029010560843914, 'MU': 1.2, 'SEMICONDUCTOR': 1.5, 'INFLATION': 1.8, 'INTEL': 1.3, 'AMD': 1.3, 'BROADCOM': 1.2, 'ANTROPIC': 1.5, 'QUALCOMM': 1.2, 'GLOBAL': 1.2881001911728456, 'US_IRAN': 1.578344728427096, 'HORMUZ': 2.952143846797536, 'US': 1.0, 'NASDAQ_NVIDIA': 0.958, 'ELON_MUSK_OPENAI': 0.994, 'NVIDIA_SUPER_MICRO': 0.985, 'CORNING_NVIDIA': 0.982, 'MICHIGAN_OPENAI_ORACLE': 0.994, 'ELON_MUSK_GREG_BROCKMAN_OPENAI_TESLA': 0.994, 'ELON_MUSK_OPENAI_SAM_ALTMAN': 0.997, 'MIRA_MURATI_OPENAI_SAM_ALTMAN': 0.997, 'BTC_MICROSTRATEGY': 0.9719685858344516, 'IRAN_NASDAQ_US': 0.9919925570796057, 'GOLD_US': 0.9943190719984832, 'GOLD_IRAN_US': 0.9919955196797373, 'REALTOR.COM': 1.006997078030802, 'IRAN_OIL_US': 0.8347886820804333, 'NASDAQ_OIL': 0.9892312335259991, 'BTC_TON': 1.0112688125976745, 'MARK_STEVENS_USC': 1.0135676718734294, 'IRAN_NASDAQ': 0.9769750518942358, 'AI_IRAN_OIL': 0.9660883109149109, 'IRAN_NASDAQ_OIL': 0.9701623313238459, 'GOLD_IRAN': 0.9323173367711869, 'AI_US': 0.9853107913210996, 'AI_IRAN': 0.992592981763546, 'AI_OIL': 0.9419143672849672, 'MICRON': 1.208192943443495, 'IRAN_OIL': 0.8300517750432042, 'GOLD_IRAN_OIL_US': 0.9970049467792869, 'AI_IRAN_NASDAQ_OIL': 0.9471068713738282, 'IRAN_TRUMP_US': 0.9907218251450199, 'IRAN_NASDAQ_OIL_US': 0.9926128232924715, 'AI_NVIDIA_US': 0.9776571708477848, 'NVIDIA_TRUMP': 0.9213610559587213, 'UNITED_STATES': 0.9964241464045268, 'IRAN_OIL_TRUMP_US': 0.9548321589145526, 'IRAN': 0.8688163647346655, 'AI_NVIDIA': 0.9834076183821913, 'MICRON_NVIDIA': 1.0031162166620669, 'AI_OPENAI': 0.9908948582339308, 'GOLD_OIL': 1.0013745421662532, 'MICROSTRATEGY': 1.0005241141879058, 'AI_NASDAQ_OIL': 1.0069128118425767, 'AI_MICRON': 1.0026238733909791, 'GOLD_US_IRAN': 0.9943821930122256, 'OIL_US_IRAN': 0.9514391894772101, 'TRUMP_US_IRAN': 1.0088080535237984, 'OIL_OPENAI_UAE_US_IRAN': 1.0000073008187353, 'UAE': 1.0000073008187353, 'BTC_TRUMP': 1.002534880761907, 'NIGERIA_OIL': 1.0007103849160106, 'NIGERIA': 1.0007103849160106, 'ALIBABA_NVIDIA_OPENAI_US_IRAN': 1.0021085042045523, 'ALIBABA': 1.0021085042045523, 'CORNING_NVIDIA_OPENAI': 1.0057622496132734, 'CORNING': 1.0057622496132734, 'GHANA_GOLD': 0.9996604974198007, 'GHANA': 0.9996604974198007, 'ANTHROPIC_OPENAI': 1.0025527619347083, 'ANTHROPIC': 1.0025527619347083, 'OIL_OPENAI_RUSSIA': 0.9998608100680618, 'RUSSIA': 0.9998608100680618, 'NVIDIA_OPENAI': 1.0049410711192779, 'EUROPE_NATO_US_IRAN': 1.0018442993576326, 'EUROPE': 1.0018442993576326, 'NATO': 1.0018442993576326, 'US_IRAN_US_IRAN': 1.0028078011680925, 'US_IRAN_OIL_US_IRAN': 0.997185748713688, 'OPENAI_OPENAI_SOFTBANK': 1.0033299527446435, 'SOFTBANK': 1.0033299527446435, 'US_IRAN_OIL': 1.0006057487136881, 'CHINA_GOLD_INDIA': 1.0022339360603765, 'CHINA': 1.0022339360603765, 'INDIA': 1.0022339360603765, 'GOLD_US_IRAN_US_IRAN': 1.0020157555062514, 'OPENAI_BTC_IREN_NVIDIA': 1.0017134693755283, 'IREN': 1.0017134693755283, 'DOW': 1.0021248434658765, 'CECO_ENVIRONMENTAL_NASDAQ': 1.001411900271013, 'CECO': 1.001411900271013, 'ENVIRONMENTAL': 1.001411900271013, 'OPENAI_BTC': 1.00142876470625} ---
+2026-05-08 22:00:24,896 [INFO] --- Текущий IMPACT_MULTIPLIER: 1.00 ---
+2026-05-08 22:00:24,901 [INFO] Первичный запуск цикла обучения...
+2026-05-08 22:00:29,005 [INFO] 🧠 Начало цикла обучения. Найдено кандидатов для обработки: 97
+2026-05-08 22:00:29,006 [INFO] Learning: OIL_US_IRAN | global | ❌ | CONTRARY | Score: 25.0 | Mkt: -0.69%
+2026-05-08 22:00:29,006 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0037 (New weight: 0.95)
+2026-05-08 22:00:29,007 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -18.3)
+2026-05-08 22:00:29,008 [INFO] Learning: OIL_US_IRAN | oil | ✅ | MATCH | Score: 25.0 | Mkt: +0.50%
+2026-05-08 22:00:29,009 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0040 (New weight: 0.94)
+2026-05-08 22:00:29,010 [INFO] Learning: OIL_US_IRAN | vix | ❌ | CONTRARY | Score: 25.0 | Mkt: -0.69%
+2026-05-08 22:00:29,010 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0037 (New weight: 0.94)
+2026-05-08 22:00:29,011 [INFO] Learning: KENYA_OIL | global | ❌ | CONTRARY | Score: 2.0 | Mkt: -0.69%
+2026-05-08 22:00:29,011 [INFO] 📈 Weight adjustment for KENYA_OIL: +0.0006 (New weight: 1.00)
+2026-05-08 22:00:29,012 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 2.8)
+2026-05-08 22:00:29,013 [INFO] Learning: KENYA_OIL | oil | ✅ | MATCH | Score: 2.0 | Mkt: +0.50%
+2026-05-08 22:00:29,013 [INFO] 📈 Weight adjustment for KENYA_OIL: +0.0003 (New weight: 1.00)
+2026-05-08 22:00:29,014 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 1.3)
+2026-05-08 22:00:29,014 [INFO] Learning: KENYA_OIL | vix | ❌ | CONTRARY | Score: 2.0 | Mkt: -0.69%
+2026-05-08 22:00:29,015 [INFO] 📈 Weight adjustment for KENYA_OIL: +0.0006 (New weight: 1.00)
+2026-05-08 22:00:29,016 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 2.8)
+2026-05-08 22:00:29,017 [INFO] Learning: MICRON | soxs | ✅ | MATCH | Score: -4.2 | Mkt: -3.53%
+2026-05-08 22:00:29,017 [INFO] 📈 Weight adjustment for MICRON: +0.0046 (New weight: 1.21)
+2026-05-08 22:00:29,018 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 23.2)
+2026-05-08 22:00:29,019 [INFO] Learning: MICRON | hbm | ✅ | MATCH | Score: -4.2 | Mkt: +1.18%
+2026-05-08 22:00:29,019 [INFO] 📈 Weight adjustment for MICRON: +0.0009 (New weight: 1.21)
+2026-05-08 22:00:29,020 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 4.4)
+2026-05-08 22:00:29,021 [INFO] Learning: OPENAI | soxs | ✅ | MATCH | Score: -1.5 | Mkt: -3.53%
+2026-05-08 22:00:29,021 [INFO] 📈 Weight adjustment for OPENAI: +0.0054 (New weight: 0.94)
+2026-05-08 22:00:29,022 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.01 (err: 26.9)
+2026-05-08 22:00:29,022 [INFO] Learning: OPENAI | hbm | ✅ | MATCH | Score: -1.5 | Mkt: +1.18%
+2026-05-08 22:00:29,023 [INFO] 📈 Weight adjustment for OPENAI: +0.0016 (New weight: 0.94)
+2026-05-08 22:00:29,023 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: 8.0)
+2026-05-08 22:00:29,024 [INFO] Learning: OIL_US_IRAN | global | ❌ | CONTRARY | Score: 25.0 | Mkt: -0.69%
+2026-05-08 22:00:29,025 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0037 (New weight: 0.94)
+2026-05-08 22:00:29,025 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: -18.3)
+2026-05-08 22:00:29,026 [INFO] Learning: OIL_US_IRAN | oil | ✅ | MATCH | Score: 25.0 | Mkt: +0.50%
+2026-05-08 22:00:29,027 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0040 (New weight: 0.93)
+2026-05-08 22:00:29,027 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.00 (err: -19.8)
+2026-05-08 22:00:29,029 [INFO] Learning: OIL_US_IRAN | vix | ❌ | CONTRARY | Score: 25.0 | Mkt: -0.69%
+2026-05-08 22:00:29,029 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0037 (New weight: 0.93)
+2026-05-08 22:00:29,030 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -18.3)
+2026-05-08 22:00:29,031 [INFO] Learning: TRUMP | global | ❌ | CONTRARY | Score: 22.1 | Mkt: -0.69%
+2026-05-08 22:00:29,031 [INFO] 📈 Weight adjustment for TRUMP: -0.0069 (New weight: 1.80)
+2026-05-08 22:00:29,032 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -34.4)
+2026-05-08 22:00:29,033 [INFO] Learning: TRUMP | vix | ❌ | CONTRARY | Score: 22.1 | Mkt: -0.69%
+2026-05-08 22:00:29,034 [INFO] 📈 Weight adjustment for TRUMP: -0.0069 (New weight: 1.79)
+2026-05-08 22:00:29,034 [INFO] Learning: TRUMP | oil | ✅ | MATCH | Score: 22.1 | Mkt: +0.50%
+2026-05-08 22:00:29,035 [INFO] 📈 Weight adjustment for TRUMP: -0.0072 (New weight: 1.78)
+2026-05-08 22:00:29,036 [INFO] Learning: FEMA_TRUMP | global | ❌ | CONTRARY | Score: 2.0 | Mkt: -0.69%
+2026-05-08 22:00:29,036 [INFO] 📈 Weight adjustment for FEMA_TRUMP: +0.0004 (New weight: 1.00)
+2026-05-08 22:00:29,037 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 1.9)
+2026-05-08 22:00:29,038 [INFO] Learning: FEMA_TRUMP | vix | ❌ | CONTRARY | Score: 2.0 | Mkt: -0.69%
+2026-05-08 22:00:29,039 [INFO] 📈 Weight adjustment for FEMA_TRUMP: +0.0004 (New weight: 1.00)
+2026-05-08 22:00:29,040 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 1.9)
+2026-05-08 22:00:29,041 [INFO] Learning: FEMA_TRUMP | oil | ✅ | MATCH | Score: 2.0 | Mkt: +0.50%
+2026-05-08 22:00:29,042 [INFO] 📈 Weight adjustment for FEMA_TRUMP: +0.0001 (New weight: 1.00)
+2026-05-08 22:00:29,043 [INFO] Learning: TRUMP | vix | ❌ | CONTRARY | Score: 16.0 | Mkt: -0.69%
+2026-05-08 22:00:29,043 [INFO] 📈 Weight adjustment for TRUMP: -0.0047 (New weight: 1.78)
+2026-05-08 22:00:29,044 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -23.4)
+2026-05-08 22:00:29,045 [INFO] Learning: TRUMP | oil | ✅ | MATCH | Score: 16.0 | Mkt: +0.50%
+2026-05-08 22:00:29,045 [INFO] 📈 Weight adjustment for TRUMP: -0.0050 (New weight: 1.77)
+2026-05-08 22:00:29,046 [INFO] Learning: TRUMP | global | ❌ | CONTRARY | Score: 16.0 | Mkt: -0.69%
+2026-05-08 22:00:29,046 [INFO] 📈 Weight adjustment for TRUMP: -0.0047 (New weight: 1.77)
+2026-05-08 22:00:29,047 [INFO] Learning: OIL_US_IRAN | vix | ❌ | CONTRARY | Score: 25.0 | Mkt: -0.69%
+2026-05-08 22:00:29,047 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0037 (New weight: 0.93)
+2026-05-08 22:00:29,048 [INFO] Learning: OIL_US_IRAN | oil | ✅ | MATCH | Score: 25.0 | Mkt: +0.50%
+2026-05-08 22:00:29,048 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0040 (New weight: 0.92)
+2026-05-08 22:00:29,049 [INFO] Learning: OIL_US_IRAN | global | ❌ | CONTRARY | Score: 25.0 | Mkt: -0.69%
+2026-05-08 22:00:29,050 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0037 (New weight: 0.92)
+2026-05-08 22:00:29,050 [INFO] Learning: OIL_US_IRAN | vix | ❌ | CONTRARY | Score: 21.8 | Mkt: -0.69%
+2026-05-08 22:00:29,051 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0031 (New weight: 0.91)
+2026-05-08 22:00:29,052 [INFO] Learning: OIL_US_IRAN | oil | ✅ | MATCH | Score: 21.8 | Mkt: +0.50%
+2026-05-08 22:00:29,053 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0034 (New weight: 0.91)
+2026-05-08 22:00:29,053 [INFO] Learning: OIL_US_IRAN | global | ❌ | CONTRARY | Score: 21.8 | Mkt: -0.69%
+2026-05-08 22:00:29,054 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0031 (New weight: 0.91)
+2026-05-08 22:00:29,055 [INFO] Learning: ADNOC_ARAMCO_OIL_OPENAI_US_IRAN | global | ❌ | CONTRARY | Score: 9.8 | Mkt: -0.69%
+2026-05-08 22:00:29,056 [INFO] 📈 Weight adjustment for ADNOC_ARAMCO_OIL_OPENAI_US_IRAN: -0.0016 (New weight: 1.00)
+2026-05-08 22:00:29,057 [INFO] Learning: ADNOC_ARAMCO_OIL_OPENAI_US_IRAN | soxs | ❌ | CONTRARY | Score: 9.8 | Mkt: -3.53%
+2026-05-08 22:00:29,057 [INFO] 📈 Weight adjustment for ADNOC_ARAMCO_OIL_OPENAI_US_IRAN: +0.0030 (New weight: 1.00)
+2026-05-08 22:00:29,058 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 15.0)
+2026-05-08 22:00:29,059 [INFO] Learning: ADNOC_ARAMCO_OIL_OPENAI_US_IRAN | hbm | ❌ | CONTRARY | Score: 9.8 | Mkt: +1.18%
+2026-05-08 22:00:29,060 [INFO] 📈 Weight adjustment for ADNOC_ARAMCO_OIL_OPENAI_US_IRAN: -0.0008 (New weight: 1.00)
+2026-05-08 22:00:29,060 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -3.9)
+2026-05-08 22:00:29,061 [INFO] Learning: ADNOC_ARAMCO_OIL_OPENAI_US_IRAN | vix | ❌ | CONTRARY | Score: 9.8 | Mkt: -0.69%
+2026-05-08 22:00:29,061 [INFO] 📈 Weight adjustment for ADNOC_ARAMCO_OIL_OPENAI_US_IRAN: -0.0016 (New weight: 1.00)
+2026-05-08 22:00:29,062 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -7.8)
+2026-05-08 22:00:29,062 [INFO] Learning: ADNOC_ARAMCO_OIL_OPENAI_US_IRAN | oil | ✅ | MATCH | Score: 9.8 | Mkt: +0.50%
+2026-05-08 22:00:29,063 [INFO] 📈 Weight adjustment for ADNOC_ARAMCO_OIL_OPENAI_US_IRAN: -0.0019 (New weight: 1.00)
+2026-05-08 22:00:29,063 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -9.3)
+2026-05-08 22:00:29,064 [INFO] Learning: TRUMP | vix | ❌ | CONTRARY | Score: 18.5 | Mkt: -0.69%
+2026-05-08 22:00:29,064 [INFO] 📈 Weight adjustment for TRUMP: -0.0056 (New weight: 1.76)
+2026-05-08 22:00:29,065 [INFO] Learning: TRUMP | oil | ✅ | MATCH | Score: 18.5 | Mkt: +0.50%
+2026-05-08 22:00:29,066 [INFO] 📈 Weight adjustment for TRUMP: -0.0059 (New weight: 1.76)
+2026-05-08 22:00:29,066 [INFO] Learning: TRUMP | global | ❌ | CONTRARY | Score: 18.5 | Mkt: -0.69%
+2026-05-08 22:00:29,067 [INFO] 📈 Weight adjustment for TRUMP: -0.0056 (New weight: 1.75)
+2026-05-08 22:00:29,068 [INFO] Learning: ALIBABA_NVIDIA_OBON_CORP_OPENAI_US_IRAN | global | ❌ | CONTRARY | Score: 3.6 | Mkt: -0.69%
+2026-05-08 22:00:29,068 [INFO] 📈 Weight adjustment for ALIBABA_NVIDIA_OBON_CORP_OPENAI_US_IRAN: +0.0004 (New weight: 1.00)
+2026-05-08 22:00:29,069 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 1.9)
+2026-05-08 22:00:29,069 [INFO] Learning: ALIBABA_NVIDIA_OBON_CORP_OPENAI_US_IRAN | hbm | ❌ | CONTRARY | Score: 3.6 | Mkt: +1.18%
+2026-05-08 22:00:29,071 [INFO] 📈 Weight adjustment for ALIBABA_NVIDIA_OBON_CORP_OPENAI_US_IRAN: +0.0012 (New weight: 1.00)
+2026-05-08 22:00:29,071 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 5.8)
+2026-05-08 22:00:29,072 [INFO] Learning: ALIBABA_NVIDIA_OBON_CORP_OPENAI_US_IRAN | soxs | ❌ | CONTRARY | Score: 3.6 | Mkt: -3.53%
+2026-05-08 22:00:29,073 [INFO] 📈 Weight adjustment for ALIBABA_NVIDIA_OBON_CORP_OPENAI_US_IRAN: +0.0049 (New weight: 1.01)
+2026-05-08 22:00:29,074 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 24.6)
+2026-05-08 22:00:29,074 [INFO] Learning: TRUMP | vix | ❌ | CONTRARY | Score: 21.5 | Mkt: -0.69%
+2026-05-08 22:00:29,075 [INFO] 📈 Weight adjustment for TRUMP: -0.0067 (New weight: 1.74)
+2026-05-08 22:00:29,076 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -33.3)
+2026-05-08 22:00:29,077 [INFO] Learning: TRUMP | oil | ✅ | MATCH | Score: 21.5 | Mkt: +0.50%
+2026-05-08 22:00:29,077 [INFO] 📈 Weight adjustment for TRUMP: -0.0070 (New weight: 1.74)
+2026-05-08 22:00:29,078 [INFO] Learning: TRUMP | global | ❌ | CONTRARY | Score: 21.5 | Mkt: -0.69%
+2026-05-08 22:00:29,078 [INFO] 📈 Weight adjustment for TRUMP: -0.0067 (New weight: 1.73)
+2026-05-08 22:00:29,079 [INFO] Learning: CLOUDFLARE_OPENAI | hbm | ✅ | MATCH | Score: -2.0 | Mkt: +1.18%
+2026-05-08 22:00:29,080 [INFO] 📈 Weight adjustment for CLOUDFLARE_OPENAI: +0.0015 (New weight: 1.00)
+2026-05-08 22:00:29,080 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 7.4)
+2026-05-08 22:00:29,081 [INFO] Learning: CLOUDFLARE_OPENAI | soxs | ✅ | MATCH | Score: -2.0 | Mkt: -3.53%
+2026-05-08 22:00:29,081 [INFO] 📈 Weight adjustment for CLOUDFLARE_OPENAI: +0.0052 (New weight: 1.01)
+2026-05-08 22:00:29,082 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 26.2)
+2026-05-08 22:00:29,083 [INFO] Learning: NVIDIA_OPENAI | global | ✅ | MATCH | Score: -3.5 | Mkt: -0.69%
+2026-05-08 22:00:29,083 [INFO] 📈 Weight adjustment for NVIDIA_OPENAI: +0.0004 (New weight: 1.01)
+2026-05-08 22:00:29,084 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 2.0)
+2026-05-08 22:00:29,084 [INFO] Learning: NVIDIA_OPENAI | hbm | ✅ | MATCH | Score: -3.5 | Mkt: +1.18%
+2026-05-08 22:00:29,085 [INFO] 📈 Weight adjustment for NVIDIA_OPENAI: +0.0012 (New weight: 1.01)
+2026-05-08 22:00:29,085 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: 5.9)
+2026-05-08 22:00:29,086 [INFO] Learning: NVIDIA_OPENAI | soxs | ✅ | MATCH | Score: -3.5 | Mkt: -3.53%
+2026-05-08 22:00:29,087 [INFO] 📈 Weight adjustment for NVIDIA_OPENAI: +0.0049 (New weight: 1.01)
+2026-05-08 22:00:29,088 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.01 (err: 24.7)
+2026-05-08 22:00:29,089 [INFO] Learning: TRUMP_US_IRAN | vix | ❌ | CONTRARY | Score: 3.5 | Mkt: -0.69%
+2026-05-08 22:00:29,089 [INFO] 📈 Weight adjustment for TRUMP_US_IRAN: +0.0004 (New weight: 1.01)
+2026-05-08 22:00:29,090 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: 2.0)
+2026-05-08 22:00:29,090 [INFO] Learning: TRUMP_US_IRAN | oil | ✅ | MATCH | Score: 3.5 | Mkt: +0.50%
+2026-05-08 22:00:29,091 [INFO] 📈 Weight adjustment for TRUMP_US_IRAN: +0.0001 (New weight: 1.01)
+2026-05-08 22:00:29,092 [INFO] Learning: TRUMP_US_IRAN | global | ❌ | CONTRARY | Score: 3.5 | Mkt: -0.69%
+2026-05-08 22:00:29,092 [INFO] 📈 Weight adjustment for TRUMP_US_IRAN: +0.0004 (New weight: 1.01)
+2026-05-08 22:00:29,092 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: 2.0)
+2026-05-08 22:00:29,093 [INFO] Learning: OIL_OPENAI_SOUTH_KOREA | soxs | ✅ | MATCH | Score: -1.6 | Mkt: -3.53%
+2026-05-08 22:00:29,093 [INFO] 📈 Weight adjustment for OIL_OPENAI_SOUTH_KOREA: +0.0052 (New weight: 1.01)
+2026-05-08 22:00:29,094 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: 26.1)
+2026-05-08 22:00:29,094 [INFO] Learning: OIL_OPENAI_SOUTH_KOREA | vix | ✅ | MATCH | Score: -1.6 | Mkt: -0.69%
+2026-05-08 22:00:29,095 [INFO] 📈 Weight adjustment for OIL_OPENAI_SOUTH_KOREA: +0.0007 (New weight: 1.01)
+2026-05-08 22:00:29,095 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: 3.3)
+2026-05-08 22:00:29,096 [INFO] Learning: OIL_OPENAI_SOUTH_KOREA | hbm | ✅ | MATCH | Score: -1.6 | Mkt: +1.18%
+2026-05-08 22:00:29,096 [INFO] 📈 Weight adjustment for OIL_OPENAI_SOUTH_KOREA: +0.0014 (New weight: 1.01)
+2026-05-08 22:00:29,096 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: 7.2)
+2026-05-08 22:00:29,097 [INFO] Learning: OIL_OPENAI_SOUTH_KOREA | global | ✅ | MATCH | Score: -1.6 | Mkt: -0.69%
+2026-05-08 22:00:29,098 [INFO] 📈 Weight adjustment for OIL_OPENAI_SOUTH_KOREA: +0.0007 (New weight: 1.01)
+2026-05-08 22:00:29,099 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: 3.3)
+2026-05-08 22:00:29,100 [INFO] Learning: OIL_OPENAI_SOUTH_KOREA | oil | ❌ | CONTRARY | Score: -1.6 | Mkt: +0.50%
+2026-05-08 22:00:29,100 [INFO] 📈 Weight adjustment for OIL_OPENAI_SOUTH_KOREA: +0.0004 (New weight: 1.01)
+2026-05-08 22:00:29,101 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: 1.8)
+2026-05-08 22:00:29,102 [INFO] Learning: OIL_US_IRAN | vix | ❌ | CONTRARY | Score: 25.0 | Mkt: -0.69%
+2026-05-08 22:00:29,103 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0037 (New weight: 0.90)
+2026-05-08 22:00:29,104 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: -18.3)
+2026-05-08 22:00:29,105 [INFO] Learning: OIL_US_IRAN | oil | ✅ | MATCH | Score: 25.0 | Mkt: +0.50%
+2026-05-08 22:00:29,105 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0040 (New weight: 0.90)
+2026-05-08 22:00:29,106 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: -19.8)
+2026-05-08 22:00:29,107 [INFO] Learning: OIL_US_IRAN | global | ❌ | CONTRARY | Score: 25.0 | Mkt: -0.69%
+2026-05-08 22:00:29,108 [INFO] 📈 Weight adjustment for OIL_US_IRAN: -0.0037 (New weight: 0.90)
+2026-05-08 22:00:29,109 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: -18.3)
+2026-05-08 22:00:29,110 [INFO] Learning: GULF_OF_OMAN_OIL_US_IRAN | vix | ❌ | CONTRARY | Score: 6.8 | Mkt: -0.69%
+2026-05-08 22:00:29,110 [INFO] 📈 Weight adjustment for GULF_OF_OMAN_OIL_US_IRAN: -0.0007 (New weight: 1.00)
+2026-05-08 22:00:29,111 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.01 (err: -3.7)
+2026-05-08 22:00:29,111 [INFO] Learning: GULF_OF_OMAN_OIL_US_IRAN | global | ❌ | CONTRARY | Score: 6.8 | Mkt: -0.69%
+2026-05-08 22:00:29,112 [INFO] 📈 Weight adjustment for GULF_OF_OMAN_OIL_US_IRAN: -0.0007 (New weight: 1.00)
+2026-05-08 22:00:29,112 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.01 -> 1.00 (err: -3.7)
+2026-05-08 22:00:29,113 [INFO] Learning: GULF_OF_OMAN_OIL_US_IRAN | oil | ✅ | MATCH | Score: 6.8 | Mkt: +0.50%
+2026-05-08 22:00:29,114 [INFO] 📈 Weight adjustment for GULF_OF_OMAN_OIL_US_IRAN: -0.0010 (New weight: 1.00)
+2026-05-08 22:00:29,114 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -5.2)
+2026-05-08 22:00:29,114 [INFO] Learning: OIL_TRUMP_US_IRAN | vix | ❌ | CONTRARY | Score: 6.4 | Mkt: -0.69%
+2026-05-08 22:00:29,115 [INFO] 📈 Weight adjustment for OIL_TRUMP_US_IRAN: -0.0012 (New weight: 1.00)
+2026-05-08 22:00:29,115 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -6.0)
+2026-05-08 22:00:29,116 [INFO] Learning: OIL_TRUMP_US_IRAN | global | ❌ | CONTRARY | Score: 6.4 | Mkt: -0.69%
+2026-05-08 22:00:29,116 [INFO] 📈 Weight adjustment for OIL_TRUMP_US_IRAN: -0.0012 (New weight: 1.00)
+2026-05-08 22:00:29,117 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -6.0)
+2026-05-08 22:00:29,118 [INFO] Learning: OIL_TRUMP_US_IRAN | oil | ✅ | MATCH | Score: 6.4 | Mkt: +0.50%
+2026-05-08 22:00:29,118 [INFO] 📈 Weight adjustment for OIL_TRUMP_US_IRAN: -0.0015 (New weight: 1.00)
+2026-05-08 22:00:29,119 [INFO] ⚙️ Calibration: IMPACT_MULTIPLIER adjusted 1.00 -> 1.00 (err: -7.5)
+2026-05-08 22:00:29,146 [INFO] System settings saved. New IMPACT_MULTIPLIER: 1.00
+2026-05-08 22:00:29,153 [INFO] 📡 GTS 4.0 scanning... [До обучения: 59 мин | Готово новостей: 21]
+2026-05-08 22:00:37,926 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:38,204 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:38,502 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:41,331 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:41,675 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:42,313 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:45,769 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:46,405 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:46,603 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:48,437 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:00:48,456 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:48,667 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:00:48,669 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:49,099 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:00:49,100 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:49,546 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:00:49,547 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:49,989 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:00:49,990 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:50,217 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:00:50,218 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:50,467 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:00:50,468 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:50,868 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:00:50,869 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:51,129 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:00:51,130 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:56,742 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:00:56,743 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:57,033 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:00:57,033 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:57,268 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:00:57,269 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:57,465 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:00:57,466 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:57,806 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:00:57,807 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:58,038 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:00:58,039 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:58,278 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:00:58,279 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:58,520 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:00:58,520 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:00:58,919 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:00:58,920 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:05,567 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:01:05,568 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:05,655 [INFO] Skipping low-score event: ANTROPIC_OPENAI (Score: 0.00)
+2026-05-08 22:01:05,720 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 22:01:05,802 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:01:05,804 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:05,830 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:05,830 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:06,030 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:06,032 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:06,064 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:06,064 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:06,347 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:06,348 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:06,370 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:06,371 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:06,531 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:01:06,532 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:06,608 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:06,609 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:06,646 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:06,648 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:06,751 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:06,752 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:07,227 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:07,228 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:07,234 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:07,240 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:07,526 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:07,528 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:07,634 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:07,635 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:07,861 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:07,862 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:07,945 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:07,947 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:07,952 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:01:07,953 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:08,066 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:08,067 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:08,249 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:08,249 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:08,267 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:08,268 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:08,552 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:08,552 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:08,557 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 1/9 в текущем цикле).
+2026-05-08 22:01:08,558 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:08,833 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:08,834 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:08,934 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:08,935 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:09,137 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:09,139 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:09,225 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:09,226 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:09,370 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:09,371 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:09,455 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:01:09,456 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:09,752 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:09,753 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:09,796 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:09,797 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:10,098 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:10,099 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:10,110 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:10,111 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:10,522 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 1/9 в текущем цикле).
+2026-05-08 22:01:10,524 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:10,528 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:10,529 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:10,621 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:01:10,622 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:11,121 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:11,122 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:11,131 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:11,132 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:11,409 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:11,410 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:11,418 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:11,628 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:11,630 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:11,720 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:01:11,721 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:12,066 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:12,067 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:12,088 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:12,089 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:12,326 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:12,328 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:12,335 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:12,336 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:12,657 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:12,658 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:12,861 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:12,862 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:13,533 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:13,535 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:14,038 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:01:14,039 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:14,049 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:14,050 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:14,361 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:14,362 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:14,372 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:14,388 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:14,728 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:14,729 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:14,733 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 1/9 в текущем цикле).
+2026-05-08 22:01:14,734 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:14,771 [INFO] Skipping low-score event: GOLD (Score: 0.00)
+2026-05-08 22:01:15,013 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 1/9 в текущем цикле).
+2026-05-08 22:01:15,014 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:15,019 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:15,019 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:15,355 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:15,359 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:15,373 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:15,374 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:15,658 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 22:01:15,723 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:15,725 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:15,840 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:15,841 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:16,063 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:16,064 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:16,184 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:16,186 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:16,338 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:16,339 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:16,687 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:16,689 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:16,695 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:16,696 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:17,001 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:17,002 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:17,117 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:17,117 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:17,429 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:17,430 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:17,435 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:17,437 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:17,776 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:17,960 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:17,961 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:18,164 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 1/9 в текущем цикле).
+2026-05-08 22:01:18,164 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:18,544 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:18,545 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:18,809 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:18,810 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:19,211 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:19,212 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:19,755 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:19,756 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:20,255 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:20,256 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:20,650 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:20,651 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:20,952 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:20,953 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:21,353 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:21,354 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:21,554 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 1/9 в текущем цикле).
+2026-05-08 22:01:21,555 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:21,957 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:21,958 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:22,290 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:22,291 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:22,542 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:22,543 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:22,880 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:22,880 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:23,351 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:23,352 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:23,653 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:23,654 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:24,042 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:24,043 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:25,225 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:26,435 [INFO] Skipping low-score event: OPENAI (Score: 0.00)
+2026-05-08 22:01:26,443 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:26,747 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 1/9 в текущем цикле).
+2026-05-08 22:01:26,747 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:27,016 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:27,017 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:27,319 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:27,320 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:27,569 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:27,570 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:27,927 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:27,928 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:28,178 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:28,179 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:28,437 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:28,438 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:28,663 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:28,664 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:28,940 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:28,940 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:32,785 [INFO] Skipping low-score event: TRUMP (Score: 0.00)
+2026-05-08 22:01:32,792 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:33,035 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 1/9 в текущем цикле).
+2026-05-08 22:01:33,036 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:33,374 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:33,375 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:33,611 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:33,612 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:33,845 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:33,846 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:34,123 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:34,124 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:34,379 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:34,380 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:34,557 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:34,558 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:34,795 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:34,796 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:35,070 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:35,070 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:35,323 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 1/9 в текущем цикле).
+2026-05-08 22:01:35,324 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:35,629 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:35,630 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:35,853 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:35,854 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:36,036 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:36,037 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:36,359 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:36,361 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:36,571 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:36,572 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:36,842 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:36,843 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:37,021 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:37,022 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:37,236 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:37,236 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:37,507 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 1/9 в текущем цикле).
+2026-05-08 22:01:37,508 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:37,725 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:37,726 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:37,960 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:37,961 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:38,202 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:38,203 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:38,559 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:38,560 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:38,767 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:38,768 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:38,961 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:38,962 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:39,264 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:39,265 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:39,484 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:48,487 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:01:48,488 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:48,911 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:01:48,913 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:49,263 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:01:49,265 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:49,593 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:01:49,593 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:50,048 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:01:50,050 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:50,557 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:01:50,558 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:50,787 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:01:50,787 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:51,065 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:01:51,066 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:51,328 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:01:51,329 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:01:54,489 [INFO] Skipping low-score event: TRUMP_US_IRAN (Score: 0.00)
+2026-05-08 22:01:54,497 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:00,481 [INFO] Skipping low-score event: INTEL_OPENAI_SEMICONDUCTOR (Score: 0.00)
+2026-05-08 22:02:00,490 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:00,622 [INFO] Skipping low-score event: INFLATION_TRUMP (Score: 0.00)
+2026-05-08 22:02:00,630 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:07,856 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:07,857 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:08,123 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:02:08,124 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:08,368 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:02:08,368 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:08,734 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:02:08,735 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:09,111 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:02:09,112 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:09,324 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:02:09,325 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:09,546 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:02:09,547 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:09,716 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:09,717 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:09,774 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 8/9 в текущем цикле).
+2026-05-08 22:02:09,775 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:10,071 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:02:10,072 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:10,263 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:02:10,263 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:10,584 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 4/9 в текущем цикле).
+2026-05-08 22:02:10,585 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:11,157 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 5/9 в текущем цикле).
+2026-05-08 22:02:11,161 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:11,764 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 6/9 в текущем цикле).
+2026-05-08 22:02:11,765 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:12,124 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 7/9 в текущем цикле).
+2026-05-08 22:02:12,124 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:12,562 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:02:12,564 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:12,569 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:12,570 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:12,988 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:02:12,989 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:12,995 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:02:12,996 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:13,302 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:02:13,303 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:13,321 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:13,322 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:13,534 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:13,535 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:13,686 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 4/9 в текущем цикле).
+2026-05-08 22:02:13,687 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:13,693 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 1/9 в текущем цикле).
+2026-05-08 22:02:13,693 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:14,051 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 5/9 в текущем цикле).
+2026-05-08 22:02:14,052 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:14,055 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 2/9 в текущем цикле).
+2026-05-08 22:02:14,056 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:14,061 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 2/9 в текущем цикле).
+2026-05-08 22:02:14,062 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:14,351 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:02:14,351 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:14,355 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 6/9 в текущем цикле).
+2026-05-08 22:02:14,356 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:14,749 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 4/9 в текущем цикле).
+2026-05-08 22:02:14,750 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:14,758 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 7/9 в текущем цикле).
+2026-05-08 22:02:14,759 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,083 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 8/9 в текущем цикле).
+2026-05-08 22:02:15,084 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,087 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 5/9 в текущем цикле).
+2026-05-08 22:02:15,091 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,102 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:15,103 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,297 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 4/9 в текущем цикле).
+2026-05-08 22:02:15,298 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,310 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:02:15,311 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,319 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 6/9 в текущем цикле).
+2026-05-08 22:02:15,320 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,344 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:15,345 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,652 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:02:15,653 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,683 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 5/9 в текущем цикле).
+2026-05-08 22:02:15,684 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,758 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 7/9 в текущем цикле).
+2026-05-08 22:02:15,759 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,892 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 3/9 в текущем цикле).
+2026-05-08 22:02:15,893 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:15,997 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 6/9 в текущем цикле).
+2026-05-08 22:02:15,998 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:16,153 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:02:16,154 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:16,159 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 4/9 в текущем цикле).
+2026-05-08 22:02:16,160 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:16,251 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 7/9 в текущем цикле).
+2026-05-08 22:02:16,251 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:16,400 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 9/9 в текущем цикле).
+2026-05-08 22:02:16,569 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 8/9 в текущем цикле).
+2026-05-08 22:02:16,570 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:16,904 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:16,905 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:16,910 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 9/9 в текущем цикле).
+2026-05-08 22:02:16,911 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:17,138 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 1/9 в текущем цикле).
+2026-05-08 22:02:17,139 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:17,228 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 6/9 в текущем цикле).
+2026-05-08 22:02:17,229 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:17,410 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 2/9 в текущем цикле).
+2026-05-08 22:02:17,411 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:17,654 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 7/9 в текущем цикле).
+2026-05-08 22:02:17,655 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:17,663 [WARNING] ⚠️ Лимит models/gemini-3.1-flash-lite исчерпан. Переключаюсь на models/gemini-3.1-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:02:17,664 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:17,968 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 4/9 в текущем цикле).
+2026-05-08 22:02:17,969 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:18,193 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 5/9 в текущем цикле).
+2026-05-08 22:02:18,194 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:18,375 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:02:18,376 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:18,710 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 7/9 в текущем цикле).
+2026-05-08 22:02:18,711 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:18,986 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 8/9 в текущем цикле).
+2026-05-08 22:02:18,986 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:19,198 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 9/9 в текущем цикле).
+2026-05-08 22:02:19,681 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:19,682 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:19,997 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:02:19,998 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:20,279 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:20,280 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:20,699 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:02:20,700 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:20,913 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:02:20,914 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:21,249 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:02:21,250 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:21,641 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:02:21,642 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:21,907 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:02:21,908 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:22,212 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:02:22,213 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:22,484 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:02:22,485 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:22,669 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:02:22,670 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:31,408 [INFO] Skipping low-score event: OPENAI_US_IRAN (Score: 0.00)
+2026-05-08 22:02:31,417 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:34,202 [INFO] Skipping low-score event: INFLATION (Score: 0.00)
+2026-05-08 22:02:39,253 [ERROR] ⚠️ Ошибка модели models/gemini-3.1-flash-lite: 503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}
+2026-05-08 22:02:39,253 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:39,550 [WARNING] ⚠️ Лимит models/gemini-3.1-pro-preview исчерпан. Переключаюсь на models/gemini-3-flash-preview (попытка 2/9 в текущем цикле).
+2026-05-08 22:02:39,551 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:39,952 [WARNING] ⚠️ Лимит models/gemini-3-flash-preview исчерпан. Переключаюсь на models/gemini-3-pro-preview (попытка 3/9 в текущем цикле).
+2026-05-08 22:02:39,953 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:40,173 [WARNING] ⚠️ Лимит models/gemini-3-pro-preview исчерпан. Переключаюсь на models/gemini-2.5-flash (попытка 4/9 в текущем цикле).
+2026-05-08 22:02:40,174 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:40,509 [WARNING] ⚠️ Лимит models/gemini-2.5-flash исчерпан. Переключаюсь на models/gemini-2.5-pro (попытка 5/9 в текущем цикле).
+2026-05-08 22:02:40,510 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:40,749 [WARNING] ⚠️ Лимит models/gemini-2.5-pro исчерпан. Переключаюсь на models/gemini-2.0-flash (попытка 6/9 в текущем цикле).
+2026-05-08 22:02:40,749 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:41,010 [WARNING] ⚠️ Лимит models/gemini-2.0-flash исчерпан. Переключаюсь на models/gemini-flash-latest (попытка 7/9 в текущем цикле).
+2026-05-08 22:02:41,011 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:41,329 [WARNING] ⚠️ Лимит models/gemini-flash-latest исчерпан. Переключаюсь на models/gemini-pro-latest (попытка 8/9 в текущем цикле).
+2026-05-08 22:02:41,330 [INFO] AFC is enabled with max remote calls: 10.
+2026-05-08 22:02:41,589 [WARNING] ⚠️ Лимит models/gemini-pro-latest исчерпан. Переключаюсь на models/gemini-3.1-flash-lite (попытка 9/9 в текущем цикле).
+2026-05-08 22:02:57,603 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 22:02:58,155 [INFO] TELEGRAM ASYNC: 200
+2026-05-08 22:03:03,767 [INFO] --- База данных оптимизирована: удалены данные старше 14 дней и 0 ключей с весом < 0.5 ---
+2026-05-08 22:07:50,144 [INFO] Получен сигнал завершения (Ctrl+C или системный).
+2026-05-08 22:07:50,144 [INFO] Закрытие соединений и остановка фоновых задач...
+2026-05-08 22:07:50,147 [INFO] GTS 4.0 остановлен.
