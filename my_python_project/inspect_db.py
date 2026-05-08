@@ -28,36 +28,79 @@ def inspect_gts():
         print(events)
         
         print("\n--- АНАЛИЗ ОТКЛОНЕНИЙ (PREDICTED VS ACTUAL) ---")
-        # Показываем последние 10 разрешенных прогнозов и их ошибку
-        accuracy_query = """
+        # Показываем последние 10 значимых прогнозов. 
+        # Фильтруем шум (score < threshold), чтобы не видеть дефолтные 0 в actual_move.
+        accuracy_query = f"""
             SELECT event_key, target_asset, score, predicted_impact, actual_move, 
                    (actual_move - predicted_impact) as error, is_correct, timestamp 
             FROM predictions 
-            WHERE resolved = 1 
+            WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD}
             ORDER BY timestamp DESC LIMIT 10
         """
         accuracy_df = pd.read_sql(accuracy_query, conn)
         if not accuracy_df.empty:
             print(accuracy_df)
 
-        print("\n--- СТАТИСТИКА ПО АКТИВАМ ---")
-        asset_stats_query = """
-            SELECT target_asset, 
-                   COUNT(*) as total_cases, 
-                   ROUND(AVG(is_correct) * 100, 1) as win_rate_pct, 
-                   ROUND(AVG(abs(actual_move - predicted_impact)), 2) as avg_abs_error
-            FROM predictions 
-            WHERE resolved = 1
-            GROUP BY target_asset
+        print("\n--- СТАТИСТИКА ПО АКТИВАМ И ТРЕНДЫ ---")
+        # Загружаем все разрешенные прогнозы для анализа трендов
+        # Исключаем шум из статистики, чтобы он не занижал WinRate и не искажал среднюю ошибку
+        all_res_query = f"""
+            SELECT target_asset, is_correct, actual_move, predicted_impact, timestamp 
+            FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD}
         """
-        asset_stats = pd.read_sql(asset_stats_query, conn)
-        if not asset_stats.empty:
-            print(asset_stats)
+        df_all = pd.read_sql(all_res_query, conn)
+        
+        if not df_all.empty:
+            df_all['error'] = abs(df_all['actual_move'] - df_all['predicted_impact'])
+            
+            stats_data = []
+            for asset in df_all['target_asset'].unique():
+                asset_df = df_all[df_all['target_asset'] == asset].sort_values('timestamp')
+                total_cnt = len(asset_df)
+                
+                # Общие показатели
+                total_wr = asset_df['is_correct'].mean() * 100
+                total_err = asset_df['error'].mean()
+                
+                # Последние показатели (последние 10 прогнозов или 30% данных)
+                recent_window = max(5, int(total_cnt * 0.3))
+                recent_df = asset_df.tail(recent_window)
+                recent_wr = recent_df['is_correct'].mean() * 100
+                recent_err = recent_df['error'].mean()
+                
+                # Расчет изменений
+                wr_delta = recent_wr - total_wr
+                err_delta = recent_err - total_err
+                
+                # Формирование комментария
+                comment = ""
+                if total_wr > 70: comment = "💎 Отлично"
+                elif total_wr < 45: comment = "⚠️ Слабо"
+                else: comment = "🆗 Стабильно"
+                
+                if wr_delta > 5: comment += " | 📈 Улучшение точности"
+                elif wr_delta < -5: comment += " | 📉 Точность падает"
+                
+                if err_delta < -3: comment += " | 🎯 Калибровка лучше"
+                elif err_delta > 3: comment += " | 🌡 Разброс растет"
+
+                stats_data.append({
+                    "Asset": asset,
+                    "Total": total_cnt,
+                    "WinRate%": round(total_wr, 1),
+                    "WR_Trend": f"{wr_delta:+.1f}%",
+                    "AvgError": round(total_err, 2),
+                    "Err_Trend": f"{err_delta:+.2f}",
+                    "Status/Comment": comment
+                })
+            
+            stats_df = pd.DataFrame(stats_data)
+            print(stats_df.sort_values("WinRate%", ascending=False).to_string(index=False))
 
         print("\n--- СТАТИСТИКА ПРОГНОЗОВ ---")
         total = pd.read_sql("SELECT COUNT(*) as total FROM predictions", conn).iloc[0]['total']
         
-        # Считаем статистику только по тем новостям, которые были признаны значимыми (score >= 0.5)
+        # Считаем статистику только по тем новостям, которые выше порога шума
         query = f"SELECT COUNT(*) as resolved, AVG(actual_move) as avg_move, SUM(is_correct) as correct FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD}"
         resolved_df = pd.read_sql(query, conn)
         

@@ -308,7 +308,7 @@ async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], 
     Return ONLY a JSON object with this structure:
     {{
       "score": float (-10.0 to 10.0, where positive is risk-off/escalation, negative is risk-on/peace),
-      "event_type": "military" | "economic" | "diplomatic" | "neutral",
+      "event_type": "military" | "economic" | "diplomatic" | "neutral" | "tech",
       "entities": ["list of countries, companies or key regions"]
     }}
     Do not include any markdown formatting or explanations.
@@ -457,12 +457,20 @@ def make_event_key(entities: List[str]) -> str:
     
     # Проверяем в обе стороны: либо тема входит в сущность (NVIDIA -> NVIDIA_CORP), 
     # либо сущность является частью темы (US -> US_IRAN)
-    matches = [e for e in unique_ents if any(t in e or e in t for t in tracked_upper)]
+    matches = []
+    for e in unique_ents:
+        # Ищем совпадение: тег из конфига равен сущности, либо один является частью другого
+        # Это позволит "Gold" из конфига поймать "Gold Price" от ИИ и наоборот.
+        matched_tag = next((t for t in tracked_upper if t == e or t in e or e in t), e)
+        matches.append(matched_tag)
     
     # Если есть совпадения с отслеживаемыми темами — берем их.
     # Если нет — берем первые две сущности для формирования ключа.
     # Если после всей фильтрации список пуст — возвращаем GLOBAL.
-    result_ents = matches if matches else unique_ents[:2]
+    
+    # Очищаем от дубликатов и сортируем, чтобы ключи были стабильными
+    # (исправляет OPENAI_OPENAI_SOFTBANK -> OPENAI_SOFTBANK)
+    result_ents = sorted(list(set(matches))) if matches else unique_ents[:2]
     if not result_ents:
         return "GLOBAL"
 
@@ -580,7 +588,10 @@ def update_weights(event_key: str, predicted: float, actual: float,score: float)
     # Обучаем глобальный множитель:
     # Если ошибка положительная (actual > predicted), множитель должен расти.
     # Используем меньший шаг для стабильности (0.005)
-    global_impact_multiplier = max(1.0, min(10.0, global_impact_multiplier + (learning_rate * error * 0.005)))
+    old_mult = global_impact_multiplier
+    global_impact_multiplier = max(1.0, min(10.0, old_mult + (learning_rate * error * 0.005)))
+    if abs(global_impact_multiplier - old_mult) > 0.0001:
+        logging.info(f"⚙️ Calibration: IMPACT_MULTIPLIER adjusted {old_mult:.2f} -> {global_impact_multiplier:.2f} (err: {error:.1f})")
 
     # Атомарное обучение: обновляем веса каждой отдельной сущности в ключе
     # Это позволяет системе выучить, что "OPENAI" важен, даже если он встретился в новом контексте
@@ -740,7 +751,7 @@ async def learning_cycle(session: aiohttp.ClientSession):
             if abs(raw_change) < config.LEARNING_THRESHOLD:
                 continue
 
-            # Если новость нейтральная (Score в пределах [-0.5, 0.5]), помечаем как resolved,
+            # Если новость нейтральная (ниже порога NEUTRAL_SCORE_THRESHOLD), помечаем как resolved,
             # но не считаем это ошибкой прогноза и не логируем в результат обучения.
             if abs(score) < config.NEUTRAL_SCORE_THRESHOLD:
                 cursor.execute("UPDATE predictions SET resolved = 1 WHERE id = ?", (row['id'],))
@@ -751,7 +762,9 @@ async def learning_cycle(session: aiohttp.ClientSession):
             # Проверка совпадения направления: (Score * Change * Correlation) > 0
             is_correct = 1 if (score * raw_change * correlation) > 0 else 0
             status_icon = "✅" if is_correct else "❌"
-            logging.info(f"Result for {event_key} [{target}]: {status_icon} (Score: {score:.1f}, Change: {raw_change:.2f}%)")
+            
+            direction_desc = "MATCH" if is_correct else "CONTRARY"
+            logging.info(f"Learning: {event_key} | {target} | {status_icon} | {direction_desc} | Score: {score:.1f} | Mkt: {raw_change:+.2f}%")
             update_weights(event_key, predicted, actual, score)
 
             cursor.execute("""
@@ -778,7 +791,7 @@ def cleanup_db():
             cursor.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
             
             # Удаляем ключи с критически низким весом
-            cursor.execute("DELETE FROM weights WHERE weight < ?", (config.MIN_WEIGHT_THRESHOLD,))
+            cursor.execute("DELETE FROM weights WHERE weight <= ?", (config.MIN_WEIGHT_THRESHOLD,))
             deleted_weights = cursor.rowcount
             
             conn.commit()  # Завершаем транзакцию после удаления
@@ -841,7 +854,8 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         score *= trust_factor
         
         # Дополнительное снижение веса для нефинансовых типов событий
-        if event_type in ["neutral", "diplomatic"] and abs(score) > config.NEUTRAL_SCORE_THRESHOLD:
+        # Применяем decay ко всем нейтральным новостям, а не только к тем, что выше порога
+        if event_type in ["neutral", "diplomatic"] and abs(score) > 0:
             score *= config.NON_FINANCIAL_SCORE_DECAY_FACTOR
         
         current_delay = config.AI_DELAY_JSON if get_active_model()["supports_json"] else config.AI_DELAY_NO_JSON
@@ -850,9 +864,22 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         event_key = make_event_key(entities)
 
         # Фильтр шума: если новость нейтральная и не относится к списку отслеживаемых тем,
-        # мы полностью пропускаем её, чтобы не засорять БД и таблицу весов (KEYWORDS).
-        is_tracked = any(part in event_weights for part in event_key.split('_')) or event_key in event_weights
-        if abs(score) < config.NEUTRAL_SCORE_THRESHOLD and not is_tracked:
+        # мы полностью пропускаем её, чтобы не засорять БД и таблицу весов.
+        # Более надежная проверка: есть ли event_key или его части в event_asset_map
+        is_tracked = False
+        for tracked_key in event_asset_map.keys():
+            if event_key == tracked_key or event_key in tracked_key or tracked_key in event_key:
+                is_tracked = True
+                break
+        if not is_tracked and any(part in event_asset_map for part in event_key.split('_')):
+            is_tracked = True
+        
+        # 1. Фильтр по минимальному порогу значимости (пропускаем всё, что ниже порога уведомления)
+        if abs(score) < config.MIN_NEWS_SCORE_FOR_ALERT:
+            logging.info(f"Skipping low-score event: {event_key} (Score: {score:.2f})")
+            continue
+        # 2. Незначительные новости для неотслеживаемых сущностей (ниже порога 2.0)
+        if abs(score) < config.NEUTRAL_SCORE_THRESHOLD and not is_tracked and event_key != "GLOBAL":
             logging.info(f"Skipping noise event: {event_key}")
             continue
 
@@ -862,14 +889,25 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         prob = predict_impact(event_scores[event_key], event_key) 
         sig_type = generate_signal(prob, event_scores[event_key])
 
-        # Улучшенный поиск активов: проверяем части составного ключа
+        # Улучшенный поиск активов: проверяем event_key и его части на соответствие event_asset_map
         target_assets_set = set()
+
+        # 1. Прямое совпадение event_key с ключом в event_asset_map
+        if event_key in event_asset_map:
+            target_assets_set.update(event_asset_map[event_key])
+
+        # 2. Поиск по частям event_key (например, "BTC" в "BTC_IRAN_US")
         for part in event_key.split('_'):
             if part in event_asset_map:
                 target_assets_set.update(event_asset_map[part])
-        if event_key in event_asset_map:
-            target_assets_set.update(event_asset_map[event_key])
-        
+
+        # 3. Поиск, если event_key является подстрокой или содержит ключ из event_asset_map
+        # (например, event_key="IRAN", а в event_asset_map есть "IRAN_US")
+        for tracked_key, assets in event_asset_map.items():
+            # Проверяем, является ли event_key подстрокой tracked_key или наоборот
+            if tracked_key != event_key and (event_key in tracked_key or tracked_key in event_key):
+                target_assets_set.update(assets)
+
         # Гарантируем наличие хотя бы одного актива и исключаем пустые значения/None
         target_assets = [a for a in target_assets_set if a]
         if not target_assets:
@@ -891,7 +929,8 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
 
         # Не отправляем в Telegram, если Score слишком низкий (шум)
         # и это не накопленный критический балл по ключу.
-        is_significant = abs(score) >= config.NEUTRAL_SCORE_THRESHOLD or abs(event_scores[event_key]) >= config.SIGNAL_THRESHOLD_LOW
+        news_has_weight = abs(score) >= config.MIN_NEWS_SCORE_FOR_ALERT
+        is_significant = news_has_weight and (abs(score) >= config.NEUTRAL_SCORE_THRESHOLD or abs(event_scores[event_key]) >= config.SIGNAL_THRESHOLD_LOW)
         if is_significant and should_send(event_key, score):
             if event_key == "BTC" and abs(market_context.get("btc_change", 0)) < config.BTC_MIN_VOLATILITY_FOR_ALERT:
                 continue
@@ -915,9 +954,19 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                 forecast_details.append(f"{icon} {a_key.upper()}: {signal} ({change:+.2f}%)")
             
             forecast_str = "\n".join(forecast_details)
+
+            # Проверка на дивергенцию (расхождение настроения новости и общего тренда)
+            divergence_tag = ""
+            # Если итоговый скор очень низкий (Risk-On), а новость пришла с высоким плюсом (Risk-Off)
+            if event_scores[event_key] < -5 and score > 1.5:
+                divergence_tag = "⚠️ COUNTER-TREND NEWS\n"
+            elif event_scores[event_key] > 5 and score < -1.5:
+                divergence_tag = "⚠️ COUNTER-TREND NEWS\n"
+
             msg = (
                 f"🧠 EVENT: {event_key}\n"
                 f"🤖 Model: {source}\n"
+                f"{divergence_tag}"
                 f"Score: {event_scores[event_key]:.2f} (News: {score:+.2f}) | Impact: {prob:+.2f}%\n"
                 f"-------------------\n"
                 f"{forecast_str}\n"
