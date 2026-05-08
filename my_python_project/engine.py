@@ -1,6 +1,7 @@
 import feedparser
 import logging
 import re
+import sqlite3
 import time
 import json
 import asyncio
@@ -921,19 +922,23 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         if not target_assets:
             target_assets = ["global"]
 
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO events (title, link, score, event, nasdaq, oil, hbm, soxs, gold, btc, vix, fear_greed)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val))
-            
-            for asset_name in target_assets:
+        try:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO predictions (event_key, score, predicted_impact, target_asset, resolved) 
-                    VALUES (?, ?, ?, ?, 0)
-                """, (event_key, event_scores[event_key], prob, str(asset_name)))
-            conn.commit()
+                    INSERT INTO events (title, link, score, event, nasdaq, oil, hbm, soxs, gold, btc, vix, fear_greed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val))
+                
+                for asset_name in target_assets:
+                    cursor.execute("""
+                        INSERT INTO predictions (event_key, score, predicted_impact, target_asset, resolved) 
+                        VALUES (?, ?, ?, ?, 0)
+                    """, (event_key, event_scores[event_key], prob, str(asset_name)))
+                conn.commit()
+        except sqlite3.IntegrityError:
+            logging.info(f"Новость уже обработана другой лентой: {entry.title}")
+            continue
 
         # Не отправляем в Telegram, если Score слишком низкий (шум)
         # и это не накопленный критический балл по ключу.
