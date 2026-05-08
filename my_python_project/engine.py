@@ -823,6 +823,14 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         return
 
     for entry in feed.entries[:config.RSS_MAX_ENTRIES]:
+        # Проверка возраста новости (теперь в часах, привязано к MARKET_LOOKBACK_HOURS)
+        published = entry.get('published_parsed')
+        if published:
+            pub_time = time.mktime(published)
+            if (time.time() - pub_time) > (config.MAX_NEWS_AGE_HOURS * 3600):
+                logging.debug(f"Пропуск старой новости: {entry.title}")
+                continue
+
         with get_db_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id FROM events WHERE link = ?", (entry.link,))
