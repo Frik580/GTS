@@ -576,23 +576,13 @@ def should_send(key: str, current_score: float) -> bool:
 # LEARNING SYSTEM
 # =========================
 
-def update_weights(event_key: str, predicted: float, actual: float,score: float):
-    global global_impact_multiplier
-
-    error = actual - predicted
+def update_weights(event_key: str, error: float):
+    """Обновляет веса событий на основе ошибки прогноза."""
     adjustment = learning_rate * error * 0.01
 
     # Обновляем основной ключ
     event_weights[event_key] = max(0.5, min(5.0, event_weights.get(event_key, 1.0) + adjustment))
     logging.info(f"📈 Weight adjustment for {event_key}: {adjustment:+.4f} (New weight: {event_weights[event_key]:.2f})")
-
-    # Обучаем глобальный множитель:
-    # Если ошибка положительная (actual > predicted), множитель должен расти.
-    # Используем меньший шаг для стабильности (0.005)
-    old_mult = global_impact_multiplier
-    global_impact_multiplier = max(1.0, min(10.0, old_mult + (learning_rate * error * 0.005)))
-    if abs(global_impact_multiplier - old_mult) > 0.0001:
-        logging.info(f"⚙️ Calibration: IMPACT_MULTIPLIER adjusted {old_mult:.2f} -> {global_impact_multiplier:.2f} (err: {error:.1f})")
 
     # Атомарное обучение: обновляем веса каждой отдельной сущности в ключе
     # Это позволяет системе выучить, что "OPENAI" важен, даже если он встретился в новом контексте
@@ -601,6 +591,15 @@ def update_weights(event_key: str, predicted: float, actual: float,score: float)
         for part in parts:
             if len(part) > 2: # Игнорируем слишком короткие сущности
                 event_weights[part] = max(0.5, min(5.0, event_weights.get(part, 1.0) + adjustment))
+
+def calibrate_multiplier(avg_error: float):
+    """Корректирует глобальный множитель влияния на основе средней ошибки всей выборки."""
+    global global_impact_multiplier
+    old_mult = global_impact_multiplier
+    # Используем меньший шаг для стабильности (0.005)
+    global_impact_multiplier = max(1.0, min(10.0, old_mult + (learning_rate * avg_error * 0.005)))
+    if abs(global_impact_multiplier - old_mult) > 0.0001:
+        logging.info(f"⚙️ Calibration: IMPACT_MULTIPLIER adjusted {old_mult:.2f} -> {global_impact_multiplier:.2f} (avg_err: {avg_error:.1f})")
 
 async def get_fear_greed_index(session: aiohttp.ClientSession) -> Tuple[Optional[float], Optional[str], float]:
     """
@@ -635,7 +634,8 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
         "GC=F": "gold_change",
         "BTC-USD": "btc_change",
         "SOXS": "soxs_change",
-        "SMH": "hbm_change"
+        "SMH": "smh_change",
+        "MU": "mu_change"
     }
 
     try:
@@ -688,6 +688,11 @@ async def learning_cycle(session: aiohttp.ClientSession):
         logging.warning("Skipping learning cycle: No market data available.")
         return
 
+    # Проверка на "мертвый" рынок (выходные)
+    if raw_market_data.get('nasdaq_change') == 0 and raw_market_data.get('oil_change') == 0:
+        logging.info("🏝 Market appears to be closed or flat. Skipping weight updates.")
+        return
+
     with get_db_connection() as conn:
         cursor = conn.cursor()
         # Берем только неразрешенные прогнозы, созданные более MARKET_LOOKBACK_HOURS назад.
@@ -699,6 +704,9 @@ async def learning_cycle(session: aiohttp.ClientSession):
         """)
         rows = cursor.fetchall()
         logging.info(f"🧠 Начало цикла обучения. Найдено кандидатов для обработки: {len(rows)}")
+
+        updates_by_key = defaultdict(list) # Для агрегации обновлений весов
+        all_errors = [] # Для калибровки глобального множителя
 
         for row in rows:
             event_key = row['event_key']
@@ -729,14 +737,19 @@ async def learning_cycle(session: aiohttp.ClientSession):
             elif target == "vix" and 'vix_change' in raw_market_data:
                 raw_change = raw_market_data['vix_change']
                 correlation = 1
-            elif target == "hbm" and ('hbm_change' in raw_market_data or 'soxs_change' in raw_market_data):
-                # Получаем данные, гарантируя, что берем не None
-                hbm_c = float(raw_market_data.get('hbm_change') or 0)
+            elif target == "hbm" and any(k in raw_market_data for k in ['mu_change', 'smh_change', 'soxs_change']):
+                # Micron (MU) - прямой производитель памяти, лучший прокси для HBM
+                mu_c = float(raw_market_data.get('mu_change') or 0)
+                smh_c = float(raw_market_data.get('smh_change') or 0)
                 # SOXS — это 3x инверсия, делим на -3 для получения 1x long эквивалента
                 soxs_raw = float(raw_market_data.get('soxs_change') or 0)
                 soxs_c = soxs_raw / -3.0 
-                # Берем наиболее выраженное движение в секторе
-                raw_change = hbm_c if abs(hbm_c) >= abs(soxs_c) else soxs_c
+                
+                # Приоритизируем MU, если его волатильность выше порога шума
+                if abs(mu_c) >= config.LEARNING_THRESHOLD:
+                    raw_change = mu_c
+                else:
+                    raw_change = smh_c if abs(smh_c) >= abs(soxs_c) else soxs_c
                 correlation = -1
             else: # "global" logic
                 vix_c = raw_market_data.get('vix_change', 0)
@@ -766,13 +779,26 @@ async def learning_cycle(session: aiohttp.ClientSession):
             
             direction_desc = "MATCH" if is_correct else "CONTRARY"
             logging.info(f"Learning: {event_key} | {target} | {status_icon} | {direction_desc} | Score: {score:.1f} | Mkt: {raw_change:+.2f}%")
-            update_weights(event_key, predicted, actual, score)
+            
+            # Накапливаем данные для агрегированного обучения (защита от переобучения)
+            error = actual - predicted
+            updates_by_key[event_key].append(error)
+            all_errors.append(error)
 
             cursor.execute("""
                 UPDATE predictions
                 SET resolved = 1, actual_move = ?, is_correct = ?
                 WHERE id = ?
             """, (actual, is_correct, row['id']))
+
+        # 1. Агрегированное обновление весов (защита от "двойного" обучения на пачке новостей)
+        for e_key, errors in updates_by_key.items():
+            avg_err = sum(errors) / len(errors)
+            update_weights(e_key, avg_err)
+
+        # 2. Калибровка глобального множителя (один раз за цикл на основе всей выборки)
+        if all_errors:
+            calibrate_multiplier(sum(all_errors) / len(all_errors))
         conn.commit()
 
     save_state()
@@ -1017,10 +1043,18 @@ async def main():
             
             logging.info(f"📡 GTS 4.0 scanning... [До обучения: {minutes_left} мин | Готово новостей: {eligible_count}]")
 
-            for key in event_scores:
-                event_scores[key] *= config.DECAY_FACTOR
-
             current_market_data = await get_market_data(session)
+            
+            # Проверка: открыт ли рынок (если Nasdaq и Нефть стоят на месте - скорее всего ночь или выходной)
+            is_market_active = abs(current_market_data.get('nasdaq_change', 0)) > 0 or abs(current_market_data.get('oil_change', 0)) > 0
+            active_decay = config.DECAY_FACTOR if is_market_active else config.NIGHT_DECAY_FACTOR
+            
+            if not is_market_active:
+                logging.info("🌙 Night mode: Using slower decay factor to preserve sentiment.")
+
+            for key in event_scores:
+                event_scores[key] *= active_decay
+
             fng_val = current_market_data.get("fng_val", 50)
             fng_label = current_market_data.get("fng_label", "Neutral")
 
