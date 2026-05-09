@@ -680,6 +680,9 @@ async def get_fear_greed_index(session: aiohttp.ClientSession) -> Tuple[Optional
         label = data['data'][0]['value_classification']
         change = today_val - yesterday_val
         return today_val, label, change
+    except aiohttp.ClientConnectorError:
+        logging.error("Fear & Greed API: Connection failed. Check your DNS/Internet.")
+        return None, None, 0
     except Exception as e:
         logging.error(f"Error fetching Fear & Greed: {e}")
         return None, None, 0
@@ -710,12 +713,20 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
             lambda: yf.download(list(tickers_to_fetch.keys()), period="1wk", interval="1h", progress=False)
         )
         
+        if all_data.empty or 'Close' not in all_data.columns:
+            logging.error("Yahoo Finance returned no data. Check internet connection and system clock.")
+            return {}
+
         lookback = config.MARKET_LOOKBACK_HOURS
+
+        # Кэшируем доступ к ценам закрытия для оптимизации
+        close_prices = all_data['Close']
 
         for ticker_symbol, data_key in tickers_to_fetch.items():
             try:
-                if ticker_symbol in all_data['Close'].columns:
-                    ticker_data = all_data['Close'][ticker_symbol].dropna()
+                # Извлекаем данные для конкретного тикера, если они есть в ответе
+                if ticker_symbol in close_prices:
+                    ticker_data = close_prices[ticker_symbol].dropna()
                     # Нам нужно как минимум lookback + 1 свечей, чтобы вычислить разницу
                     if len(ticker_data) > lookback:
                         current_price = float(ticker_data.iloc[-1])
@@ -735,6 +746,8 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
         market_data['fng_val'] = fng_val
         market_data['fng_label'] = fng_label
         market_data['fng_change'] = fng_change
+    else:
+        logging.warning("Proceeding without Fear & Greed data due to fetch error.")
 
     return market_data
 
@@ -905,7 +918,7 @@ def cleanup_db():
 # MAIN LOOP
 # =========================
 
-async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop, fng_val: float, fng_label: str, market_context: Dict[str, Any]):
+async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop, fng_val: float, fng_label: str, market_context: Dict[str, Any], is_market_active: bool):
     """Обрабатывает одну RSS ленту."""
     try:
         feed = await loop.run_in_executor(sync_executor, lambda: feedparser.parse(url))
@@ -913,12 +926,19 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         logging.error(f"Feed error {url}: {e}")
         return
 
-    for entry in feed.entries[:config.RSS_MAX_ENTRIES]:
-        # Проверка возраста новости (теперь в часах, привязано к MARKET_LOOKBACK_HOURS)
+    # Адаптивное количество записей RSS для обработки
+    max_entries_to_process = config.RSS_MAX_ENTRIES if is_market_active else config.RSS_MAX_ENTRIES_INACTIVE
+    
+    for entry in feed.entries[:max_entries_to_process]:
+        # Адаптивное окно возраста новости:
+        # Если рынок активен — окно узкое (6ч), чтобы реагировать на свежее.
+        # Если рынок закрыт — расширяем окно до 72ч (уикенд), чтобы собрать контекст к открытию.
+        max_age_h = config.MAX_NEWS_AGE_HOURS if is_market_active else 72
+        
         published = entry.get('published_parsed')
         if published:
             pub_time = time.mktime(published)
-            if (time.time() - pub_time) > (config.MAX_NEWS_AGE_HOURS * 3600):
+            if (time.time() - pub_time) > (max_age_h * 3600):
                 logging.debug(f"Пропуск старой новости: {entry.title}")
                 continue
 
@@ -1124,7 +1144,7 @@ async def main():
 
             # Параллельный запуск обработки всех лент
             tasks = [
-                process_single_feed(url, session, loop, fng_val, fng_label, current_market_data)
+                process_single_feed(url, session, loop, fng_val, fng_label, current_market_data, is_market_active)
                 for url in config.RSS_FEEDS
             ]
             await asyncio.gather(*tasks)
