@@ -374,7 +374,7 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                             if resp.status != 200:
                                 raise Exception(f"OpenRouter Error {resp.status}")
                             res_json = await resp.json()
-                            res_text = res_json['choices'][0]['message']['content'].strip()
+                            res_text = (res_json.get('choices', [{}])[0].get('message', {}).get('content') or "").strip()
                     finally:
                         if not session: await s.close()
                 else:
@@ -395,7 +395,7 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                     continue # Попробуем следующую модель в пуле немедленно
 
                 if active.get("provider") == "gemini":
-                    res_text = response.text.strip()
+                    res_text = (response.text or "").strip()
                 
                 # Надежный поиск границ JSON (на случай, если модель добавила текст)
                 start = res_text.find('{')
@@ -518,8 +518,9 @@ def make_event_key(entities: List[str]) -> str:
     matches = []
     for e in unique_ents:
         # Ищем совпадение: тег из конфига равен сущности, либо один является частью другого
-        # Это позволит "Gold" из конфига поймать "Gold Price" от ИИ и наоборот.
-        matched_tag = next((t for t in tracked_upper if t == e or t in e), e)
+        # Чтобы избежать ложных срабатываний (как MU в HORMUZ), 
+        # для коротких тегов (<= 3 символов) требуем только полного совпадения.
+        matched_tag = next((t for t in tracked_upper if t == e or (len(t) > 3 and t in e)), e)
         matches.append(matched_tag)
     
     # Если есть совпадения с отслеживаемыми темами — берем их.
