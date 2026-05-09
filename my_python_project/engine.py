@@ -334,7 +334,9 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
     Identify key entities. Use these standardized tags if applicable: {tags_hint}.
     Return ONLY a JSON object with this structure:
     {{
-      "score": float (-10.0 to 10.0, where positive is risk-off/escalation, negative is risk-on/peace),
+      "score": float (-10.0 to 10.0). Focus on immediate market impact.
+               Active conflict/strikes/sanctions = 5.0 to 10.0.
+               Routine shipping/logistics data/standard movement = 0.0 to 1.5.
       "event_type": "military" | "economic" | "diplomatic" | "neutral" | "tech",
       "entities": ["list of countries, companies or key regions"]
     }}
@@ -498,7 +500,8 @@ def make_event_key(entities: List[str]) -> str:
         # Проверяем по мапе синонимов
         found_canonical = False
         for syn, canonical in canonical_map.items():
-            if syn in ent_up:
+            # Для коротких тегов (MU, US, BTC) требуем полного совпадения, чтобы не находить их внутри слов типа HORMUZ
+            if syn == ent_up or (len(syn) > 3 and syn in ent_up):
                 normalized.append(canonical)
                 found_canonical = True
                 break
@@ -520,7 +523,8 @@ def make_event_key(entities: List[str]) -> str:
         # Ищем совпадение: тег из конфига равен сущности, либо один является частью другого
         # Чтобы избежать ложных срабатываний (как MU в HORMUZ), 
         # для коротких тегов (<= 3 символов) требуем только полного совпадения.
-        matched_tag = next((t for t in tracked_upper if t == e or (len(t) > 3 and t in e)), e)
+        # Добавлено: проверка на полное совпадение для коротких сущностей, чтобы избежать "MU" из ниоткуда
+        matched_tag = next((t for t in tracked_upper if t == e or (len(t) > 3 and t in e and len(e) > 3)), e)
         matches.append(matched_tag)
     
     # Если есть совпадения с отслеживаемыми темами — берем их.
@@ -648,12 +652,13 @@ def update_weights(event_key: str, error: float):
     event_weights[event_key] = max(0.5, min(5.0, event_weights.get(event_key, 1.0) + adjustment))
     logging.info(f"📈 Weight adjustment for {event_key}: {adjustment:+.4f} (New weight: {event_weights[event_key]:.2f})")
 
-    # Атомарное обучение: обновляем веса каждой отдельной сущности в ключе
-    # Это позволяет системе выучить, что "OPENAI" важен, даже если он встретился в новом контексте
+    # Атомарное обучение (опционально): обновляем части ключа, только если это не части одного имени/названия.
+    # Чтобы избежать дробления имен (как KEVIN_O'LEARY), мы можем отключить этот блок или сделать его строже.
     parts = event_key.split('_')
-    if len(parts) > 1:
+    if len(parts) > 1 and len(parts) <= config.MAX_ENTITY_PARTS:
         for part in parts:
-            if len(part) > 2: # Игнорируем слишком короткие сущности
+            # Обновляем только если эта сущность уже известна системе как самостоятельная
+            if len(part) > 2 and part in event_weights:
                 event_weights[part] = max(0.5, min(5.0, event_weights.get(part, 1.0) + adjustment))
 
 def calibrate_multiplier(avg_error: float):
@@ -920,11 +925,36 @@ def cleanup_db():
 
 async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop, fng_val: float, fng_label: str, market_context: Dict[str, Any], is_market_active: bool):
     """Обрабатывает одну RSS ленту."""
-    try:
-        feed = await loop.run_in_executor(sync_executor, lambda: feedparser.parse(url))
-    except Exception as e:
-        logging.error(f"Feed error {url}: {e}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    raw_data = None
+    for attempt in range(2): # 2 попытки на случай временного сбоя
+        try:
+            async with session.get(url, headers=headers, timeout=20) as response:
+                if response.status == 200:
+                    raw_data = await response.read()
+                    break
+                elif response.status == 429:
+                    logging.warning(f"Rate limited by Google News for {url}")
+                    await asyncio.sleep(5)
+                else:
+                    logging.debug(f"Feed {url} returned status {response.status}")
+        except Exception as e:
+            if attempt == 1:
+                error_str = str(e)
+                if "getaddrinfo" in error_str:
+                    logging.error(f"🌐 DNS/Connection Error for {url}: Check internet or DNS settings.")
+                else:
+                    logging.error(f"Feed error {url}: {e}")
+                return
+            await asyncio.sleep(2)
+
+    if not raw_data:
         return
+
+    feed = await loop.run_in_executor(sync_executor, lambda: feedparser.parse(raw_data))
 
     # Адаптивное количество записей RSS для обработки
     max_entries_to_process = config.RSS_MAX_ENTRIES if is_market_active else config.RSS_MAX_ENTRIES_INACTIVE
@@ -1008,8 +1038,11 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                 logging.info(f"💥 FULL PIVOT for {event_key}: Resetting accumulated score ({event_scores[event_key]:.2f}) due to high-impact opposite news ({score:+.2f})")
                 event_scores[event_key] = 0
 
-        event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + score))
-        
+        # Накапливаем балл только если новость значима, 
+        # чтобы мелкий шум не "дрейфовал" итоговый сентимент к краям.
+        if abs(score) >= config.MIN_NEWS_SCORE_FOR_ALERT:
+            event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + score))
+
         market = market_signals(event_scores[event_key], event_key)
         prob = predict_impact(event_scores[event_key], event_key) 
         sig_type = generate_signal(prob, event_scores[event_key])
@@ -1142,12 +1175,11 @@ async def main():
             fng_val = current_market_data.get("fng_val", 50)
             fng_label = current_market_data.get("fng_label", "Neutral")
 
-            # Параллельный запуск обработки всех лент
-            tasks = [
-                process_single_feed(url, session, loop, fng_val, fng_label, current_market_data, is_market_active)
-                for url in config.RSS_FEEDS
-            ]
-            await asyncio.gather(*tasks)
+            # Запускаем обработку лент с небольшой задержкой (staggered start),
+            # чтобы избежать одновременного удара по серверам Google.
+            for url in config.RSS_FEEDS:
+                asyncio.create_task(process_single_feed(url, session, loop, fng_val, fng_label, current_market_data, is_market_active))
+                await asyncio.sleep(0.5) # Пауза 500мс между запросами к разным лентам
 
             current_time = time.time()
             if current_time - last_learning_run >= config.LEARNING_INTERVAL:
