@@ -42,7 +42,23 @@ TRACKED_KEYWORDS = {
     "Jerome Powell": (2.2, ["global", "vix", "nasdaq"]), # Прямое влияние на монетарную политику и рынки
 }
 
-RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}" for k in TRACKED_KEYWORDS.keys()]
+# Основные RSS-ленты Yahoo Finance для расширения охвата рынка
+YAHOO_FINANCE_FEEDS = [
+    "https://finance.yahoo.com/news/rssindex", # Общая лента финансовых новостей
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AMD,AVGO,TSM,INTC,MU&region=US&lang=en-US", # Лента для полупроводников
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=MU,SKHYNIX.KS,SAMSUNG.KS&region=US&lang=en-US", # Лента для памяти (HBM)
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=ASML,AMAT,LRCX,KLAC&region=US&lang=en-US", # Лента для оборудования для производства чипов
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,MSFT,GOOGL,AMZN,META&region=US&lang=en-US", # Лента для AI и крупных технологических компаний
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=ASML,AMAT,LRCX,KLAC&region=US&lang=en-US", # Лента для оборудования для производства чипов (повтор для усиления охвата)
+    "https://rsshub.app/bloomberg/topics/economics", # Лента для экономики
+    "https://www.reuters.com/world/rss", # Актуальная лента мировых новостей
+    "https://www.reuters.com/business/commodities/rss", # Актуальная лента сырьевых товаров
+    "https://www.maritime-executive.com/rss", # Лента для морских новостей, включая новости о Ормузском проливе
+    "https://www.federalreserve.gov/feeds/press_monetary.xml", # Лента для новостей Федеральной резервной системы США
+    "https://home.treasury.gov/news/press-releases/rss" # Лента для новостей Министерства финансов США
+]
+
+RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}" for k in TRACKED_KEYWORDS.keys()] + YAHOO_FINANCE_FEEDS
 RSS_MAX_ENTRIES = 4 # Количество записей RSS для обработки в активное время рынка
 RSS_MAX_ENTRIES_INACTIVE = RSS_MAX_ENTRIES*3 # Количество записей RSS для обработки, когда рынок неактивен (ночь/выходные)
 
@@ -64,15 +80,15 @@ AI_DELAY_NO_JSON = 60 # Время ожидания ответа от модел
 DECAY_FACTOR = 0.92 
 NIGHT_DECAY_FACTOR = 0.98 # Почти не снижаем балл, когда рынок закрыт, чтобы сохранить контекст к открытию
 MAX_SCORE_THRESHOLD = 25.0 # Увеличиваем порог для отправки сигналов, чтобы уменьшить количество ложных срабатываний
-SCALING_FACTOR = 6.0 
+SCALING_FACTOR = 6.0 # Увеличено для более заметного влияния сильных новостей на вес
 LEARNING_RATE = 0.05  # Увеличено для более быстрой адаптации весов к изменениям рынка
 IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
-LEARNING_THRESHOLD = 0.45 
+LEARNING_THRESHOLD = 0.3 # Порог рыночного движения (в %). Если цена изменилась меньше, обучение не проводится.
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
 MIN_WEIGHT_THRESHOLD = 0.8 # Повышено для автоматического удаления слабых/случайных связей
 NEUTRAL_SCORE_THRESHOLD = 2.0 # Игнорируем слабый шум, не входящий в TRACKED_KEYWORDS
 MAX_ENTITY_PARTS = 2 # Сокращаем длину ключа до 2 для лучшей группировки статистики
-MIN_NEWS_SCORE_FOR_ALERT = 0.5 # Минимальный балл конкретной новости для отправки в Telegram
+MIN_NEWS_SCORE_FOR_ALERT = 1.0 # Минимальный балл конкретной новости для отправки в Telegram
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
 # Рейтинг доверия источникам (Trust Factor)
