@@ -100,18 +100,22 @@ def inspect_gts():
         print("\n--- СТАТИСТИКА ПРОГНОЗОВ ---")
         total = pd.read_sql("SELECT COUNT(*) as total FROM predictions", conn).iloc[0]['total']
         
+        # Считаем общее количество обработанных записей (включая нейтральные)
+        all_resolved = pd.read_sql("SELECT COUNT(*) as count FROM predictions WHERE resolved = 1", conn).iloc[0]['count']
+
         # Считаем статистику только по тем новостям, которые выше порога шума
         query = f"SELECT COUNT(*) as resolved, AVG(actual_move) as avg_move, SUM(is_correct) as correct FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD}"
         resolved_df = pd.read_sql(query, conn)
         
-        resolved_count = resolved_df['resolved'].iloc[0]
+        trained_count = resolved_df['resolved'].iloc[0]
         avg_move = resolved_df['avg_move'].iloc[0]
         avg_move_display = float(avg_move) if avg_move is not None else 0.0
         correct_count = resolved_df['correct'].iloc[0] if resolved_df['correct'].iloc[0] is not None else 0
-        win_rate = (correct_count / resolved_count * 100) if resolved_count > 0 else 0
+        win_rate = (correct_count / trained_count * 100) if trained_count > 0 else 0
 
         print(f"Всего прогнозов в базе: {total}")
-        print(f"Из них обработано (resolved): {resolved_count}")
+        print(f"Всего обработано (resolved): {all_resolved}")
+        print(f"Прошли обучение (значимые): {trained_count}")
         print(f"Верных прогнозов (✅): {correct_count}")
         print(f"Точность (Win Rate): {win_rate:.1f}%")
         print(f"Среднее реальное движение: {avg_move_display:.2f}")

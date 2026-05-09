@@ -43,7 +43,8 @@ TRACKED_KEYWORDS = {
 }
 
 RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}" for k in TRACKED_KEYWORDS.keys()]
-RSS_MAX_ENTRIES = 4 
+RSS_MAX_ENTRIES = 4 # Количество записей RSS для обработки в активное время рынка
+RSS_MAX_ENTRIES_INACTIVE = RSS_MAX_ENTRIES*3 # Количество записей RSS для обработки, когда рынок неактивен (ночь/выходные)
 
 # Time Intervals (in seconds)
 CHECK_INTERVAL = 180 
