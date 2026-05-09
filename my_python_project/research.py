@@ -123,7 +123,11 @@ async def run_global_research():
                 if start == -1:
                     raise ValueError("No JSON list found")
 
-                suggestions = json.loads(res_text[start:end])
+                clean_json = res_text[start:end]
+                # Убираем возможные артефакты markdown
+                clean_json = clean_json.replace('```json', '').replace('```', '')
+                
+                suggestions = json.loads(clean_json)
 
                 with get_db_connection() as conn:
                     cursor = conn.cursor()

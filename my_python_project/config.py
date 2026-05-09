@@ -37,6 +37,9 @@ TRACKED_KEYWORDS = {
     "Anthropic": (1.5, ["hbm", "soxs"]), # Исправлена опечатка
     "Qualcomm": (1.2, ["hbm", "soxs"]),
     "Hormuz": (2.0, ["oil", "vix", "global"]), # Фокус на геополитике в регионе
+    "Yield": (1.8, ["global", "vix", "nasdaq"]), # Влияние на общий риск, волатильность и тех. сектор
+    "Treasury": (1.5, ["global", "vix", "nasdaq"]), # Влияние на общий риск, волатильность и тех. сектор
+    "Jerome Powell": (2.2, ["global", "vix", "nasdaq"]), # Прямое влияние на монетарную политику и рынки
 }
 
 RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}" for k in TRACKED_KEYWORDS.keys()]
@@ -50,7 +53,7 @@ MARKET_LOOKBACK_HOURS = 2 # Окно анализа реакции рынка
 MAX_NEWS_AGE_HOURS = MARKET_LOOKBACK_HOURS*3 # Новость должна быть не старше окна анализа
 CLEANUP_INTERVAL = 86400 # Интервал очистки (24 часа)
 RESEARCH_INTERVAL = 86400 # Интервал глобального исследования ИИ (раз в сутки)
-RETENTION_DAYS = 14 # Количество дней хранения данных
+RETENTION_DAYS = 7 # Уменьшено для более быстрой ротации данных и компактности БД
 
 # AI Delays
 AI_DELAY_JSON = 15 # Время ожидания ответа от модели при запросе JSON (15 секунд)
@@ -65,9 +68,9 @@ LEARNING_RATE = 0.05  # Увеличено для более быстрой ад
 IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
 LEARNING_THRESHOLD = 0.45 
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
-MIN_WEIGHT_THRESHOLD = 0.5 # Порог веса, ниже которого ключ удаляется из БД
-NEUTRAL_SCORE_THRESHOLD = 1.5 # Снижаем порог, чтобы учитывать больше новостей средней важности
-MAX_ENTITY_PARTS = 3 # Максимальное кол-о сущностей в ключе для поиска связей с активами
+MIN_WEIGHT_THRESHOLD = 0.8 # Повышено для автоматического удаления слабых/случайных связей
+NEUTRAL_SCORE_THRESHOLD = 2.0 # Игнорируем слабый шум, не входящий в TRACKED_KEYWORDS
+MAX_ENTITY_PARTS = 2 # Сокращаем длину ключа до 2 для лучшей группировки статистики
 MIN_NEWS_SCORE_FOR_ALERT = 0.5 # Минимальный балл конкретной новости для отправки в Telegram
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
