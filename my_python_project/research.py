@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import json
+import aiohttp
 from google import genai
 from db import get_db_connection
 import config
@@ -35,11 +36,23 @@ def init_model_pool():
                     pool.append({
                         "name": m_name,
                         "priority": priority,
-                        "supports_json": any(v in m_name for v in ["1.5", "2.0", "3", "latest"])
+                        "supports_json": any(v in m_name for v in ["1.5", "2.0", "3", "latest"]),
+                        "provider": "gemini"
                     })
-        return sorted(pool, key=lambda x: x['priority'])
+        
+        sorted_pool = sorted(pool, key=lambda x: x['priority'])
+
+        if config.OPENROUTER_API_KEY:
+            or_models = [
+                {"name": "google/gemini-2.0-flash-lite-preview-02-05:free", "supports_json": True, "provider": "openrouter"},
+                {"name": "tencent/hy3-preview:free", "supports_json": False, "provider": "openrouter"}
+            ]
+            for m in or_models:
+                sorted_pool.append(m)
+
+        return sorted_pool
     except Exception:
-        return [{"name": "models/gemini-1.5-flash", "supports_json": True}]
+        return [{"name": "models/gemini-1.5-flash", "supports_json": True, "provider": "gemini"}]
 
 model_pool = init_model_pool()
 current_model_idx = 0
@@ -71,15 +84,41 @@ async def run_global_research():
         while tried < len(model_pool):
             try:
                 active = model_pool[current_model_idx]
-                gen_config = {"response_mime_type": "application/json"} if active["supports_json"] else {}
-                
-                response = await client.aio.models.generate_content(
-                    model=active["name"],
-                    contents=prompt,
-                    config=gen_config
-                )
-                
-                res_text = response.text.strip()
+                res_text = ""
+
+                if active.get("provider") == "openrouter":
+                    payload = {
+                        "model": active["name"],
+                        "messages": [{"role": "user", "content": prompt}]
+                    }
+                    if active["supports_json"]:
+                        payload["response_format"] = {"type": "json_object"}
+                    
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+                                "HTTP-Referer": "https://gts-project.io",
+                                "X-Title": "GTS Research",
+                                "Content-Type": "application/json"
+                            },
+                            json=payload,
+                            timeout=aiohttp.ClientTimeout(total=120, connect=15)
+                        ) as resp:
+                            if resp.status != 200:
+                                raise Exception(f"OpenRouter Error {resp.status}")
+                            res_json = await resp.json()
+                            res_text = res_json['choices'][0]['message']['content'].strip()
+                else:
+                    gen_config = {"response_mime_type": "application/json"} if active["supports_json"] else {}
+                    response = await client.aio.models.generate_content(
+                        model=active["name"],
+                        contents=prompt,
+                        config=gen_config
+                    )
+                    res_text = response.text.strip()
+
                 start, end = res_text.find('['), res_text.rfind(']') + 1
                 if start == -1:
                     raise ValueError("No JSON list found")
