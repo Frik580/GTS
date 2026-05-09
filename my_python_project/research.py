@@ -109,7 +109,7 @@ async def run_global_research():
                             if resp.status != 200:
                                 raise Exception(f"OpenRouter Error {resp.status}")
                             res_json = await resp.json()
-                            res_text = res_json['choices'][0]['message']['content'].strip()
+                            res_text = (res_json.get('choices', [{}])[0].get('message', {}).get('content') or "").strip()
                 else:
                     gen_config = {"response_mime_type": "application/json"} if active["supports_json"] else {}
                     response = await client.aio.models.generate_content(
@@ -117,7 +117,7 @@ async def run_global_research():
                         contents=prompt,
                         config=gen_config
                     )
-                    res_text = response.text.strip()
+                    res_text = (response.text or "").strip()
 
                 start, end = res_text.find('['), res_text.rfind(']') + 1
                 if start == -1:
