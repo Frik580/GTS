@@ -68,14 +68,14 @@ def init_model_pool():
             'gemini-3.1-pro': 2,
             'gemini-3-flash': 3,
             'gemini-3-pro': 4,
-            'gemini-2.5-flash': 5,
-            'gemini-2.5-pro': 6,
-            'gemini-2.0-flash': 7,
-            'gemini-1.5-flash': 8,
-            'gemini-1.5-pro': 9,
-            'gemini-1.0-pro': 10,
-            'gemini-flash-latest': 11,
-            'gemini-pro-latest': 12
+            # 'gemini-2.5-flash': 5,
+            # 'gemini-2.5-pro': 6,
+            # 'gemini-2.0-flash': 7,
+            # 'gemini-1.5-flash': 8,
+            # 'gemini-1.5-pro': 9,
+            # 'gemini-1.0-pro': 10,
+            # 'gemini-flash-latest': 11,
+            # 'gemini-pro-latest': 12
         }
         
         found_families = {} # family_name -> best_model_data
@@ -103,9 +103,22 @@ def init_model_pool():
         for m_data in sorted_pool:
             pool.append({
                 "name": m_data["name"],
-                "supports_json": m_data["supports_json"]
+                "supports_json": m_data["supports_json"],
+                "provider": "gemini"
             })
             logging.info(f"✅ Добавлена в пул ротации: {m_data['name']} (Приоритет {m_data['priority']})")
+
+        # Добавляем бесплатные модели из OpenRouter для отказоустойчивости
+        if config.OPENROUTER_API_KEY:
+            or_models = [
+                {"name": "nvidia/nemotron-3-super-120b-a12b:free", "supports_json": True, "provider": "openrouter"},
+                # {"name": "tencent/hy3-preview:free", "supports_json": True, "provider": "openrouter"},
+                # {"name": "openrouter/owl-alpha", "supports_json": True, "provider": "openrouter"},
+                {"name": "openai/gpt-oss-120b:free", "supports_json": True, "provider": "openrouter"}
+            ]
+            for m in or_models:
+                pool.append(m)
+                logging.info(f"✅ Добавлена в пул ротации (OpenRouter): {m['name']}")
 
         if len(pool) < 2:
             logging.warning(f"⚠️ Мало семейств в пуле. Проверьте доступность 1.5 моделей. Доступные имена: {models_list}")
@@ -121,7 +134,8 @@ def init_model_pool():
         # Запасной вариант
         pool.append({
             "name": "models/gemini-1.5-flash",
-            "supports_json": True
+            "supports_json": True,
+            "provider": "gemini"
         })
     return pool
 
@@ -136,6 +150,9 @@ logging.info(f"Пул моделей готов: {[m['name'] for m in model_pool
 # =========================
 # STATE
 # =========================
+
+# Инициализируем словарь до вызова функции init_state
+event_last_sent = {}
 
 def init_state() -> Dict[str, float]:
     scores = defaultdict(float)
@@ -155,10 +172,19 @@ def init_state() -> Dict[str, float]:
         for key, val in cursor.fetchall():
             # Ограничиваем начальное состояние порогом
             scores[key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, val))
+
+        # Также инициализируем event_last_sent из последних прогнозов, чтобы избежать дублей при рестарте
+        cursor.execute("""
+            SELECT event_key, MAX(timestamp) FROM predictions GROUP BY event_key
+        """)
+        for key, ts_str in cursor.fetchall():
+            # Преобразуем строку времени SQLite в unix timestamp
+            dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+            event_last_sent[key] = dt.timestamp()
+
     return scores
 
 event_scores = init_state()
-event_last_sent = {}
 learning_rate = config.LEARNING_RATE
 # Карта связей: какой ключ к какому активу привязан для обучения
 event_asset_map = {}
@@ -297,7 +323,7 @@ def local_ai_analyze(text: str) -> Tuple[float, str, List[str], str]:
         logging.error(f"Local AI Error: {e}")
         return 0.0, "neutral", [], "Error"
 
-async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], Optional[str], Optional[List[str]], str]:
+async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None, max_retries: int = 3) -> Tuple[Optional[float], Optional[str], Optional[List[str]], str]:
     """
     Uses Gemini AI to perform deep sentiment analysis and NER.
     """
@@ -322,24 +348,54 @@ async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], 
         while model_tried_count < len(model_pool): # Внутренний цикл для перебора моделей в пуле
             try:
                 active = model_pool[current_model_idx]
-                # Используем JSON Mode только если текущая модель из пула его поддерживает
-                gen_config = {"response_mime_type": "application/json"} if active["supports_json"] else {}
-                
-                response = await client.aio.models.generate_content(
-                    model=active["name"],
-                    contents=prompt,
-                    config=gen_config
-                )
+                res_text = ""
+
+                if active.get("provider") == "openrouter":
+                    payload = {
+                        "model": active["name"],
+                        "messages": [{"role": "user", "content": prompt}]
+                    }
+                    if active["supports_json"]:
+                        payload["response_format"] = {"type": "json_object"}
+                    
+                    s = session if session else aiohttp.ClientSession()
+                    try:
+                        async with s.post(
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+                                "HTTP-Referer": "https://gts-project.io",
+                                "X-Title": "GTS 4.0",
+                                "Content-Type": "application/json"
+                            },
+                            json=payload,
+                            timeout=aiohttp.ClientTimeout(total=60, connect=15)
+                        ) as resp:
+                            if resp.status != 200:
+                                raise Exception(f"OpenRouter Error {resp.status}")
+                            res_json = await resp.json()
+                            res_text = res_json['choices'][0]['message']['content'].strip()
+                    finally:
+                        if not session: await s.close()
+                else:
+                    # Gemini logic
+                    gen_config = {"response_mime_type": "application/json"} if active["supports_json"] else {}
+                    response = await client.aio.models.generate_content(
+                        model=active["name"],
+                        contents=prompt,
+                        config=gen_config
+                    )
                 
                 # Проверка, не заблокирован ли ответ фильтрами безопасности
-                if not response.candidates or not response.candidates[0].content.parts:
+                if active.get("provider") == "gemini" and (not response.candidates or not response.candidates[0].content.parts):
                     # Это не 429, но и не успешный ответ. Считаем, что модель не справилась.
                     logging.warning(f"Модель {active['name']} заблокировала ответ по безопасности. Переключаюсь на следующую.")
                     model_tried_count += 1
                     current_model_idx = (current_model_idx + 1) % len(model_pool)
                     continue # Попробуем следующую модель в пуле немедленно
 
-                res_text = response.text.strip()
+                if active.get("provider") == "gemini":
+                    res_text = response.text.strip()
                 
                 # Надежный поиск границ JSON (на случай, если модель добавила текст)
                 start = res_text.find('{')
@@ -357,11 +413,12 @@ async def ai_analyze(text: str, max_retries: int = 3) -> Tuple[Optional[float], 
 
             except Exception as e:
                 err_msg = str(e).lower()
-                if "429" in err_msg or "quota" in err_msg or "limit" in err_msg:
+                # Обработка 404 (модель не найдена) и 429 (лимиты/таймауты)
+                if any(x in err_msg for x in ["429", "404", "quota", "limit", "timeout"]):
                     old_name = model_pool[current_model_idx]["name"]
                     current_model_idx = (current_model_idx + 1) % len(model_pool)
                     model_tried_count += 1
-                    logging.warning(f"⚠️ Лимит {old_name} исчерпан. Переключаюсь на {model_pool[current_model_idx]['name']} (попытка {model_tried_count}/{len(model_pool)} в текущем цикле).")
+                    logging.warning(f"⚠️ Модель {old_name} временно недоступна ({err_msg}). Переключаюсь на {model_pool[current_model_idx]['name']}...")
                     if model_tried_count == len(model_pool):
                         break # Все модели в пуле исчерпали лимит, выходим из внутреннего цикла
                     continue # Пробуем следующую модель в пуле немедленно
@@ -560,6 +617,7 @@ def should_send(key: str, current_score: float) -> bool:
 
     # Если новость экстремально важная (например, score > 8), игнорируем кулдаун
     if abs(current_score) >= 8.0:
+        event_last_sent[key] = now
         return True
 
     if key not in event_last_sent:
@@ -569,6 +627,12 @@ def should_send(key: str, current_score: float) -> bool:
     if now - event_last_sent[key] > config.COOLDOWN:
         event_last_sent[key] = now
         return True
+
+    # Очистка старых записей из памяти (простой механизм prune)
+    if len(event_last_sent) > 1000:
+        cutoff = now - (config.COOLDOWN * 2)
+        keys_to_del = [k for k, v in event_last_sent.items() if v < cutoff]
+        for k in keys_to_del: del event_last_sent[k]
 
     return False
 
@@ -866,7 +930,7 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                 continue
 
         text = entry.title + " " + entry.get("summary", "")
-        analysis = await ai_analyze(text)
+        analysis = await ai_analyze(text, session=session)
         
         if analysis[0] is None:
             continue

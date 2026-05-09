@@ -7,6 +7,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 # Database and Logs
 DB_PATH = "gts.db"
@@ -26,22 +27,23 @@ TRACKED_KEYWORDS = {
     "BTC": (1.2, ["btc", "global"]), # Повышен вес для учета высокой волатильности
     "Nasdaq": (1.0, ["nasdaq"]),
     "AI": (1.5, ["hbm", "nasdaq", "soxs"]),
-    "Trump": (2.2, ["global", "nasdaq", "oil", "vix"]), # Пример: влияет на общий риск, рынки и нефть
+    "Trump policy economy": (2.2, ["global", "nasdaq", "oil", "vix"]),
     "MU": (1.2, ["hbm", "soxs"]),
     "Semiconductor": (1.5, ["hbm", "soxs", "nasdaq"]),
-    "Inflation": (2.0, ["global", "vix", "gold"]), # Повышен приоритет макроэкономики
+    "US Inflation": (2.0, ["global", "vix", "gold"]),
     "Intel": (1.3, ["hbm", "soxs"]),
     "AMD": (1.3, ["hbm", "soxs"]),
     "Broadcom": (1.2, ["hbm", "soxs"]),
     "Anthropic": (1.5, ["hbm", "soxs"]), # Исправлена опечатка
     "Qualcomm": (1.2, ["hbm", "soxs"]),
+    "Hormuz": (2.0, ["oil", "vix", "global"]), # Фокус на геополитике в регионе
 }
 
 RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}" for k in TRACKED_KEYWORDS.keys()]
-RSS_MAX_ENTRIES = 5 # Оптимально для баланса между охватом и лимитами API Gemini (RPM)
+RSS_MAX_ENTRIES = 4 
 
 # Time Intervals (in seconds)
-CHECK_INTERVAL = 300 # Интервал проверки новостей (5 минут)
+CHECK_INTERVAL = 180 
 COOLDOWN = 600 # Интервал между действиями (10 минут)
 LEARNING_INTERVAL = 3600 # Интервал обучения (1 час)
 MARKET_LOOKBACK_HOURS = 2 # Окно анализа реакции рынка
@@ -55,18 +57,18 @@ AI_DELAY_JSON = 15 # Время ожидания ответа от модели 
 AI_DELAY_NO_JSON = 60 # Время ожидания ответа от модели при отсутствии JSON (60 секунд)
 
 # Logic Factors
-DECAY_FACTOR = 0.8 # Увеличиваем скорость затухания для более быстрой адаптации к новым данным
+DECAY_FACTOR = 0.92 
 NIGHT_DECAY_FACTOR = 0.98 # Почти не снижаем балл, когда рынок закрыт, чтобы сохранить контекст к открытию
 MAX_SCORE_THRESHOLD = 25.0 # Увеличиваем порог для отправки сигналов, чтобы уменьшить количество ложных срабатываний
-SCALING_FACTOR = 8.0 # Увеличиваем масштаб для более заметного влияния предсказаний
+SCALING_FACTOR = 6.0 
 LEARNING_RATE = 0.05  # Увеличено для более быстрой адаптации весов к изменениям рынка
 IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
-LEARNING_THRESHOLD = 0.3 # Минимальное движение цены (%) для учета в обучении (защита от рыночного шума)
+LEARNING_THRESHOLD = 0.45 
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
 MIN_WEIGHT_THRESHOLD = 0.5 # Порог веса, ниже которого ключ удаляется из БД
-NEUTRAL_SCORE_THRESHOLD = 1.0 # Снижаем порог, чтобы учитывать больше новостей средней важности
-MAX_ENTITY_PARTS = 2 # Максимальное кол-во сущностей в ключе для поиска связей с активами
-MIN_NEWS_SCORE_FOR_ALERT = 0.1 # Минимальный балл конкретной новости для отправки в Telegram
+NEUTRAL_SCORE_THRESHOLD = 1.5 # Снижаем порог, чтобы учитывать больше новостей средней важности
+MAX_ENTITY_PARTS = 3 # Максимальное кол-о сущностей в ключе для поиска связей с активами
+MIN_NEWS_SCORE_FOR_ALERT = 0.5 # Минимальный балл конкретной новости для отправки в Telegram
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
 # Рейтинг доверия источникам (Trust Factor)
@@ -87,7 +89,7 @@ DEFAULT_TRUST_SCORE = 0.8  # Значение для неизвестных ис
 
 # Thresholds for market signals (Empirical sensitivity)
 SIGNAL_THRESHOLD_HIGH = 3.0  # For Indices (Nasdaq, SOXS)
-SIGNAL_THRESHOLD_MED = 2.0   # For Commodities and VIX
+SIGNAL_THRESHOLD_MED = 2.5   # Повышено для VIX и Oil для фильтрации шума
 SIGNAL_THRESHOLD_LOW = 1.5   # For Safe-havens (Gold)
 SIGNAL_THRESHOLD_BTC = 4.0   # For Crypto (Volatility buffer)
 BTC_MIN_VOLATILITY_FOR_ALERT = 1.0 # Минимальное изменение цены BTC (%) для отправки уведомления
