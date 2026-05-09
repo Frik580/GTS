@@ -525,10 +525,9 @@ def make_event_key(entities: List[str]) -> str:
     # Если есть совпадения с отслеживаемыми темами — берем их.
     # Если нет — берем первые две сущности для формирования ключа.
     # Если после всей фильтрации список пуст — возвращаем GLOBAL.
-    
-    # Очищаем от дубликатов и сортируем, чтобы ключи были стабильными
-    # (исправляет OPENAI_OPENAI_SOFTBANK -> OPENAI_SOFTBANK)
-    result_ents = sorted(list(set(matches))) if matches else unique_ents[:2]
+    combined = sorted(list(set(matches))) if matches else unique_ents
+    result_ents = combined[:config.MAX_ENTITY_PARTS]
+
     if not result_ents:
         return "GLOBAL"
 
@@ -547,7 +546,7 @@ def market_signals(score: float, event_key: str) -> Dict[str, str]:
         "nasdaq": "bearish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "oil": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "soxs": "bullish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
-        "vix": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "flat",
+        "vix": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "gold": "bullish" if intensity > config.SIGNAL_THRESHOLD_LOW else "bearish" if intensity < -config.SIGNAL_THRESHOLD_HIGH else "flat",
         "btc": "bearish" if intensity > config.SIGNAL_THRESHOLD_BTC else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "hbm": "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "bearish" if intensity > config.SIGNAL_THRESHOLD_MED else "flat"
@@ -742,7 +741,7 @@ def count_eligible_predictions() -> int:
     """Возвращает количество новостей, готовых к обучению (старше MARKET_LOOKBACK_HOURS)."""
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute(f"SELECT COUNT(*) FROM predictions WHERE resolved = 0 AND timestamp < datetime('now', '-{config.MARKET_LOOKBACK_HOURS} hours')")
+        cursor.execute("SELECT COUNT(*) FROM predictions WHERE resolved = 0 AND timestamp < datetime('now', '-' || ? || ' hours')", (config.MARKET_LOOKBACK_HOURS,))
         return cursor.fetchone()[0]
 
 
@@ -761,11 +760,11 @@ async def learning_cycle(session: aiohttp.ClientSession):
         cursor = conn.cursor()
         # Берем только неразрешенные прогнозы, созданные более MARKET_LOOKBACK_HOURS назад.
         # Это исключает преждевременную оценку новостей, которые только что вышли.
-        cursor.execute(f"""
+        cursor.execute("""
             SELECT * FROM predictions 
-            WHERE resolved = 0 AND timestamp < datetime('now', '-{config.MARKET_LOOKBACK_HOURS} hours')
+            WHERE resolved = 0 AND timestamp < datetime('now', '-' || ? || ' hours')
             ORDER BY timestamp DESC LIMIT 100
-        """)
+        """, (config.MARKET_LOOKBACK_HOURS,))
         rows = cursor.fetchall()
         logging.info(f"🧠 Начало цикла обучения. Найдено кандидатов для обработки: {len(rows)}")
 
