@@ -26,17 +26,23 @@ def init_model_pool():
         models_list = [m.name for m in all_models if 'generateContent' in m.supported_actions]
         
         family_priority = {
-            'gemini-3.1-flash': 1, 'gemini-3.1-pro': 2, 'gemini-3-flash': 3,
-            'gemini-1.5-flash': 8, 'gemini-1.5-pro': 9
+            'gemini-3.1-flash': 1, 'gemini-3.1-pro': 2, 
+            'gemini-3-flash': 3, 'gemini-3-pro': 4,
+            'gemini-2.5-flash': 5, 'gemini-2.5-pro': 6,
+            'gemini-2.0-flash': 7,
+            'gemini-1.5-flash': 8, 'gemini-1.5-pro': 9,
+            'gemini-1.0-pro': 10
         }
         
         for m_name in models_list:
+            if any(spec in m_name.lower() for spec in ['-tts', '-image', 'robotics']):
+                continue
             for fam, priority in family_priority.items():
                 if fam in m_name:
                     pool.append({
                         "name": m_name,
                         "priority": priority,
-                        "supports_json": any(v in m_name for v in ["1.5", "2.0", "3", "latest"]),
+                        "supports_json": any(v in m_name for v in ["1.5", "2.0", "2.5", "3", "latest"]),
                         "provider": "gemini"
                     })
         

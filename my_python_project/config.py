@@ -26,7 +26,8 @@ TRACKED_KEYWORDS = {
     "Gold": (1.0, ["gold"]),
     "BTC": (1.2, ["btc", "global"]), # Повышен вес для учета высокой волатильности
     "Nasdaq": (1.0, ["nasdaq"]),
-    "AI": (1.5, ["hbm", "nasdaq", "soxs"]),
+    "AI Sector": (1.3, ["hbm", "nasdaq", "soxs"]),
+    "AI Infrastructure": (1.4, ["hbm", "nasdaq", "soxs"]),
     "Trump policy economy": (2.2, ["global", "nasdaq", "oil", "vix"]),
     "MU": (1.2, ["hbm", "soxs"]),
     "Semiconductor": (1.5, ["hbm", "soxs", "nasdaq"]),
@@ -98,9 +99,10 @@ IMPACT_MULTIPLIER = 4.0 # Начальное значение. После ста
 LEARNING_THRESHOLD = 0.3 # Порог рыночного движения (в %). Если цена изменилась меньше, обучение не проводится.
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
 MIN_WEIGHT_THRESHOLD = 0.8 # Повышено для автоматического удаления слабых/случайных связей
-NEUTRAL_SCORE_THRESHOLD = 3.0 # Поднимаем порог для случайных сущностей, чтобы отсечь локальные новости
-MAX_ENTITY_PARTS = 2 # Сокращаем длину ключа до 2 для лучшей группировки статистики
+NEUTRAL_SCORE_THRESHOLD = 2.5 # Поднимаем порог для случайных сущностей, чтобы отсечь локальные новости
+MAX_ENTITY_PARTS = 3 # Сокращаем длину ключа до 2 для лучшей группировки статистики
 MIN_NEWS_SCORE_FOR_ALERT = 0.8 # Минимальный балл конкретной новости для отправки в Telegram
+DUPLICATE_TITLE_THRESHOLD = 0.85 # Порог схожести заголовков (0.85 = 85% совпадения)
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
 # Рейтинг доверия источникам (Trust Factor)
