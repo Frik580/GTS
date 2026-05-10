@@ -334,9 +334,11 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
     Identify key entities. Use these standardized tags if applicable: {tags_hint}.
     Return ONLY a JSON object with this structure:
     {{
-      "score": float (-10.0 to 10.0). Focus on immediate market impact.
-               Active conflict/strikes/sanctions = 5.0 to 10.0.
-               Routine shipping/logistics data/standard movement = 0.0 to 1.5.
+      "score": float (-10.0 to 10.0). CRITICAL: Use Finance Risk Scale:
+               NEGATIVE SCORE (-10 to -1) = GOOD news for markets (Growth, Profits, Rate cuts, Peace).
+               POSITIVE SCORE (1 to 10) = BAD news for markets (War, Inflation, Defaults, Rate hikes).
+               Example: Alphabet winning in AI is a NEGATIVE score (around -3.0).
+               Range 0.0 to 1.5 is for Neutral/Routine news.
       "event_type": "military" | "economic" | "diplomatic" | "neutral" | "tech",
       "entities": ["list of countries, companies or key regions"]
     }}
@@ -710,6 +712,8 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
         "MU": "mu_change"
     }
 
+    stale_map = {}
+    last_bar_time = 0
     try:
         # yfinance синхронный, запускаем в экзекуторе
         loop = asyncio.get_event_loop()
@@ -735,6 +739,14 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
                     # Нам нужно как минимум lookback + 1 свечей, чтобы вычислить разницу
                     if len(ticker_data) > lookback:
                         current_price = float(ticker_data.iloc[-1])
+                        
+                        # Проверяем свежесть данных для конкретного тикера (4 часа)
+                        current_bar_time = ticker_data.index[-1].timestamp()
+                        is_ticker_stale = (time.time() - current_bar_time) > (4 * 3600)
+                        stale_map[data_key] = is_ticker_stale
+                        
+                        last_bar_time = max(last_bar_time, current_bar_time)
+                        
                         past_price = float(ticker_data.iloc[-(lookback + 1)])
                         if past_price != 0:
                             market_data[data_key] = ((current_price - past_price) / past_price) * 100
@@ -754,6 +766,10 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
     else:
         logging.warning("Proceeding without Fear & Greed data due to fetch error.")
 
+    # Общий флаг для режима затухания (если хоть что-то активно, например BTC)
+    market_data['is_stale'] = (time.time() - last_bar_time) > (4 * 3600) if last_bar_time > 0 else True
+    market_data['stale_map'] = stale_map
+
     return market_data
 
 def count_eligible_predictions() -> int:
@@ -770,11 +786,6 @@ async def learning_cycle(session: aiohttp.ClientSession):
         logging.warning("Skipping learning cycle: No market data available.")
         return
 
-    # Проверка на "мертвый" рынок (выходные)
-    if raw_market_data.get('nasdaq_change') == 0 and raw_market_data.get('oil_change') == 0:
-        logging.info("🏝 Market appears to be closed or flat. Skipping weight updates.")
-        return
-
     with get_db_connection() as conn:
         cursor = conn.cursor()
         # Берем только неразрешенные прогнозы, созданные более MARKET_LOOKBACK_HOURS назад.
@@ -789,6 +800,7 @@ async def learning_cycle(session: aiohttp.ClientSession):
 
         updates_by_key = defaultdict(list) # Для агрегации обновлений весов
         all_errors = [] # Для калибровки глобального множителя
+        stale_map = raw_market_data.get('stale_map', {})
 
         for row in rows:
             event_key = row['event_key']
@@ -799,24 +811,31 @@ async def learning_cycle(session: aiohttp.ClientSession):
             actual = 0
             raw_change = 0
             correlation = 0
+            data_key = ""
 
             # Обучение на основе конкретного актива, указанного в прогнозе
             if target == "oil" and 'oil_change' in raw_market_data:
+                data_key = 'oil_change'
                 raw_change = raw_market_data['oil_change']
                 correlation = 1
             elif target == "gold" and 'gold_change' in raw_market_data:
+                data_key = 'gold_change'
                 raw_change = raw_market_data['gold_change']
                 correlation = 1
             elif target == "btc" and 'btc_change' in raw_market_data:
+                data_key = 'btc_change'
                 raw_change = raw_market_data['btc_change']
                 correlation = -1
             elif target == "nasdaq" and 'nasdaq_change' in raw_market_data:
+                data_key = 'nasdaq_change'
                 raw_change = raw_market_data['nasdaq_change']
                 correlation = -1
             elif target == "soxs" and 'soxs_change' in raw_market_data:
+                data_key = 'soxs_change'
                 raw_change = raw_market_data['soxs_change']
                 correlation = 1
             elif target == "vix" and 'vix_change' in raw_market_data:
+                data_key = 'vix_change'
                 raw_change = raw_market_data['vix_change']
                 correlation = 1
             elif target == "hbm" and any(k in raw_market_data for k in ['mu_change', 'smh_change', 'soxs_change']):
@@ -826,6 +845,7 @@ async def learning_cycle(session: aiohttp.ClientSession):
                 # SOXS — это 3x инверсия, делим на -3 для получения 1x long эквивалента
                 soxs_raw = float(raw_market_data.get('soxs_change') or 0)
                 soxs_c = soxs_raw / -3.0 
+                data_key = 'mu_change' # Используем MU как основной индикатор свежести для HBM
                 
                 # Приоритизируем MU, если его волатильность выше порога шума
                 if abs(mu_c) >= config.LEARNING_THRESHOLD:
@@ -837,11 +857,17 @@ async def learning_cycle(session: aiohttp.ClientSession):
                 vix_c = raw_market_data.get('vix_change', 0)
                 nasdaq_c = raw_market_data.get('nasdaq_change', 0)
                 if vix_c != 0:
+                    data_key = 'vix_change'
                     raw_change = vix_c
                     correlation = 1 # Риск = Рост VIX
                 else:
+                    data_key = 'nasdaq_change'
                     raw_change = nasdaq_c
                     correlation = -1 # Риск = Падение Nasdaq
+
+            # Пропускаем, если данные по этому конкретному активу устарели (рынок закрыт)
+            if not data_key or stale_map.get(data_key, True):
+                continue
 
             # Пропускаем обучение, если движение цены ниже порога (рынок закрыт или шум).
             if abs(raw_change) < config.LEARNING_THRESHOLD:
@@ -1163,8 +1189,7 @@ async def main():
 
             current_market_data = await get_market_data(session)
             
-            # Проверка: открыт ли рынок (если Nasdaq и Нефть стоят на месте - скорее всего ночь или выходной)
-            is_market_active = abs(current_market_data.get('nasdaq_change', 0)) > 0 or abs(current_market_data.get('oil_change', 0)) > 0
+            is_market_active = not current_market_data.get('is_stale', True)
             active_decay = config.DECAY_FACTOR if is_market_active else config.NIGHT_DECAY_FACTOR
             
             if not is_market_active:

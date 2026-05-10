@@ -56,24 +56,34 @@ def reset_long_keys(max_entities=3):
         print(f"✅ Всего удалено уникальных длинных ключей: {len(long_keys)}")
         print("Перезапустите engine.py для обновления состояния в памяти.")
 
+def reset_all_learning():
+    """
+    Полный сброс всего процесса обучения. 
+    Удаляет все веса, сбрасывает множитель и очищает историю прогнозов.
+    """
+    print("⚠️ ВНИМАНИЕ: Запущен полный сброс обучения системы GTS...")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # 1. Удаляем все накопленные веса событий
+        cursor.execute("DELETE FROM weights")
+        
+        # 2. Сбрасываем глобальный множитель на значение из конфига
+        cursor.execute("UPDATE settings SET value = ? WHERE key = 'impact_multiplier'", (config.IMPACT_MULTIPLIER,))
+        
+        # 3. Удаляем старые прогнозы, чтобы не обучаться на истории
+        cursor.execute("DELETE FROM predictions")
+        
+        conn.commit()
+        print("✅ Система обучения полностью сброшена.")
+        print(f"✅ Глобальный множитель возвращен к: {config.IMPACT_MULTIPLIER}")
+        print("🚀 Теперь вы можете запустить engine.py с чистого листа.")
+
 if __name__ == "__main__":
-    # Теперь можно передать список ключей для сброса:
-    reset_event_keys([
-        "AI_ALIBABA", 
-        "SOUTH", 
-        "KOREA", 
-        "CORP", 
-        "GULF", 
-        "OMAN", 
-        "NORTH", 
-        "RFK", 
-        "COLOMBIA", 
-        "BANK", 
-        "DIAMONDBACK", 
-        "DIAMONDBACK_OIL", 
-        "RUSSIA", 
-        "INDIA"
-        ])
+    # Выберите нужное действие:
     
-    # Или очистить все ключи, где больше 3 сущностей:
-    # reset_long_keys(max_entities=3)
+    # Вариант 1: Полный сброс (рекомендуется для "начала с начала")
+    reset_all_learning()
+
+    # Вариант 2: Сброс конкретных ключей
+    # reset_event_keys(["AI_ALPHABET", "HORMUZ_IRAN"])
