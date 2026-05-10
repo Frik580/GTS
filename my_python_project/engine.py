@@ -7,13 +7,7 @@ import json
 import asyncio
 import aiohttp
 from google import genai
-try:
-    from transformers import pipeline
-    # Используем легкую модель для сентимента (около 250МБ)
-    local_sentiment_pipe = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-    HAS_TRANSFORMERS = True
-except ImportError:
-    HAS_TRANSFORMERS = False
+from difflib import SequenceMatcher
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -68,12 +62,12 @@ def init_model_pool():
             'gemini-3.1-pro': 2,
             'gemini-3-flash': 3,
             'gemini-3-pro': 4,
-            # 'gemini-2.5-flash': 5,
-            # 'gemini-2.5-pro': 6,
-            # 'gemini-2.0-flash': 7,
-            # 'gemini-1.5-flash': 8,
-            # 'gemini-1.5-pro': 9,
-            # 'gemini-1.0-pro': 10,
+            'gemini-2.5-flash': 5,
+            'gemini-2.5-pro': 6,
+            'gemini-2.0-flash': 7,
+            'gemini-1.5-flash': 8,
+            'gemini-1.5-pro': 9,
+            'gemini-1.0-pro': 10,
             # 'gemini-flash-latest': 11,
             # 'gemini-pro-latest': 12
         }
@@ -153,6 +147,9 @@ logging.info(f"Пул моделей готов: {[m['name'] for m in model_pool
 
 # Инициализируем словарь до вызова функции init_state
 event_last_sent = {}
+# Глобальные наборы для предотвращения дублирования в памяти (race condition)
+processed_urls = set()
+processed_titles = [] # Используем список для хранения последних заголовков (для нечеткого поиска)
 
 def init_state() -> Dict[str, float]:
     scores = defaultdict(float)
@@ -181,6 +178,12 @@ def init_state() -> Dict[str, float]:
             # Преобразуем строку времени SQLite в unix timestamp
             dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
             event_last_sent[key] = dt.timestamp()
+            
+        # Загружаем URL и заголовки за последние 24 часа для кэша дубликатов
+        cursor.execute("SELECT link, title FROM events WHERE timestamp > datetime('now', '-1 day')")
+        for row in cursor.fetchall():
+            processed_urls.add(row['link'])
+            processed_titles.append(row['title'])
 
     return scores
 
@@ -297,32 +300,6 @@ def _get_fallback_entity_search_map() -> Dict[str, str]:
 
 fallback_entity_map = _get_fallback_entity_search_map()
 
-def local_ai_analyze(text: str) -> Tuple[float, str, List[str], str]:
-    """
-    Бесплатная локальная замена Gemini с использованием Hugging Face.
-    """
-    try:
-        # Анализ сентимента
-        result = local_sentiment_pipe(text[:512])[0]
-        # Преобразуем POSITIVE/NEGATIVE в шкалу от -10 до 10
-        score = 5.0 if result['label'] == 'POSITIVE' else -5.0
-        if result['score'] > 0.9: score *= 1.5 # Усиливаем уверенность
-
-        # Простой NER на базе ключевых слов (как в фоллбеке, но интегрированный)
-        found_entities = []
-        text_low = text.lower()
-        for key, val in fallback_entity_map.items():
-            if re.search(rf'\b{key}\b', text_low):
-                if val not in found_entities: found_entities.append(val)
-        
-        # Определение типа (эвристика)
-        event_type = "military" if any(x in text_low for x in ["war", "strike", "attack", "army"]) else "economic"
-        
-        return float(score), event_type, found_entities, "Local (HuggingFace)"
-    except Exception as e:
-        logging.error(f"Local AI Error: {e}")
-        return 0.0, "neutral", [], "Error"
-
 async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None, max_retries: int = 3) -> Tuple[Optional[float], Optional[str], Optional[List[str]], str]:
     """
     Uses Gemini AI to perform deep sentiment analysis and NER.
@@ -332,6 +309,7 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
     prompt = f"""
     Analyze this financial news snippet: "{text}"
     Identify key entities. Use these standardized tags if applicable: {tags_hint}.
+    IMPORTANT: Distinguish between actual assets/companies (e.g., "Gold" as commodity, "Nvidia" as company) and descriptive terms or adjectives (e.g., "gold visa", "oil paintings"). Do not tag an asset if it's used as an adjective or metaphor.
     Return ONLY a JSON object with this structure:
     {{
       "score": float (-10.0 to 10.0). CRITICAL: Use Finance Risk Scale:
@@ -434,16 +412,11 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                     current_model_idx = (current_model_idx + 1) % len(model_pool)
                     continue # Пробуем следующую модель в пуле немедленно
         
-        # Если мы дошли сюда, значит, ни одна модель не смогла успешно обработать запрос
-        # в текущем цикле (либо все 429, либо другая ошибка).
-
-                wait_time = (attempt + 1) * 120
-                logging.warning(f"⚠️ Все модели в пуле исчерпали лимит или произошла другая ошибка. Повторная попытка через {wait_time}s... (Попытка {attempt+1}/{max_retries})")
-                # Если это не первая попытка и всё еще 429, пробуем локальную модель вместо ожидания
-                if attempt >= 1 and HAS_TRANSFORMERS:
-                    logging.info("Switching to Local AI due to rate limits...")
-                    return local_ai_analyze(text)
-                await asyncio.sleep(wait_time)
+        # Если весь пул моделей исчерпан (все вернули 429 или ошибки)
+        wait_time = (attempt + 1) * 60
+        logging.warning(f"⚠️ Все модели в пуле ({len(model_pool)}) временно недоступны. Повтор через {wait_time}s...")
+        
+        await asyncio.sleep(wait_time)
 
     # Fallback logic
     text_low = text.lower()
@@ -502,8 +475,9 @@ def make_event_key(entities: List[str]) -> str:
         # Проверяем по мапе синонимов
         found_canonical = False
         for syn, canonical in canonical_map.items():
-            # Для коротких тегов (MU, US, BTC) требуем полного совпадения, чтобы не находить их внутри слов типа HORMUZ
-            if syn == ent_up or (len(syn) > 3 and syn in ent_up):
+            # Требуем точного совпадения для всех отслеживаемых сущностей,
+            # чтобы избежать ложных срабатываний (например, "gold visa" не превращалась в GOLD)
+            if syn == ent_up:
                 normalized.append(canonical)
                 found_canonical = True
                 break
@@ -522,18 +496,24 @@ def make_event_key(entities: List[str]) -> str:
     # либо сущность является частью темы (US -> US_IRAN)
     matches = []
     for e in unique_ents:
-        # Ищем совпадение: тег из конфига равен сущности, либо один является частью другого
-        # Чтобы избежать ложных срабатываний (как MU в HORMUZ), 
-        # для коротких тегов (<= 3 символов) требуем только полного совпадения.
-        # Добавлено: проверка на полное совпадение для коротких сущностей, чтобы избежать "MU" из ниоткуда
-        matched_tag = next((t for t in tracked_upper if t == e or (len(t) > 3 and t in e and len(e) > 3)), e)
+        # Теперь требуем только точного совпадения сущности с отслеживаемым тегом,
+        # полагаясь на то, что ИИ уже получил список правильных тегов в prompt.
+        matched_tag = next((t for t in tracked_upper if t == e), e)
         matches.append(matched_tag)
     
-    # Если есть совпадения с отслеживаемыми темами — берем их.
-    # Если нет — берем первые две сущности для формирования ключа.
-    # Если после всей фильтрации список пуст — возвращаем GLOBAL.
-    combined = sorted(list(set(matches))) if matches else unique_ents
-    result_ents = combined[:config.MAX_ENTITY_PARTS]
+    # 4. СТРОГОЕ ОГРАНИЧЕНИЕ ПО СЛОВАМ (MAX_ENTITY_PARTS)
+    # Разбиваем все найденные теги на отдельные слова, чтобы лимит работал по словам.
+    all_words = []
+    for m in (matches if matches else unique_ents):
+        all_words.extend(m.split('_'))
+    
+    # Убираем дубликаты слов, сохраняя порядок
+    final_parts = []
+    for word in all_words:
+        if word not in final_parts:
+            final_parts.append(word)
+    
+    result_ents = final_parts[:config.MAX_ENTITY_PARTS]
 
     if not result_ents:
         return "GLOBAL"
@@ -571,6 +551,10 @@ def get_weight(event_key: str) -> float:
     if event_key in event_weights:
         return event_weights[event_key]
     
+    # Проверяем, не является ли весь ключ (или его часть) известным тегом из конфига
+    if event_key in event_weights:
+        return event_weights[event_key]
+
     # Если ключа нет (например, это длинная комбинация), 
     # проверяем веса отдельных компонентов (MIRA, OPENAI и т.д.)
     parts = event_key.split('_')
@@ -877,6 +861,7 @@ async def learning_cycle(session: aiohttp.ClientSession):
             # но не считаем это ошибкой прогноза и не логируем в результат обучения.
             if abs(score) < config.NEUTRAL_SCORE_THRESHOLD:
                 cursor.execute("UPDATE predictions SET resolved = 1 WHERE id = ?", (row['id'],))
+                logging.debug(f"Learning: Skipping low-score event {event_key} (Score {score:.1f} < Threshold {config.NEUTRAL_SCORE_THRESHOLD})")
                 continue
 
             scaling = config.ASSET_SCALING_FACTORS.get(target, config.ASSET_SCALING_FACTORS["global"])
@@ -950,6 +935,14 @@ def cleanup_db():
 # MAIN LOOP
 # =========================
 
+def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: float) -> bool:
+    """Проверяет заголовок на схожесть с уже существующими в кэше."""
+    new_title_lower = new_title.lower()
+    for title in existing_titles:
+        if SequenceMatcher(None, new_title_lower, title.lower()).ratio() > threshold:
+            return True
+    return False
+
 async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop, fng_val: float, fng_label: str, market_context: Dict[str, Any], is_market_active: bool):
     """Обрабатывает одну RSS ленту."""
     headers = {
@@ -999,12 +992,21 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                 logging.debug(f"Пропуск старой новости: {entry.title}")
                 continue
 
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT id FROM events WHERE link = ?", (entry.link,))
-            if cursor.fetchone():
-                logging.debug(f"Новость уже в базе: {entry.title}")
-                continue
+        # 1. Проверка по URL (мгновенно из памяти)
+        if entry.link in processed_urls:
+            continue
+            
+        # 2. Нечеткая проверка заголовка (предотвращает дубли с разным текстом)
+        if is_fuzzy_duplicate(entry.title, processed_titles, config.DUPLICATE_TITLE_THRESHOLD):
+            logging.debug(f"Обнаружен нечеткий дубликат заголовка: {entry.title}")
+            processed_urls.add(entry.link) # Запоминаем ссылку, чтобы больше не проверять
+            continue
+
+        # Резервируем новость в памяти ПЕРЕД запуском AI (устранение race condition)
+        processed_urls.add(entry.link)
+        processed_titles.append(entry.title)
+        if len(processed_titles) > 500: # Держим кэш компактным
+            processed_titles.pop(0)
 
         text = entry.title + " " + entry.get("summary", "")
         analysis = await ai_analyze(text, session=session)
@@ -1031,8 +1033,9 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         
         # Дополнительное снижение веса для нефинансовых типов событий
         # Применяем decay ко всем нейтральным новостям, а не только к тем, что выше порога
-        if event_type in ["neutral", "diplomatic"] and abs(score) > 0:
-            score *= config.NON_FINANCIAL_SCORE_DECAY_FACTOR
+        if event_type in ["neutral", "diplomatic", "tech"] and abs(score) > 0:
+            # Если новость не экономическая, снижаем её влияние на накопленный балл сильнее
+            score *= (config.NON_FINANCIAL_SCORE_DECAY_FACTOR * 0.5)
         
         current_delay = config.AI_DELAY_JSON if get_active_model()["supports_json"] else config.AI_DELAY_NO_JSON
         await asyncio.sleep(current_delay)
@@ -1041,13 +1044,10 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
 
         # Фильтр шума: если новость нейтральная и не относится к списку отслеживаемых тем,
         # мы полностью пропускаем её, чтобы не засорять БД и таблицу весов.
-        # Более надежная проверка: есть ли event_key или его части в event_asset_map
+        # Теперь проверка строгая: новость отслеживается, только если ключ ТОЧНО совпадает 
+        # с одним из ключей в event_asset_map (который строится из config.TRACKED_KEYWORDS).
         is_tracked = False
-        for tracked_key in event_asset_map.keys():
-            if event_key == tracked_key or event_key in tracked_key or tracked_key in event_key:
-                is_tracked = True
-                break
-        if not is_tracked and any(part in event_asset_map for part in event_key.split('_')):
+        if event_key in event_asset_map:
             is_tracked = True
         
         # 1. Фильтр по минимальному порогу значимости (пропускаем всё, что ниже порога уведомления)
