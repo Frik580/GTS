@@ -853,7 +853,8 @@ async def learning_cycle(session: aiohttp.ClientSession):
                 cursor.execute("UPDATE predictions SET resolved = 1 WHERE id = ?", (row['id'],))
                 continue
 
-            actual = min(abs(raw_change) * config.SCALING_FACTOR, 100)
+            scaling = config.ASSET_SCALING_FACTORS.get(target, config.ASSET_SCALING_FACTORS["global"])
+            actual = min(abs(raw_change) * scaling, 100)
             
             # Проверка совпадения направления: (Score * Change * Correlation) > 0
             is_correct = 1 if (score * raw_change * correlation) > 0 else 0
