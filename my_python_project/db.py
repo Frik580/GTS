@@ -23,6 +23,7 @@ def init_db():
             score REAL,
             event TEXT,
             nasdaq TEXT,
+            sp500 TEXT,
             oil TEXT,
             hbm TEXT,
             soxs TEXT,
@@ -75,6 +76,7 @@ def init_db():
         required_columns = {
             "events": {
                 "nasdaq": "TEXT",
+                "sp500": "TEXT",
                 "oil": "TEXT",
                 "hbm": "TEXT",
                 "soxs": "TEXT",
