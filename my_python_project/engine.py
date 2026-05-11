@@ -106,9 +106,10 @@ def init_model_pool():
         if config.OPENROUTER_API_KEY:
             or_models = [
                 {"name": "nvidia/nemotron-3-super-120b-a12b:free", "supports_json": True, "provider": "openrouter"},
-                # {"name": "tencent/hy3-preview:free", "supports_json": True, "provider": "openrouter"},
-                # {"name": "openrouter/owl-alpha", "supports_json": True, "provider": "openrouter"},
-                {"name": "openai/gpt-oss-120b:free", "supports_json": True, "provider": "openrouter"}
+                {"name": "deepseek/deepseek-r1:free", "supports_json": True, "provider": "openrouter"},
+                {"name": "google/gemma-3-27b-it:free", "supports_json": True, "provider": "openrouter"},
+                {"name": "openai/gpt-oss-120b:free", "supports_json": True, "provider": "openrouter"},
+                # {"name": "openrouter/free", "provider": "openrouter"}
             ]
             for m in or_models:
                 pool.append(m)
@@ -935,11 +936,22 @@ def cleanup_db():
 # MAIN LOOP
 # =========================
 
+def clean_title(title: str) -> str:
+    """Удаляет мусор из заголовка (названия источников, лишние знаки)."""
+    # Удаляем источники в конце: "Title - Reuters" или "Title | CNBC"
+    cleaned = re.sub(r'\s+[-|]\s+.*$', '', title)
+    # Приводим к нижнему регистру и удаляем лишние пробелы
+    return cleaned.strip().lower()
+
 def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: float) -> bool:
     """Проверяет заголовок на схожесть с уже существующими в кэше."""
-    new_title_lower = new_title.lower()
+    if not new_title:
+        return False
+    
+    new_clean = clean_title(new_title)
     for title in existing_titles:
-        if SequenceMatcher(None, new_title_lower, title.lower()).ratio() > threshold:
+        # Сравниваем очищенные версии
+        if SequenceMatcher(None, new_clean, clean_title(title)).ratio() > threshold:
             return True
     return False
 
@@ -989,12 +1001,21 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         if published:
             pub_time = time.mktime(published)
             if (time.time() - pub_time) > (max_age_h * 3600):
-                logging.debug(f"Пропуск старой новости: {entry.title}")
                 continue
+
+        original_title = entry.title
+        cleaned_t = clean_title(original_title)
 
         # 1. Проверка по URL (мгновенно из памяти)
         if entry.link in processed_urls:
             continue
+            
+        # 3. Проверка в БД за последние 3 часа (на случай если кэш в памяти пуст)
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM events WHERE timestamp > datetime('now', '-3 hours') AND title LIKE ?", (f"%{cleaned_t[:20]}%",))
+            if cursor.fetchone() and is_fuzzy_duplicate(original_title, [row['title'] for row in cursor.execute("SELECT title FROM events ORDER BY timestamp DESC LIMIT 20")], config.DUPLICATE_TITLE_THRESHOLD):
+                continue
             
         # 2. Нечеткая проверка заголовка (предотвращает дубли с разным текстом)
         if is_fuzzy_duplicate(entry.title, processed_titles, config.DUPLICATE_TITLE_THRESHOLD):
