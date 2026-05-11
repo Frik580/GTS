@@ -59,15 +59,15 @@ def init_model_pool():
         # Маппинг семейств и их приоритетов (1 - высший)
         family_priority = {
             'gemini-3.1-flash': 1,
-            'gemini-3.1-pro': 2,
+            # 'gemini-3.1-pro': 2,
             'gemini-3-flash': 3,
-            'gemini-3-pro': 4,
+            # 'gemini-3-pro': 4,
             'gemini-2.5-flash': 5,
-            'gemini-2.5-pro': 6,
-            'gemini-2.0-flash': 7,
-            'gemini-1.5-flash': 8,
-            'gemini-1.5-pro': 9,
-            'gemini-1.0-pro': 10,
+            # 'gemini-2.5-pro': 6,
+            # 'gemini-2.0-flash': 7,
+            # 'gemini-1.5-flash': 8,
+            # 'gemini-1.5-pro': 9,
+            # 'gemini-1.0-pro': 10,
             # 'gemini-flash-latest': 11,
             # 'gemini-pro-latest': 12
         }
@@ -106,10 +106,12 @@ def init_model_pool():
         if config.OPENROUTER_API_KEY:
             or_models = [
                 {"name": "nvidia/nemotron-3-super-120b-a12b:free", "supports_json": True, "provider": "openrouter"},
-                {"name": "deepseek/deepseek-r1:free", "supports_json": True, "provider": "openrouter"},
-                {"name": "google/gemma-3-27b-it:free", "supports_json": True, "provider": "openrouter"},
+                # {"name": "deepseek/deepseek-r1:free", "supports_json": True, "provider": "openrouter"},
+                # {"name": "google/gemma-3-27b-it:free", "supports_json": True, "provider": "openrouter"},
                 {"name": "openai/gpt-oss-120b:free", "supports_json": True, "provider": "openrouter"},
-                # {"name": "openrouter/free", "provider": "openrouter"}
+                {"name": "google/gemini-2.0-flash-lite-preview-02-05:free", "supports_json": True, "provider": "openrouter"},
+                # {"name": "qwen/qwen-2.5-72b-instruct:free", "supports_json": True, "provider": "openrouter"},
+                # {"name": "mistralai/mistral-7b-instruct:free", "supports_json": True, "provider": "openrouter"},
             ]
             for m in or_models:
                 pool.append(m)
@@ -146,6 +148,31 @@ logging.info(f"Пул моделей готов: {[m['name'] for m in model_pool
 # STATE
 # =========================
 
+# Храним время последнего обновления (затухания) для каждого ключа
+event_last_update = {}
+
+def apply_decay(key: str, is_market_active: bool) -> float:
+    """
+    Применяет затухание к баллу ключа на основе времени, прошедшего с последнего обновления.
+    Формула: Score = Score * (DecayFactor ^ (DeltaTime / Interval))
+    """
+    if key not in event_scores or event_scores[key] == 0:
+        event_last_update[key] = time.time()
+        return 0.0
+
+    now = time.time()
+    last_update = event_last_update.get(key, now)
+    delta_t = now - last_update
+    
+    decay_factor = config.DECAY_FACTOR if is_market_active else config.NIGHT_DECAY_FACTOR
+    # Интервал, за который балл должен уменьшиться на decay_factor (из конфига это 180с)
+    intervals_passed = delta_t / config.CHECK_INTERVAL
+    
+    event_scores[key] *= (decay_factor ** intervals_passed)
+    event_last_update[key] = now
+    
+    return event_scores[key]
+
 # Инициализируем словарь до вызова функции init_state
 event_last_sent = {}
 # Глобальные наборы для предотвращения дублирования в памяти (race condition)
@@ -158,10 +185,11 @@ def init_state() -> Dict[str, float]:
         cursor = conn.cursor()
         # Восстанавливаем состояние из таблицы predictions, где уже есть event_key
         # Группируем по timestamp, чтобы не суммировать дубликаты от разных активов одной новости
+        # Убираем расчет затухания из SQL, так как apply_decay сделает это точнее при старте
         cursor.execute("""
-            SELECT event_key, SUM(weighted_score) FROM (
+            SELECT event_key, SUM(raw_score) FROM (
                 SELECT 
-                    MAX(score * (1.0 - (julianday('now') - julianday(timestamp)))) as weighted_score,
+                    MAX(score) as raw_score,
                     event_key, timestamp
                 FROM predictions WHERE timestamp > datetime('now', '-1 day')
                 GROUP BY event_key, timestamp
@@ -178,6 +206,7 @@ def init_state() -> Dict[str, float]:
         for key, ts_str in cursor.fetchall():
             # Преобразуем строку времени SQLite в unix timestamp
             dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
+            event_last_update[key] = dt.timestamp()
             event_last_sent[key] = dt.timestamp()
             
         # Загружаем URL и заголовки за последние 24 часа для кэша дубликатов
@@ -508,12 +537,8 @@ def make_event_key(entities: List[str]) -> str:
     for m in (matches if matches else unique_ents):
         all_words.extend(m.split('_'))
     
-    # Убираем дубликаты слов, сохраняя порядок
-    final_parts = []
-    for word in all_words:
-        if word not in final_parts:
-            final_parts.append(word)
-    
+    # Убираем дубликаты и принудительно сортируем слова алфавитно для консистентности ключей
+    final_parts = sorted(list(set(all_words)))
     result_ents = final_parts[:config.MAX_ENTITY_PARTS]
 
     if not result_ents:
@@ -526,12 +551,11 @@ def make_event_key(entities: List[str]) -> str:
 # =========================
 
 def market_signals(score: float, event_key: str) -> Dict[str, str]:
-    mult = event_weights.get(event_key, 1.0)
-
-    intensity = score * mult
+    intensity = score # Вес уже применен при накоплении в event_scores
 
     return {
         "nasdaq": "bearish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
+        "sp500": "bearish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "oil": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "soxs": "bullish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "vix": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
@@ -566,7 +590,8 @@ def get_weight(event_key: str) -> float:
     return 1.0
 
 def predict_impact(score: float, event_key: str) -> float:
-    return min(abs(score) * get_weight(event_key) * global_impact_multiplier, 100)
+    # Вес уже применен в event_scores, здесь используем только глобальный множитель
+    return min(abs(score) * global_impact_multiplier, 100)
 
 # =========================
 # SIGNAL ENGINE
@@ -608,6 +633,10 @@ def should_send(key: str, current_score: float) -> bool:
 
     # Если новость экстремально важная (например, score > 8), игнорируем кулдаун
     if abs(current_score) >= 8.0:
+        # Но даже для важных новостей даем 2 минуты, чтобы не слать дубли от разных агентств
+        if key in event_last_sent and (now - event_last_sent[key] < 120):
+            logging.info(f"High-score spam prevention for {key}")
+            return False
         event_last_sent[key] = now
         return True
 
@@ -688,6 +717,7 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
 
     tickers_to_fetch = {
         "^IXIC": "nasdaq_change",
+        "^GSPC": "sp500_change",
         "CL=F": "oil_change",
         "^VIX": "vix_change",
         "GC=F": "gold_change",
@@ -815,6 +845,10 @@ async def learning_cycle(session: aiohttp.ClientSession):
                 data_key = 'nasdaq_change'
                 raw_change = raw_market_data['nasdaq_change']
                 correlation = -1
+            elif target == "sp500" and 'sp500_change' in raw_market_data:
+                data_key = 'sp500_change'
+                raw_change = raw_market_data['sp500_change']
+                correlation = -1
             elif target == "soxs" and 'soxs_change' in raw_market_data:
                 data_key = 'soxs_change'
                 raw_change = raw_market_data['soxs_change']
@@ -940,8 +974,9 @@ def clean_title(title: str) -> str:
     """Удаляет мусор из заголовка (названия источников, лишние знаки)."""
     # Удаляем источники в конце: "Title - Reuters" или "Title | CNBC"
     cleaned = re.sub(r'\s+[-|]\s+.*$', '', title)
-    # Приводим к нижнему регистру и удаляем лишние пробелы
-    return cleaned.strip().lower()
+    # Удаляем пунктуацию и нормализуем пробелы для лучшего нечеткого сравнения
+    cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
+    return " ".join(cleaned.lower().split())
 
 def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: float) -> bool:
     """Проверяет заголовок на схожесть с уже существующими в кэше."""
@@ -1013,8 +1048,10 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         # 3. Проверка в БД за последние 3 часа (на случай если кэш в памяти пуст)
         with get_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM events WHERE timestamp > datetime('now', '-3 hours') AND title LIKE ?", (f"%{cleaned_t[:20]}%",))
-            if cursor.fetchone() and is_fuzzy_duplicate(original_title, [row['title'] for row in cursor.execute("SELECT title FROM events ORDER BY timestamp DESC LIMIT 20")], config.DUPLICATE_TITLE_THRESHOLD):
+            # Сначала получаем список последних заголовков
+            cursor.execute("SELECT title FROM events WHERE timestamp > datetime('now', '-3 hours') ORDER BY timestamp DESC LIMIT 20")
+            db_titles = [row['title'] for row in cursor.fetchall()]
+            if is_fuzzy_duplicate(original_title, db_titles, config.DUPLICATE_TITLE_THRESHOLD):
                 continue
             
         # 2. Нечеткая проверка заголовка (предотвращает дубли с разным текстом)
@@ -1063,6 +1100,9 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
 
         event_key = make_event_key(entities)
 
+        # Применяем затухание к существующему баллу перед добавлением новой новости
+        apply_decay(event_key, is_market_active)
+
         # Фильтр шума: если новость нейтральная и не относится к списку отслеживаемых тем,
         # мы полностью пропускаем её, чтобы не засорять БД и таблицу весов.
         # Теперь проверка строгая: новость отслеживается, только если ключ ТОЧНО совпадает 
@@ -1089,7 +1129,9 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         # Накапливаем балл только если новость значима, 
         # чтобы мелкий шум не "дрейфовал" итоговый сентимент к краям.
         if abs(score) >= config.MIN_NEWS_SCORE_FOR_ALERT:
-            event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + score))
+            # Применяем вес ключа (например, 0.6 для GOLD), чтобы замедлить или ускорить рост
+            weighted_score = score * get_weight(event_key)
+            event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + weighted_score))
 
         market = market_signals(event_scores[event_key], event_key)
         prob = predict_impact(event_scores[event_key], event_key) 
@@ -1126,9 +1168,9 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO events (title, link, score, event, nasdaq, oil, hbm, soxs, gold, btc, vix, fear_greed)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val))
+                    INSERT INTO events (title, link, score, event, nasdaq, sp500, oil, hbm, soxs, gold, btc, vix, fear_greed)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["sp500"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val))
                 
                 for asset_name in target_assets:
                     cursor.execute("""
@@ -1209,15 +1251,15 @@ async def main():
             logging.info(f"📡 GTS 4.0 scanning... [До обучения: {minutes_left} мин | Готово новостей: {eligible_count}]")
 
             current_market_data = await get_market_data(session)
-            
             is_market_active = not current_market_data.get('is_stale', True)
-            active_decay = config.DECAY_FACTOR if is_market_active else config.NIGHT_DECAY_FACTOR
             
             if not is_market_active:
                 logging.info("🌙 Night mode: Using slower decay factor to preserve sentiment.")
 
-            for key in event_scores:
-                event_scores[key] *= active_decay
+            # Принудительно обновляем затухание для всех ключей в начале цикла,
+            # чтобы Dashboard видел актуальные "остывшие" значения.
+            for key in list(event_scores.keys()):
+                apply_decay(key, is_market_active)
 
             fng_val = current_market_data.get("fng_val", 50)
             fng_label = current_market_data.get("fng_label", "Neutral")

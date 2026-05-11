@@ -83,7 +83,7 @@ if __name__ == "__main__":
     # Выберите нужное действие:
     
     # Вариант 1: Полный сброс (рекомендуется для "начала с начала")
-    reset_all_learning()
+    # reset_all_learning()
 
     # Вариант 2: Сброс конкретных ключей
-    # reset_event_keys(["AI_ALPHABET", "HORMUZ_IRAN"])
+    reset_event_keys(["OIL_US_IRAN"])

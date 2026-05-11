@@ -24,7 +24,7 @@ def inspect_gts():
             print("Предложений пока нет. Дождитесь завершения цикла RESEARCH_INTERVAL.")
 
         print("\n--- ПОСЛЕДНИЕ 5 СОБЫТИЙ ---")
-        events = pd.read_sql("SELECT title, score, event, timestamp FROM events ORDER BY timestamp DESC LIMIT 5", conn)
+        events = pd.read_sql("SELECT title, score, nasdaq, sp500, oil, vix, timestamp FROM events ORDER BY timestamp DESC LIMIT 5", conn)
         print(events)
         
         print("\n--- АНАЛИЗ ОТКЛОНЕНИЙ (PREDICTED VS ACTUAL) ---")
