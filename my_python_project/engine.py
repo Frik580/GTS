@@ -178,6 +178,7 @@ event_last_sent = {}
 # Глобальные наборы для предотвращения дублирования в памяти (race condition)
 processed_urls = set()
 processed_titles = [] # Используем список для хранения последних заголовков (для нечеткого поиска)
+processed_slugs = {} # slug -> timestamp для семантической дедупликации
 
 def init_state() -> Dict[str, float]:
     scores = defaultdict(float)
@@ -209,11 +210,14 @@ def init_state() -> Dict[str, float]:
             event_last_update[key] = dt.timestamp()
             event_last_sent[key] = dt.timestamp()
             
-        # Загружаем URL и заголовки за последние 24 часа для кэша дубликатов
-        cursor.execute("SELECT link, title FROM events WHERE timestamp > datetime('now', '-1 day')")
+        # Загружаем историю для дедупликации
+        cursor.execute("SELECT link, title, slug, timestamp FROM events WHERE timestamp > datetime('now', '-1 day')")
         for row in cursor.fetchall():
             processed_urls.add(row['link'])
             processed_titles.append(row['title'])
+            if row['slug']:
+                dt = datetime.strptime(row['timestamp'], '%Y-%m-%d %H:%M:%S')
+                processed_slugs[row['slug']] = dt.timestamp()
 
     return scores
 
@@ -330,7 +334,7 @@ def _get_fallback_entity_search_map() -> Dict[str, str]:
 
 fallback_entity_map = _get_fallback_entity_search_map()
 
-async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None, max_retries: int = 3) -> Tuple[Optional[float], Optional[str], Optional[List[str]], str]:
+async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None, max_retries: int = 3) -> Tuple[Optional[float], Optional[str], Optional[List[str]], Optional[str], str]:
     """
     Uses Gemini AI to perform deep sentiment analysis and NER.
     """
@@ -340,6 +344,7 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
     Analyze this financial news snippet: "{text}"
     Identify key entities. Use these standardized tags if applicable: {tags_hint}.
     IMPORTANT: Distinguish between actual assets/companies (e.g., "Gold" as commodity, "Nvidia" as company) and descriptive terms or adjectives (e.g., "gold visa", "oil paintings"). Do not tag an asset if it's used as an adjective or metaphor.
+    Identify the core unique event being reported.
     Return ONLY a JSON object with this structure:
     {{
       "score": float (-10.0 to 10.0). CRITICAL: Use Finance Risk Scale:
@@ -348,7 +353,8 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                Example: Alphabet winning in AI is a NEGATIVE score (around -3.0).
                Range 0.0 to 1.5 is for Neutral/Routine news.
       "event_type": "military" | "economic" | "diplomatic" | "neutral" | "tech",
-      "entities": ["list of countries, companies or key regions"]
+      "entities": ["list of countries, companies or key regions"],
+      "slug": "short_snake_case_event_id (2-4 words). Use the same slug for different articles reporting the same core event (e.g., 'korea_ai_tax_impact')."
     }}
     Do not include any markdown formatting or explanations.
     """
@@ -421,7 +427,7 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                     continue # Попробуем следующую модель в пуле немедленно
 
                 data = json.loads(res_text[start:end])
-                return float(data.get("score", 0)), data.get("event_type", "neutral"), data.get("entities", []), active["name"]
+                return float(data.get("score", 0)), data.get("event_type", "neutral"), data.get("entities", []), data.get("slug"), active["name"]
 
             except Exception as e:
                 err_msg = str(e).lower()
@@ -462,9 +468,10 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
 
     # Если это не критично и сущности не найдены — лучше пропустить анализ, чем гадать
     if not found_entities and score == 0:
-        return None, None, None, "No Relevance"
+        return None, None, None, None, "No Relevance"
     
-    return score, "neutral", found_entities, "Fallback (Regex)"
+    slug = "_".join([e.lower() for e in found_entities[:2]]) if found_entities else "general_market"
+    return score, "neutral", found_entities, slug, "Fallback (Regex)"
 
 # =========================
 # EVENT ENGINE
@@ -1072,7 +1079,20 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         if analysis[0] is None:
             continue
 
-        score, event_type, entities, source = analysis
+        score, event_type, entities, slug, source = analysis
+
+        # 4. Семантическая проверка дубликатов по slug (AI-generated)
+        # Если этот 'смысл' новости уже встречался недавно, пропускаем
+        if slug and slug in processed_slugs:
+            if time.time() - processed_slugs[slug] < config.MAX_NEWS_AGE_HOURS * 3600:
+                logging.info(f"Семантический дубликат пропущен: {slug} | {entry.title}")
+                continue
+        
+        if slug:
+            processed_slugs[slug] = time.time()
+            if len(processed_slugs) > 1000: # Прунинг кэша
+                first_key = next(iter(processed_slugs))
+                del processed_slugs[first_key]
 
         # Определение рейтинга доверия источнику новости
         # Google News RSS обычно указывает источник в конце заголовка через дефис или в поле source
@@ -1168,9 +1188,9 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO events (title, link, score, event, nasdaq, sp500, oil, hbm, soxs, gold, btc, vix, fear_greed)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["sp500"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val))
+                    INSERT INTO events (title, link, score, event, nasdaq, sp500, oil, hbm, soxs, gold, btc, vix, fear_greed, slug)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["sp500"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val, slug))
                 
                 for asset_name in target_assets:
                     cursor.execute("""

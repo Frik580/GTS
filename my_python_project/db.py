@@ -31,6 +31,7 @@ def init_db():
             btc TEXT,
             vix TEXT,
             fear_greed REAL,
+            slug TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -83,7 +84,8 @@ def init_db():
                 "gold": "TEXT",
                 "btc": "TEXT",
                 "vix": "TEXT",
-                "fear_greed": "REAL"
+                "fear_greed": "REAL",
+                "slug": "TEXT"
             },
             "predictions": {
                 "actual_move": "REAL DEFAULT 0",
