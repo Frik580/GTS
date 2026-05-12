@@ -1,7 +1,10 @@
 feedparser
-google-genai
-yfinance
-streamlit
 aiohttp
-python-dotenv
+google-genai==0.3.0
+yfinance
 pandas
+python-dotenv
+streamlit
+typing-extensions
+requests
+numpy
