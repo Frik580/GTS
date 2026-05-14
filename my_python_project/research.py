@@ -66,7 +66,7 @@ current_model_idx = 0
 async def run_global_research():
     """Анализирует макро-триггеры и сохраняет предложения в БД."""
     global current_model_idx
-    assets = ["nasdaq", "oil", "soxs", "vix", "gold", "btc", "hbm"]
+    assets = ["nasdaq", "oil", "soxs", "vix", "gold", "btc"]
     prompt = f"""
     As a senior macro strategist, identify the top 15 global entities, geopolitical triggers, or economic factors 
     that will most significantly impact these assets over the next 30 days: {assets}.

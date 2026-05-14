@@ -24,7 +24,7 @@ def inspect_gts():
             print("Предложений пока нет. Дождитесь завершения цикла RESEARCH_INTERVAL.")
 
         print("\n--- ПОСЛЕДНИЕ 5 СОБЫТИЙ ---")
-        events = pd.read_sql("SELECT title, score, nasdaq, sp500, oil, vix, timestamp FROM events ORDER BY timestamp DESC LIMIT 5", conn)
+        events = pd.read_sql("SELECT title, score, nasdaq, sp500, oil, vix, soxs, gold, btc, timestamp FROM events ORDER BY timestamp DESC LIMIT 5", conn)
         print(events)
         
         print("\n--- АНАЛИЗ ОТКЛОНЕНИЙ (PREDICTED VS ACTUAL) ---")
@@ -34,7 +34,7 @@ def inspect_gts():
             SELECT event_key, target_asset, score, predicted_impact, actual_move, 
                    (actual_move - predicted_impact) as error, is_correct, timestamp 
             FROM predictions 
-            WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD}
+            WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm'
             ORDER BY timestamp DESC LIMIT 10
         """
         accuracy_df = pd.read_sql(accuracy_query, conn)
@@ -46,7 +46,7 @@ def inspect_gts():
         # Исключаем шум из статистики, чтобы он не занижал WinRate и не искажал среднюю ошибку
         all_res_query = f"""
             SELECT target_asset, is_correct, actual_move, predicted_impact, timestamp 
-            FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD}
+            FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm'
         """
         df_all = pd.read_sql(all_res_query, conn)
         
@@ -55,6 +55,8 @@ def inspect_gts():
             
             stats_data = []
             for asset in df_all['target_asset'].unique():
+                if asset and asset.lower() == 'hbm':
+                    continue
                 asset_df = df_all[df_all['target_asset'] == asset].sort_values('timestamp')
                 total_cnt = len(asset_df)
                 
@@ -104,8 +106,13 @@ def inspect_gts():
         all_resolved = pd.read_sql("SELECT COUNT(*) as count FROM predictions WHERE resolved = 1", conn).iloc[0]['count']
 
         # Считаем статистику только по тем новостям, которые выше порога шума
-        query = f"SELECT COUNT(*) as resolved, AVG(actual_move) as avg_move, SUM(is_correct) as correct FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD}"
+        query = f"SELECT COUNT(*) as resolved, AVG(actual_move) as avg_move, SUM(is_correct) as correct FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm'"
         resolved_df = pd.read_sql(query, conn)
+
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = 'impact_multiplier'")
+        curr_mult = cursor.fetchone()
+        multiplier_val = curr_mult[0] if curr_mult else config.IMPACT_MULTIPLIER
         
         trained_count = resolved_df['resolved'].iloc[0]
         avg_move = resolved_df['avg_move'].iloc[0]
@@ -118,6 +125,7 @@ def inspect_gts():
         print(f"Прошли обучение (значимые): {trained_count}")
         print(f"Верных прогнозов (✅): {correct_count}")
         print(f"Точность (Win Rate): {win_rate:.1f}%")
+        print(f"Текущий множитель влияния (Multiplier): {multiplier_val:.4f}")
         print(f"Среднее реальное движение: {avg_move_display:.2f}")
 
 if __name__ == "__main__":

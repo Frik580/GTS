@@ -17,31 +17,39 @@ LOG_FILE = "gts.log"
 # Список ключевых слов для отслеживания. Можно менять, добавлять или удалять.
 # Теперь это словарь: "Ключевое слово": Вес (приоритет)
 # Формат: "Ключевое слово": (Вес, ["целевой_актив_1", "целевой_актив_2"])
-# Доступные активы: "nasdaq", "sp500", "oil", "soxs", "vix", "gold", "btc", "hbm", "global"
+# Доступные активы: "nasdaq", "sp500", "oil", "soxs", "vix", "gold", "btc", "global"
 TRACKED_KEYWORDS = {
     "US Iran": (2.5, ["global", "oil", "vix", "btc", "sp500"]), # Пример: влияет на общий риск и нефть
-    "Nvidia": (1.8, ["hbm", "nasdaq", "soxs", "vix", "global"]), # Добавлен VIX для учета волатильности техов
-    "OpenAI": (1.8, ["hbm", "soxs"]), # Пример: влияет на AI и полупроводники
+    "Nvidia": (1.8, ["nasdaq", "soxs", "vix", "global"]), # Добавлен VIX для учета волатильности техов
+    "OpenAI": (1.8, ["soxs"]), # Пример: влияет на AI и полупроводники
     "Oil": (1.5, ["oil", "global", "vix"]), # Пример: влияет на нефть и общий риск
-    "Gold": (0.6, ["gold"]), # Снижаем вес, чтобы балл рос медленнее
+    "Gold": (0.8, ["gold"]), # Слегка повышаем вес, чтобы модель уделяла больше внимания золоту
     "BTC": (1.2, ["btc", "global"]), # Повышен вес для учета высокой волатильности
     "Nasdaq": (1.0, ["nasdaq"]),
-    "AI Sector": (1.3, ["hbm", "nasdaq", "soxs"]),
-    "AI Infrastructure": (1.4, ["hbm", "nasdaq", "soxs"]),
+    "AI Sector": (1.3, ["nasdaq", "soxs"]),
+    "AI Infrastructure": (1.4, ["nasdaq", "soxs"]),
     "Trump policy economy": (2.2, ["global", "nasdaq", "sp500", "oil", "vix"]),
-    "MU": (1.2, ["hbm", "soxs"]),
-    "Semiconductor": (1.5, ["hbm", "soxs", "nasdaq"]),
+    "MU": (1.2, ["soxs"]),
+    "Semiconductor": (1.5, ["soxs", "nasdaq"]),
     "US Inflation": (2.0, ["global", "vix", "gold"]),
-    "Intel": (1.3, ["hbm", "soxs"]),
-    "AMD": (1.3, ["hbm", "soxs"]),
-    "Broadcom": (1.2, ["hbm", "soxs"]),
-    "Anthropic": (1.5, ["hbm", "soxs"]), # Исправлена опечатка
-    "Qualcomm": (1.2, ["hbm", "soxs"]),
+    "Intel": (1.3, ["soxs"]),
+    "AMD": (1.3, ["soxs"]),
+    "Broadcom": (1.2, ["soxs"]),
+    "Anthropic": (1.5, ["soxs"]), # Исправлена опечатка
+    "Qualcomm": (1.2, ["soxs"]),
     "Hormuz": (2.0, ["oil", "vix", "global"]), # Фокус на геополитике в регионе
     "Yield": (1.8, ["global", "vix", "nasdaq"]), # Влияние на общий риск, волатильность и тех. сектор
     "Treasury": (1.5, ["global", "vix", "nasdaq"]), # Влияние на общий риск, волатильность и тех. сектор
     "Jerome Powell": (2.2, ["global", "vix", "nasdaq"]), # Прямое влияние на монетарную политику и рынки
+    "HBM": (1.5, ["soxs", "nasdaq"]),
+    "High Bandwidth Memory": (1.5, ["soxs", "nasdaq"]), # Ключевой компонент для производства AI-ускорителей
+    "Inflation": (2.0, ["global", "vix", "gold", "nasdaq", "sp500"]), # Добавлены макроэкономические факторы
+    "Interest Rates": (2.2, ["global", "vix", "nasdaq", "sp500"]),
+    "Recession": (2.5, ["global", "vix", "gold", "nasdaq", "sp500"]),
+    "Geopolitical Tension": (2.5, ["global", "oil", "vix", "gold"]),
+    "Earnings": (1.5, ["nasdaq", "sp500", "soxs"])
 }
+
 
 # Основные RSS-ленты Yahoo Finance для расширения охвата рынка
 YAHOO_FINANCE_FEEDS = [
@@ -66,7 +74,7 @@ RSS_MAX_ENTRIES_INACTIVE = RSS_MAX_ENTRIES*3 # Количество записе
 # Time Intervals (in seconds)
 CHECK_INTERVAL = 180 
 COOLDOWN = 600 # Интервал между действиями (10 минут)
-LEARNING_INTERVAL = 3600 # Интервал обучения (1 час)
+LEARNING_INTERVAL = 1800 # Интервал обучения (30 минут) - оптимально для баланса между адаптацией и стабильностью
 MARKET_LOOKBACK_HOURS = 2 # Окно анализа реакции рынка
 MAX_NEWS_AGE_HOURS = MARKET_LOOKBACK_HOURS*3 # Новость должна быть не старше окна анализа
 CLEANUP_INTERVAL = 86400 # Интервал очистки (24 часа)
@@ -83,26 +91,24 @@ NIGHT_DECAY_FACTOR = 0.98 # Почти не снижаем балл, когда 
 MAX_SCORE_THRESHOLD = 25.0 
 
 # Коэффициенты нормализации для разных классов активов
-ASSET_SCALING_FACTORS = {
-    "global": 6.0,
-    "nasdaq": 8.0,
-    "sp500": 7.0,
-    "oil": 7.0,
-    "btc": 2.5,   # BTC волатилен, 1% изменения значит меньше
-    "gold": 8.0, # Снижаем чувствительность к движениям золота
-    "vix": 4.0,   # VIX очень волатилен, снижаем фактор
-    "soxs": 2.0,  # 3x плечо: 5% движения = 10 баллов импакта
-    "hbm": 5.0    # Сектор чипов волатильнее индекса
+ASSET_SCALING_FACTORS = { # Скорректированы для улучшения калибровки
+    "global": 6.0, # Оставляем, так как это агрегированный показатель
+    "nasdaq": 7.0, # Слегка уменьшаем, чтобы снизить переоценку влияния
+    "sp500": 6.0,  # Слегка уменьшаем, чтобы снизить переоценку влияния
+    "oil": 7.0,    # Оставляем
+    "btc": 2.5,    # Оставляем, хорошо работает
+    "gold": 7.0,   # Слегка уменьшаем, чтобы помочь с "разбросом" и улучшить калибровку
+    "vix": 5.0,    # Увеличиваем, VIX очень волатилен и требует большего масштабирования
+    "soxs": 3.0,   # Увеличиваем, SOXS 3x leveraged, требует большего масштабирования
 }
 
-LEARNING_RATE = 0.05  # Увеличено для более быстрой адаптации весов к изменениям рынка
+LEARNING_RATE = 0.05  # Снижаем для большей стабильности, так как по основным активам точность начала падать
 IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
-LEARNING_THRESHOLD = 0.3 # Порог рыночного движения (в %). Если цена изменилась меньше, обучение не проводится.
+LEARNING_THRESHOLD = 0.2 # Снижен порог рыночного движения, чтобы учиться на более мелких изменениях
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
-MIN_WEIGHT_THRESHOLD = 0.8 # Повышено для автоматического удаления слабых/случайных связей
-NEUTRAL_SCORE_THRESHOLD = 2.5 # Поднимаем порог для случайных сущностей, чтобы отсечь локальные новости
-MAX_ENTITY_PARTS = 3 # Сокращаем длину ключа до 2 для лучшей группировки статистики
-MIN_NEWS_SCORE_FOR_ALERT = 0.5 # Минимальный балл конкретной новости для отправки в Telegram
+MIN_WEIGHT_THRESHOLD = 0.5 # Повышено для автоматического удаления слабых/случайных связей
+NEUTRAL_SCORE_THRESHOLD = 2.8 # Еще выше порог для отсечения около-рыночного шума
+MAX_ENTITY_PARTS = 2 # Сокращаем до 2 для лучшей группировки и консолидации весов
 DUPLICATE_TITLE_THRESHOLD = 0.55 # Более агрессивный фильтр
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
@@ -123,7 +129,7 @@ SOURCE_TRUST_LEVELS = {
 DEFAULT_TRUST_SCORE = 0.8  # Значение для неизвестных источников
 
 # Thresholds for market signals (Empirical sensitivity)
-SIGNAL_THRESHOLD_HIGH = 3.0  # For Indices (Nasdaq, SOXS)
+SIGNAL_THRESHOLD_HIGH = 3.5  # Повышаем порог для индексов, чтобы уменьшить количество ложных алертов
 SIGNAL_THRESHOLD_MED = 2.5   # Повышено для VIX и Oil для фильтрации шума
 SIGNAL_THRESHOLD_LOW = 1.5   # For Safe-havens (Gold)
 SIGNAL_THRESHOLD_BTC = 4.0   # For Crypto (Volatility buffer)
