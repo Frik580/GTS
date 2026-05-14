@@ -329,12 +329,14 @@ def _get_fallback_entity_search_map() -> Dict[str, str]:
             search_map["xau"] = "Gold"
         if phrase.lower() == "oil":
             search_map["cl=f"] = "Oil" # Futures symbol
+        if "memory" in phrase.lower():
+            search_map["hbm"] = "HBM"
 
     return search_map
 
 fallback_entity_map = _get_fallback_entity_search_map()
 
-async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None, max_retries: int = 3) -> Tuple[Optional[float], Optional[str], Optional[List[str]], Optional[str], str]:
+async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None, max_retries: int = 3) -> Tuple[Optional[float], Optional[str], Optional[List[str]], Optional[str], bool, str]:
     """
     Uses Gemini AI to perform deep sentiment analysis and NER.
     """
@@ -354,7 +356,8 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                Range 0.0 to 1.5 is for Neutral/Routine news.
       "event_type": "military" | "economic" | "diplomatic" | "neutral" | "tech",
       "entities": ["list of countries, companies or key regions"],
-      "slug": "short_snake_case_event_id (2-4 words). Use the same slug for different articles reporting the same core event (e.g., 'korea_ai_tax_impact')."
+      "slug": "short_snake_case_event_id (2-4 words). Use the same slug for different articles reporting the same core event (e.g., 'korea_ai_tax_impact').",
+      "is_black_swan": boolean (True ONLY for extreme, unpredictable, market-shaking rarities like 9/11, sudden wars, or total structural collapses)
     }}
     Do not include any markdown formatting or explanations.
     """
@@ -427,7 +430,7 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                     continue # Попробуем следующую модель в пуле немедленно
 
                 data = json.loads(res_text[start:end])
-                return float(data.get("score", 0)), data.get("event_type", "neutral"), data.get("entities", []), data.get("slug"), active["name"]
+                return float(data.get("score", 0)), data.get("event_type", "neutral"), data.get("entities", []), data.get("slug"), bool(data.get("is_black_swan", False)), active["name"]
 
             except Exception as e:
                 err_msg = str(e).lower()
@@ -468,10 +471,10 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
 
     # Если это не критично и сущности не найдены — лучше пропустить анализ, чем гадать
     if not found_entities and score == 0:
-        return None, None, None, None, "No Relevance"
+        return None, None, None, None, False, "No Relevance"
     
     slug = "_".join([e.lower() for e in found_entities[:2]]) if found_entities else "general_market"
-    return score, "neutral", found_entities, slug, "Fallback (Regex)"
+    return score, "neutral", found_entities, slug, False, "Fallback (Regex)"
 
 # =========================
 # EVENT ENGINE
@@ -495,6 +498,7 @@ def make_event_key(entities: List[str]) -> str:
         "BITCOIN": "BTC", "BTC": "BTC",
         "GOLD": "GOLD", "XAU": "GOLD",
         "OIL": "OIL", "CRUDE": "OIL",
+        "HBM": "HBM", "HIGH_BANDWIDTH_MEMORY": "HBM",
         "NVDA": "NVIDIA", "NVIDIA": "NVIDIA",
         "DONALD_TRUMP": "TRUMP", "MAGA": "TRUMP"
     }
@@ -567,8 +571,7 @@ def market_signals(score: float, event_key: str) -> Dict[str, str]:
         "soxs": "bullish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "vix": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
         "gold": "bullish" if intensity > config.SIGNAL_THRESHOLD_LOW else "bearish" if intensity < -config.SIGNAL_THRESHOLD_HIGH else "flat",
-        "btc": "bearish" if intensity > config.SIGNAL_THRESHOLD_BTC else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
-        "hbm": "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "bearish" if intensity > config.SIGNAL_THRESHOLD_MED else "flat"
+        "btc": "bearish" if intensity > config.SIGNAL_THRESHOLD_BTC else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat"
     }
 
 # =========================
@@ -635,11 +638,11 @@ async def send_telegram(session: aiohttp.ClientSession, msg: str):
 # ANTI-SPAM
 # =========================
 
-def should_send(key: str, current_score: float) -> bool:
+def should_send(key: str, current_score: float, is_black_swan: bool = False) -> bool:
     now = time.time()
 
     # Если новость экстремально важная (например, score > 8), игнорируем кулдаун
-    if abs(current_score) >= 8.0:
+    if abs(current_score) >= 8.0 or is_black_swan:
         # Но даже для важных новостей даем 2 минуты, чтобы не слать дубли от разных агентств
         if key in event_last_sent and (now - event_last_sent[key] < 120):
             logging.info(f"High-score spam prevention for {key}")
@@ -864,21 +867,6 @@ async def learning_cycle(session: aiohttp.ClientSession):
                 data_key = 'vix_change'
                 raw_change = raw_market_data['vix_change']
                 correlation = 1
-            elif target == "hbm" and any(k in raw_market_data for k in ['mu_change', 'smh_change', 'soxs_change']):
-                # Micron (MU) - прямой производитель памяти, лучший прокси для HBM
-                mu_c = float(raw_market_data.get('mu_change') or 0)
-                smh_c = float(raw_market_data.get('smh_change') or 0)
-                # SOXS — это 3x инверсия, делим на -3 для получения 1x long эквивалента
-                soxs_raw = float(raw_market_data.get('soxs_change') or 0)
-                soxs_c = soxs_raw / -3.0 
-                data_key = 'mu_change' # Используем MU как основной индикатор свежести для HBM
-                
-                # Приоритизируем MU, если его волатильность выше порога шума
-                if abs(mu_c) >= config.LEARNING_THRESHOLD:
-                    raw_change = mu_c
-                else:
-                    raw_change = smh_c if abs(smh_c) >= abs(soxs_c) else soxs_c
-                correlation = -1
             else: # "global" logic
                 vix_c = raw_market_data.get('vix_change', 0)
                 nasdaq_c = raw_market_data.get('nasdaq_change', 0)
@@ -949,12 +937,28 @@ def cleanup_db():
         global event_weights
         with get_db_connection() as conn:
             cursor = conn.cursor()
+            
+            # Получаем список каноничных ключей из конфига, которые НЕЛЬЗЯ удалять
+            tracked_keys = []
+            for k in config.TRACKED_KEYWORDS.keys():
+                key_parts = sorted(k.upper().replace(" ", "_").split("_"))
+                tracked_keys.append("_".join(key_parts))
+            placeholders = ', '.join(['?'] * len(tracked_keys))
+
             # Удаляем старые события и прогнозы
             cursor.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
             cursor.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
             
-            # Удаляем ключи с критически низким весом
+            # 1. Удаляем ключи с критически низким весом
             cursor.execute("DELETE FROM weights WHERE weight <= ?", (config.MIN_WEIGHT_THRESHOLD,))
+            
+            # 2. Удаляем "забытые" ключи, которых нет в последних прогнозах и нет в TRACKED_KEYWORDS
+            cursor.execute(f"""
+                DELETE FROM weights 
+                WHERE event_key NOT IN (SELECT DISTINCT event_key FROM predictions)
+                AND event_key NOT IN ({placeholders})
+            """, tracked_keys)
+            
             deleted_weights = cursor.rowcount
             
             conn.commit()  # Завершаем транзакцию после удаления
@@ -1064,14 +1068,15 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         # 2. Нечеткая проверка заголовка (предотвращает дубли с разным текстом)
         if is_fuzzy_duplicate(entry.title, processed_titles, config.DUPLICATE_TITLE_THRESHOLD):
             logging.debug(f"Обнаружен нечеткий дубликат заголовка: {entry.title}")
-            processed_urls.add(entry.link) # Запоминаем ссылку, чтобы больше не проверять
+            processed_urls.add(entry.link)
             continue
 
         # Резервируем новость в памяти ПЕРЕД запуском AI (устранение race condition)
-        processed_urls.add(entry.link)
-        processed_titles.append(entry.title)
-        if len(processed_titles) > 500: # Держим кэш компактным
-            processed_titles.pop(0)
+        if entry.link not in processed_urls:
+            processed_urls.add(entry.link)
+            processed_titles.append(entry.title)
+            if len(processed_titles) > 1000: # Увеличим кэш до 1000 для надежности
+                processed_titles.pop(0)
 
         text = entry.title + " " + entry.get("summary", "")
         analysis = await ai_analyze(text, session=session)
@@ -1079,7 +1084,7 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         if analysis[0] is None:
             continue
 
-        score, event_type, entities, slug, source = analysis
+        score, event_type, entities, slug, is_black_swan, source = analysis
 
         # 4. Семантическая проверка дубликатов по slug (AI-generated)
         # Если этот 'смысл' новости уже встречался недавно, пропускаем
@@ -1123,21 +1128,9 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         # Применяем затухание к существующему баллу перед добавлением новой новости
         apply_decay(event_key, is_market_active)
 
-        # Фильтр шума: если новость нейтральная и не относится к списку отслеживаемых тем,
-        # мы полностью пропускаем её, чтобы не засорять БД и таблицу весов.
-        # Теперь проверка строгая: новость отслеживается, только если ключ ТОЧНО совпадает 
-        # с одним из ключей в event_asset_map (который строится из config.TRACKED_KEYWORDS).
-        is_tracked = False
-        if event_key in event_asset_map:
-            is_tracked = True
-        
-        # 1. Фильтр по минимальному порогу значимости (пропускаем всё, что ниже порога уведомления)
-        if abs(score) < config.MIN_NEWS_SCORE_FOR_ALERT:
-            logging.info(f"Skipping low-score event: {event_key} (Score: {score:.2f})")
-            continue
-        # 2. Незначительные новости для неотслеживаемых сущностей (ниже порога 2.0)
-        if abs(score) < config.NEUTRAL_SCORE_THRESHOLD and not is_tracked and event_key != "GLOBAL":
-            logging.info(f"Skipping noise event: {event_key}")
+        # Фильтр значимости: теперь в базу попадают только новости с баллом >= NEUTRAL_SCORE_THRESHOLD (2.5)
+        if abs(score) < config.NEUTRAL_SCORE_THRESHOLD:
+            logging.info(f"Skipping news for {event_key}: Score {score:.2f} is below threshold {config.NEUTRAL_SCORE_THRESHOLD}")
             continue
 
         # МЕХАНИЗМ ПОЛНОГО РАЗВОРОТА (PIVOT): Если новость сильная и против тренда — забываем историю
@@ -1146,12 +1139,10 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                 logging.info(f"💥 FULL PIVOT for {event_key}: Resetting accumulated score ({event_scores[event_key]:.2f}) due to high-impact opposite news ({score:+.2f})")
                 event_scores[event_key] = 0
 
-        # Накапливаем балл только если новость значима, 
-        # чтобы мелкий шум не "дрейфовал" итоговый сентимент к краям.
-        if abs(score) >= config.MIN_NEWS_SCORE_FOR_ALERT:
-            # Применяем вес ключа (например, 0.6 для GOLD), чтобы замедлить или ускорить рост
-            weighted_score = score * get_weight(event_key)
-            event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + weighted_score))
+        # Применяем вес ключа (например, 0.6 для GOLD) и накапливаем балл.
+        # Фильтр NEUTRAL_SCORE_THRESHOLD уже гарантировал значимость новости выше.
+        weighted_score = score * get_weight(event_key)
+        event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + weighted_score))
 
         market = market_signals(event_scores[event_key], event_key)
         prob = predict_impact(event_scores[event_key], event_key) 
@@ -1188,9 +1179,9 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO events (title, link, score, event, nasdaq, sp500, oil, hbm, soxs, gold, btc, vix, fear_greed, slug)
+                    INSERT INTO events (title, link, score, event, nasdaq, sp500, oil, soxs, gold, btc, vix, fear_greed, slug, is_black_swan)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["sp500"], market["oil"], market["hbm"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val, slug))
+                """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["sp500"], market["oil"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val, slug, 1 if is_black_swan else 0))
                 
                 for asset_name in target_assets:
                     cursor.execute("""
@@ -1202,11 +1193,9 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             logging.info(f"Новость уже обработана другой лентой: {entry.title}")
             continue
 
-        # Не отправляем в Telegram, если Score слишком низкий (шум)
-        # и это не накопленный критический балл по ключу.
-        news_has_weight = abs(score) >= config.MIN_NEWS_SCORE_FOR_ALERT
-        is_significant = news_has_weight and (abs(score) >= config.NEUTRAL_SCORE_THRESHOLD or abs(event_scores[event_key]) >= config.SIGNAL_THRESHOLD_LOW)
-        if is_significant and should_send(event_key, score):
+        # Отправляем уведомление, если сработал кулдаун анти-спама.
+        # Условие is_significant теперь выполняется автоматически для всех новостей в базе.
+        if should_send(event_key, score, is_black_swan):
             if event_key == "BTC" and abs(market_context.get("btc_change", 0)) < config.BTC_MIN_VOLATILITY_FOR_ALERT:
                 continue
             
@@ -1238,7 +1227,10 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             elif event_scores[event_key] > 5 and score < -1.5:
                 divergence_tag = "⚠️ COUNTER-TREND NEWS\n"
 
+            black_swan_header = "🦢🦢🦢 BLACK SWAN EVENT 🦢🦢🦢\n" if is_black_swan else ""
+
             msg = (
+                f"{black_swan_header}"
                 f"🧠 EVENT: {event_key}\n"
                 f"🤖 Model: {source}\n"
                 f"{divergence_tag}"

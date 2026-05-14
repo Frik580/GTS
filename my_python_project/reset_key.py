@@ -28,7 +28,7 @@ def reset_event_keys(keys):
         print(f"✅ Удалено кастомных весов: {weights_deleted}")
         print("Теперь перезапустите engine.py, чтобы обнулить балл в RAM.")
 
-def reset_long_keys(max_entities=3):
+def reset_long_keys(max_entities=2):
     """
     Находит и удаляет все ключи, в которых количество сущностей (частей, разделенных _) 
     превышает заданный порог.
@@ -37,9 +37,9 @@ def reset_long_keys(max_entities=3):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
-        # Получаем все уникальные ключи из таблиц
-        cursor.execute("SELECT DISTINCT event_key FROM predictions")
-        keys = [row['event_key'] for row in cursor.fetchall() if row['event_key']]
+        # Получаем все уникальные ключи из таблиц весов и прогнозов
+        cursor.execute("SELECT event_key FROM weights UNION SELECT event_key FROM predictions")
+        keys = [row[0] for row in cursor.fetchall() if row[0]]
         
         long_keys = [k for k in keys if len(k.split('_')) > max_entities]
         
@@ -82,8 +82,11 @@ def reset_all_learning():
 if __name__ == "__main__":
     # Выберите нужное действие:
     
-    # Вариант 1: Полный сброс (рекомендуется для "начала с начала")
+    # Вариант 1: Полный сброс
     # reset_all_learning()
 
     # Вариант 2: Сброс конкретных ключей
-    reset_event_keys(["OIL_US_IRAN"])
+    # reset_event_keys(["OIL_US_IRAN"])
+
+    # Вариант 3: Удаление ключей с > 2 сущностями (очистка базы согласно новому лимиту)
+    reset_long_keys(max_entities=2)

@@ -25,7 +25,6 @@ def init_db():
             nasdaq TEXT,
             sp500 TEXT,
             oil TEXT,
-            hbm TEXT,
             soxs TEXT,
             gold TEXT,
             btc TEXT,
@@ -71,6 +70,7 @@ def init_db():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_resolved ON predictions(resolved)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_key ON predictions(event_key)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_timestamp ON predictions(timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_slug ON events(slug)")
 
         # Словарь миграций: описываем колонки, которые должны быть в таблицах
         # Это позволяет добавлять новые активы просто дополняя этот список
@@ -79,13 +79,13 @@ def init_db():
                 "nasdaq": "TEXT",
                 "sp500": "TEXT",
                 "oil": "TEXT",
-                "hbm": "TEXT",
                 "soxs": "TEXT",
                 "gold": "TEXT",
                 "btc": "TEXT",
                 "vix": "TEXT",
                 "fear_greed": "REAL",
-                "slug": "TEXT"
+                "slug": "TEXT",
+                "is_black_swan": "INTEGER DEFAULT 0"
             },
             "predictions": {
                 "actual_move": "REAL DEFAULT 0",
