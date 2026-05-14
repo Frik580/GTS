@@ -28,7 +28,7 @@ TRACKED_KEYWORDS = {
     "Nasdaq": (1.0, ["nasdaq"]),
     "AI Sector": (1.3, ["nasdaq", "soxs"]),
     "AI Infrastructure": (1.4, ["nasdaq", "soxs"]),
-    "Trump policy economy": (2.2, ["global", "nasdaq", "sp500", "oil", "vix"]),
+    "Trump Policy": (2.2, ["global", "nasdaq", "sp500", "oil", "vix"]),
     "MU": (1.2, ["soxs"]),
     "Semiconductor": (1.5, ["soxs", "nasdaq"]),
     "US Inflation": (2.0, ["global", "vix", "gold"]),
@@ -42,13 +42,30 @@ TRACKED_KEYWORDS = {
     "Treasury": (1.5, ["global", "vix", "nasdaq"]), # Влияние на общий риск, волатильность и тех. сектор
     "Jerome Powell": (2.2, ["global", "vix", "nasdaq"]), # Прямое влияние на монетарную политику и рынки
     "HBM": (1.5, ["soxs", "nasdaq"]),
-    "High Bandwidth Memory": (1.5, ["soxs", "nasdaq"]), # Ключевой компонент для производства AI-ускорителей
+    "HBM Memory": (1.5, ["soxs", "nasdaq"]), # Ключевой компонент для производства AI-ускорителей
     "Inflation": (2.0, ["global", "vix", "gold", "nasdaq", "sp500"]), # Добавлены макроэкономические факторы
     "Interest Rates": (2.2, ["global", "vix", "nasdaq", "sp500"]),
     "Recession": (2.5, ["global", "vix", "gold", "nasdaq", "sp500"]),
     "Geopolitical Tension": (2.5, ["global", "oil", "vix", "gold"]),
     "Earnings": (1.5, ["nasdaq", "sp500", "soxs"])
 }
+
+# HBM Index Configuration
+HBM_INDEX_SEGMENT_WEIGHTS = {
+    "HBM_MAKERS": 0.45,
+    "AI_GPU": 0.30,
+    "PACKAGING": 0.15,
+    "EQUIPMENT": 0.10,
+}
+
+HBM_INDEX_COMPONENTS = {
+    "HBM_MAKERS": ["000660.KS", "MU", "005930.KS"], # SK Hynix (000660.KS), Micron (MU), Samsung (005930.KS)
+    "AI_GPU": ["NVDA", "AMD"], # NVIDIA (NVDA), AMD (AMD)
+    "PACKAGING": ["TSM", "ASX"], # TSMC (TSM), ASE Technology Holding (ASX)
+    "EQUIPMENT": ["ASML", "AMAT"], # ASML (ASML), Applied Materials (AMAT)
+}
+
+
 
 
 # Основные RSS-ленты Yahoo Finance для расширения охвата рынка
@@ -109,7 +126,7 @@ PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, пр
 MIN_WEIGHT_THRESHOLD = 0.5 # Повышено для автоматического удаления слабых/случайных связей
 NEUTRAL_SCORE_THRESHOLD = 2.8 # Еще выше порог для отсечения около-рыночного шума
 MAX_ENTITY_PARTS = 2 # Сокращаем до 2 для лучшей группировки и консолидации весов
-DUPLICATE_TITLE_THRESHOLD = 0.55 # Более агрессивный фильтр
+DUPLICATE_TITLE_THRESHOLD = 0.45 # Более агрессивный фильтр (чем ниже, тем сильнее подавление похожих новостей)
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
 # Рейтинг доверия источникам (Trust Factor)
