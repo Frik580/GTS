@@ -42,7 +42,10 @@ def init_db():
             score REAL,
             predicted_impact REAL,
             actual_move REAL DEFAULT 0,
+            is_correct INTEGER DEFAULT 0,
             target_asset TEXT,
+            event_type TEXT,
+            is_black_swan INTEGER DEFAULT 0,
             resolved INTEGER DEFAULT 0,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -91,7 +94,9 @@ def init_db():
                 "actual_move": "REAL DEFAULT 0",
                 "resolved": "INTEGER DEFAULT 0",
                 "is_correct": "INTEGER DEFAULT 0",
-                "target_asset": "TEXT"
+                "target_asset": "TEXT",
+                "event_type": "TEXT",
+                "is_black_swan": "INTEGER DEFAULT 0"
             }
         }
 
