@@ -16,6 +16,12 @@ logging.basicConfig(
     ]
 )
 
+# Полная блокировка сообщения про AFC через глобальный фильтр
+logging.getLogger().addFilter(lambda record: "AFC is enabled" not in record.getMessage())
+
+logging.getLogger("google").setLevel(logging.WARNING)
+logging.getLogger("absl").setLevel(logging.WARNING)
+
 client = genai.Client(api_key=config.GEMINI_API_KEY)
 
 def init_model_pool():
