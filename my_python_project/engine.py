@@ -828,118 +828,116 @@ async def learning_cycle(session: aiohttp.ClientSession):
         with get_db_connection() as conn:
             cursor = conn.cursor()
             # Берем только неразрешенные прогнозы, созданные более MARKET_LOOKBACK_HOURS назад.
-        cursor = conn.cursor()
-        # Берем только неразрешенные прогнозы, созданные более MARKET_LOOKBACK_HOURS назад.
-        # Это исключает преждевременную оценку новостей, которые только что вышли.
-        cursor.execute("""
-            SELECT * FROM predictions 
-            WHERE resolved = 0 AND timestamp < datetime('now', '-' || ? || ' hours')
-            ORDER BY timestamp DESC LIMIT 100
-        """, (config.MARKET_LOOKBACK_HOURS,))
-        rows = cursor.fetchall()
-        logging.info(f"🧠 Начало цикла обучения. Найдено кандидатов для обработки: {len(rows)}")
-
-        updates_by_key = defaultdict(list) # Для агрегации обновлений весов
-        all_errors = [] # Для калибровки глобального множителя
-        stale_map = raw_market_data.get('stale_map', {})
-
-        for row in rows:
-            event_key = row['event_key']
-            predicted = row['predicted_impact']
-            score = row['score']
-            target = row['target_asset'] if row['target_asset'] else "global"
-            
-            actual = 0
-            raw_change = 0
-            correlation = 0
-            data_key = ""
-
-            # Обучение на основе конкретного актива, указанного в прогнозе
-            if target == "oil" and 'oil_change' in raw_market_data:
-                data_key = 'oil_change'
-                raw_change = raw_market_data['oil_change']
-                correlation = 1
-            elif target == "gold" and 'gold_change' in raw_market_data:
-                data_key = 'gold_change'
-                raw_change = raw_market_data['gold_change']
-                correlation = 1
-            elif target == "btc" and 'btc_change' in raw_market_data:
-                data_key = 'btc_change'
-                raw_change = raw_market_data['btc_change']
-                correlation = -1
-            elif target == "nasdaq" and 'nasdaq_change' in raw_market_data:
-                data_key = 'nasdaq_change'
-                raw_change = raw_market_data['nasdaq_change']
-                correlation = -1
-            elif target == "sp500" and 'sp500_change' in raw_market_data:
-                data_key = 'sp500_change'
-                raw_change = raw_market_data['sp500_change']
-                correlation = -1
-            elif target == "soxs" and 'soxs_change' in raw_market_data:
-                data_key = 'soxs_change'
-                raw_change = raw_market_data['soxs_change']
-                correlation = 1
-            elif target == "vix" and 'vix_change' in raw_market_data:
-                data_key = 'vix_change'
-                raw_change = raw_market_data['vix_change']
-                correlation = 1
-            else: # "global" logic
-                vix_c = raw_market_data.get('vix_change', 0)
-                nasdaq_c = raw_market_data.get('nasdaq_change', 0)
-                if vix_c != 0:
-                    data_key = 'vix_change'
-                    raw_change = vix_c
-                    correlation = 1 # Риск = Рост VIX
-                else:
-                    data_key = 'nasdaq_change'
-                    raw_change = nasdaq_c
-                    correlation = -1 # Риск = Падение Nasdaq
-
-            # Пропускаем, если данные по этому конкретному активу устарели (рынок закрыт)
-            if not data_key or stale_map.get(data_key, True):
-                continue
-
-            # Пропускаем обучение, если движение цены ниже порога (рынок закрыт или шум).
-            if abs(raw_change) < config.LEARNING_THRESHOLD:
-                continue
-
-            # Если новость нейтральная (ниже порога NEUTRAL_SCORE_THRESHOLD), помечаем как resolved,
-            # но не считаем это ошибкой прогноза и не логируем в результат обучения.
-            if abs(score) < config.NEUTRAL_SCORE_THRESHOLD:
-                cursor.execute("UPDATE predictions SET resolved = 1 WHERE id = ?", (row['id'],))
-                logging.debug(f"Learning: Skipping low-score event {event_key} (Score {score:.1f} < Threshold {config.NEUTRAL_SCORE_THRESHOLD})")
-                continue
-
-            scaling = config.ASSET_SCALING_FACTORS.get(target, config.ASSET_SCALING_FACTORS["global"])
-            actual = min(abs(raw_change) * scaling, 100)
-            
-            # Проверка совпадения направления: (Score * Change * Correlation) > 0
-            is_correct = 1 if (score * raw_change * correlation) > 0 else 0
-            status_icon = "✅" if is_correct else "❌"
-            
-            direction_desc = "MATCH" if is_correct else "CONTRARY"
-            logging.info(f"Learning: {event_key} | {target} | {status_icon} | {direction_desc} | Score: {score:.1f} | Mkt: {raw_change:+.2f}%")
-            
-            # Накапливаем данные для агрегированного обучения (защита от переобучения)
-            error = actual - predicted
-            updates_by_key[event_key].append(error)
-            all_errors.append(error)
-
+            # Это исключает преждевременную оценку новостей, которые только что вышли.
             cursor.execute("""
-                UPDATE predictions
-                SET resolved = 1, actual_move = ?, is_correct = ?
-                WHERE id = ?
-            """, (actual, is_correct, row['id']))
+                SELECT * FROM predictions 
+                WHERE resolved = 0 AND timestamp < datetime('now', '-' || ? || ' hours')
+                ORDER BY timestamp DESC LIMIT 100
+            """, (config.MARKET_LOOKBACK_HOURS,))
+            rows = cursor.fetchall()
+            logging.info(f"🧠 Начало цикла обучения. Найдено кандидатов для обработки: {len(rows)}")
 
-        # 1. Агрегированное обновление весов (защита от "двойного" обучения на пачке новостей)
-        for e_key, errors in updates_by_key.items():
-            avg_err = sum(errors) / len(errors)
-            await update_weights(e_key, avg_err)
+            updates_by_key = defaultdict(list) # Для агрегации обновлений весов
+            all_errors = [] # Для калибровки глобального множителя
+            stale_map = raw_market_data.get('stale_map', {})
 
-        # 2. Калибровка глобального множителя (один раз за цикл на основе всей выборки)
-        if all_errors:
-            calibrate_multiplier(sum(all_errors) / len(all_errors))
-        conn.commit()
+            for row in rows:
+                event_key = row['event_key']
+                predicted = row['predicted_impact']
+                score = row['score']
+                target = row['target_asset'] if row['target_asset'] else "global"
+                
+                actual = 0
+                raw_change = 0
+                correlation = 0
+                data_key = ""
+
+                # Обучение на основе конкретного актива, указанного в прогнозе
+                if target == "oil" and 'oil_change' in raw_market_data:
+                    data_key = 'oil_change'
+                    raw_change = raw_market_data['oil_change']
+                    correlation = 1
+                elif target == "gold" and 'gold_change' in raw_market_data:
+                    data_key = 'gold_change'
+                    raw_change = raw_market_data['gold_change']
+                    correlation = 1
+                elif target == "btc" and 'btc_change' in raw_market_data:
+                    data_key = 'btc_change'
+                    raw_change = raw_market_data['btc_change']
+                    correlation = -1
+                elif target == "nasdaq" and 'nasdaq_change' in raw_market_data:
+                    data_key = 'nasdaq_change'
+                    raw_change = raw_market_data['nasdaq_change']
+                    correlation = -1
+                elif target == "sp500" and 'sp500_change' in raw_market_data:
+                    data_key = 'sp500_change'
+                    raw_change = raw_market_data['sp500_change']
+                    correlation = -1
+                elif target == "soxs" and 'soxs_change' in raw_market_data:
+                    data_key = 'soxs_change'
+                    raw_change = raw_market_data['soxs_change']
+                    correlation = 1
+                elif target == "vix" and 'vix_change' in raw_market_data:
+                    data_key = 'vix_change'
+                    raw_change = raw_market_data['vix_change']
+                    correlation = 1
+                else: # "global" logic
+                    vix_c = raw_market_data.get('vix_change', 0)
+                    nasdaq_c = raw_market_data.get('nasdaq_change', 0)
+                    if vix_c != 0:
+                        data_key = 'vix_change'
+                        raw_change = vix_c
+                        correlation = 1 # Риск = Рост VIX
+                    else:
+                        data_key = 'nasdaq_change'
+                        raw_change = nasdaq_c
+                        correlation = -1 # Риск = Падение Nasdaq
+
+                # Пропускаем, если данные по этому конкретному активу устарели (рынок закрыт)
+                if not data_key or stale_map.get(data_key, True):
+                    continue
+
+                # Пропускаем обучение, если движение цены ниже порога (рынок закрыт или шум).
+                if abs(raw_change) < config.LEARNING_THRESHOLD:
+                    continue
+
+                # Если новость нейтральная (ниже порога NEUTRAL_SCORE_THRESHOLD), помечаем как resolved,
+                # но не считаем это ошибкой прогноза и не логируем в результат обучения.
+                if abs(score) < config.NEUTRAL_SCORE_THRESHOLD:
+                    cursor.execute("UPDATE predictions SET resolved = 1 WHERE id = ?", (row['id'],))
+                    logging.debug(f"Learning: Skipping low-score event {event_key} (Score {score:.1f} < Threshold {config.NEUTRAL_SCORE_THRESHOLD})")
+                    continue
+
+                scaling = config.ASSET_SCALING_FACTORS.get(target, config.ASSET_SCALING_FACTORS["global"])
+                actual = min(abs(raw_change) * scaling, 100)
+                
+                # Проверка совпадения направления: (Score * Change * Correlation) > 0
+                is_correct = 1 if (score * raw_change * correlation) > 0 else 0
+                status_icon = "✅" if is_correct else "❌"
+                
+                direction_desc = "MATCH" if is_correct else "CONTRARY"
+                logging.info(f"Learning: {event_key} | {target} | {status_icon} | {direction_desc} | Score: {score:.1f} | Mkt: {raw_change:+.2f}%")
+                
+                # Накапливаем данные для агрегированного обучения (защита от переобучения)
+                error = actual - predicted
+                updates_by_key[event_key].append(error)
+                all_errors.append(error)
+
+                cursor.execute("""
+                    UPDATE predictions
+                    SET resolved = 1, actual_move = ?, is_correct = ?
+                    WHERE id = ?
+                """, (actual, is_correct, row['id']))
+
+            # 1. Агрегированное обновление весов (защита от "двойного" обучения на пачке новостей)
+            for e_key, errors in updates_by_key.items():
+                avg_err = sum(errors) / len(errors)
+                await update_weights(e_key, avg_err)
+
+            # 2. Калибровка глобального множителя (один раз за цикл на основе всей выборки)
+            if all_errors:
+                calibrate_multiplier(sum(all_errors) / len(all_errors))
+            conn.commit()
 
     save_state()
     logging.info(f"System settings saved. New IMPACT_MULTIPLIER: {global_impact_multiplier:.2f}")
@@ -951,48 +949,48 @@ async def cleanup_db():
     """
     async with db_lock:
         try:
-        global event_weights
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Получаем список каноничных ключей из конфига, которые НЕЛЬЗЯ удалять
-            tracked_keys = []
-            for k in config.TRACKED_KEYWORDS.keys():
-                key_parts = sorted(k.upper().replace(" ", "_").split("_"))
-                tracked_keys.append("_".join(key_parts))
-            placeholders = ', '.join(['?'] * len(tracked_keys))
+            global event_weights
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Получаем список каноничных ключей из конфига, которые НЕЛЬЗЯ удалять
+                tracked_keys = []
+                for k in config.TRACKED_KEYWORDS.keys():
+                    key_parts = sorted(k.upper().replace(" ", "_").split("_"))
+                    tracked_keys.append("_".join(key_parts))
+                placeholders = ', '.join(['?'] * len(tracked_keys))
 
-            # Удаляем старые события и прогнозы
-            cursor.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
-            cursor.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+                # Удаляем старые события и прогнозы
+                cursor.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+                cursor.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+                
+                # 1. Удаляем ключи с критически низким весом
+                cursor.execute("DELETE FROM weights WHERE weight <= ?", (config.MIN_WEIGHT_THRESHOLD,))
+                
+                # 2. Удаляем "забытые" ключи, которых нет в последних прогнозах и нет в TRACKED_KEYWORDS
+                cursor.execute(f"""
+                    DELETE FROM weights 
+                    WHERE event_key NOT IN (SELECT DISTINCT event_key FROM predictions)
+                    AND event_key NOT IN ({placeholders})
+                """, tracked_keys)
+                
+                deleted_weights = cursor.rowcount
+                
+                conn.commit()  # Завершаем транзакцию после удаления
             
-            # 1. Удаляем ключи с критически низким весом
-            cursor.execute("DELETE FROM weights WHERE weight <= ?", (config.MIN_WEIGHT_THRESHOLD,))
-            
-            # 2. Удаляем "забытые" ключи, которых нет в последних прогнозах и нет в TRACKED_KEYWORDS
-            cursor.execute(f"""
-                DELETE FROM weights 
-                WHERE event_key NOT IN (SELECT DISTINCT event_key FROM predictions)
-                AND event_key NOT IN ({placeholders})
-            """, tracked_keys)
-            
-            deleted_weights = cursor.rowcount
-            
-            conn.commit()  # Завершаем транзакцию после удаления
-        
-        # VACUUM должен выполняться вне транзакции
-        with get_db_connection() as conn:
-            conn.execute("PRAGMA journal_mode=DELETE") # Отключаем WAL для VACUUM
-            conn.execute("VACUUM")
-            conn.execute("PRAGMA journal_mode=WAL") # Возвращаем WAL
-            
-            # Обновляем веса в оперативной памяти после очистки БД
-            event_weights = load_weights()
-            
-            logging.info(f"--- База данных оптимизирована: удалены данные старше {config.RETENTION_DAYS} дней "
-                         f"и {deleted_weights} ключей с весом < {config.MIN_WEIGHT_THRESHOLD} ---")
-    except Exception as e:
-        logging.error(f"Ошибка при очистке БД: {e}")
+            # VACUUM должен выполняться вне транзакции
+            with get_db_connection() as conn:
+                conn.execute("PRAGMA journal_mode=DELETE") # Отключаем WAL для VACUUM
+                conn.execute("VACUUM")
+                conn.execute("PRAGMA journal_mode=WAL") # Возвращаем WAL
+                
+                # Обновляем веса в оперативной памяти после очистки БД
+                event_weights = load_weights()
+                
+                logging.info(f"--- База данных оптимизирована: удалены данные старше {config.RETENTION_DAYS} дней "
+                             f"и {deleted_weights} ключей с весом < {config.MIN_WEIGHT_THRESHOLD} ---")
+        except Exception as e:
+            logging.error(f"Ошибка при очистке БД: {e}")
 
 # =========================
 # MAIN LOOP
@@ -1199,23 +1197,23 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
 
         async with db_lock:
             try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                # Сохраняем событие (link UNIQUE защитит от полных дублей)
-                cursor.execute("""
-                    INSERT INTO events (title, link, score, event, nasdaq, sp500, oil, soxs, gold, btc, vix, fear_greed, slug, is_black_swan)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["sp500"], market["oil"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val, slug, 1 if is_black_swan else 0))
-                
-                for asset_name in target_assets:
+                with get_db_connection() as conn:
+                    cursor = conn.cursor()
+                    # Сохраняем событие (link UNIQUE защитит от полных дублей)
                     cursor.execute("""
-                        INSERT INTO predictions (event_key, score, predicted_impact, target_asset, resolved) 
-                        VALUES (?, ?, ?, ?, 0)
-                    """, (event_key, event_scores[event_key], prob, str(asset_name)))
-                conn.commit()
-        except sqlite3.IntegrityError:
-            logging.info(f"Новость уже обработана другой лентой (URL duplicate): {entry.title}")
-            continue
+                        INSERT INTO events (title, link, score, event, nasdaq, sp500, oil, soxs, gold, btc, vix, fear_greed, slug, is_black_swan)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["sp500"], market["oil"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val, slug, 1 if is_black_swan else 0))
+                    
+                    for asset_name in target_assets:
+                        cursor.execute("""
+                            INSERT INTO predictions (event_key, score, predicted_impact, target_asset, resolved) 
+                            VALUES (?, ?, ?, ?, 0)
+                        """, (event_key, event_scores[event_key], prob, str(asset_name)))
+                    conn.commit()
+            except sqlite3.IntegrityError:
+                logging.info(f"Новость уже обработана другой лентой (URL duplicate): {entry.title}")
+                continue
 
         # Отправляем уведомление, если прошли все фильтры и кулдаун
         if can_send_alert:
