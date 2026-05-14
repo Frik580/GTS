@@ -138,6 +138,11 @@ def init_model_pool():
 
 model_pool = init_model_pool()
 current_model_idx = 0
+# Локи для защиты глобального состояния
+state_lock = asyncio.Lock()
+scores_lock = asyncio.Lock()
+model_lock = asyncio.Lock()
+db_lock = asyncio.Lock()
 
 def get_active_model():
     return model_pool[current_model_idx]
@@ -151,7 +156,7 @@ logging.info(f"Пул моделей готов: {[m['name'] for m in model_pool
 # Храним время последнего обновления (затухания) для каждого ключа
 event_last_update = {}
 
-def apply_decay(key: str, is_market_active: bool) -> float:
+async def apply_decay(key: str, is_market_active: bool) -> float:
     """
     Применяет затухание к баллу ключа на основе времени, прошедшего с последнего обновления.
     Формула: Score = Score * (DecayFactor ^ (DeltaTime / Interval))
@@ -168,7 +173,8 @@ def apply_decay(key: str, is_market_active: bool) -> float:
     # Интервал, за который балл должен уменьшиться на decay_factor (из конфига это 180с)
     intervals_passed = delta_t / config.CHECK_INTERVAL
     
-    event_scores[key] *= (decay_factor ** intervals_passed)
+    async with scores_lock:
+        event_scores[key] *= (decay_factor ** intervals_passed)
     event_last_update[key] = now
     
     return event_scores[key]
@@ -362,13 +368,15 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
     Do not include any markdown formatting or explanations.
     """
 
-    global current_model_idx
-
     for attempt in range(max_retries):
         model_tried_count = 0
         while model_tried_count < len(model_pool): # Внутренний цикл для перебора моделей в пуле
+            async with model_lock:
+                global current_model_idx
+                active_idx = current_model_idx
+            
             try:
-                active = model_pool[current_model_idx]
+                active = model_pool[active_idx]
                 res_text = ""
 
                 if active.get("provider") == "openrouter":
@@ -412,7 +420,8 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                     # Это не 429, но и не успешный ответ. Считаем, что модель не справилась.
                     logging.warning(f"Модель {active['name']} заблокировала ответ по безопасности. Переключаюсь на следующую.")
                     model_tried_count += 1
-                    current_model_idx = (current_model_idx + 1) % len(model_pool)
+                    async with model_lock:
+                        current_model_idx = (current_model_idx + 1) % len(model_pool)
                     continue # Попробуем следующую модель в пуле немедленно
 
                 if active.get("provider") == "gemini":
@@ -426,7 +435,8 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                     logging.warning(f"Модель {active['name']} вернула невалидный JSON. Получено: {res_text[:100]}...")
                     # Это не 429, но и не успешный ответ. Считаем, что модель не справилась.
                     model_tried_count += 1
-                    current_model_idx = (current_model_idx + 1) % len(model_pool)
+                    async with model_lock:
+                        current_model_idx = (current_model_idx + 1) % len(model_pool)
                     continue # Попробуем следующую модель в пуле немедленно
 
                 data = json.loads(res_text[start:end])
@@ -436,8 +446,9 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                 err_msg = str(e).lower()
                 # Обработка 404 (модель не найдена) и 429 (лимиты/таймауты)
                 if any(x in err_msg for x in ["429", "404", "quota", "limit", "timeout"]):
-                    old_name = model_pool[current_model_idx]["name"]
-                    current_model_idx = (current_model_idx + 1) % len(model_pool)
+                    old_name = model_pool[active_idx]["name"]
+                    async with model_lock:
+                        current_model_idx = (current_model_idx + 1) % len(model_pool)
                     model_tried_count += 1
                     logging.warning(f"⚠️ Модель {old_name} временно недоступна ({err_msg}). Переключаюсь на {model_pool[current_model_idx]['name']}...")
                     if model_tried_count == len(model_pool):
@@ -448,7 +459,8 @@ async def ai_analyze(text: str, session: Optional[aiohttp.ClientSession] = None,
                     # Логируем, переключаемся на следующую модель и пробуем снова в этом же цикле.
                     logging.error(f"⚠️ Ошибка модели {active['name']}: {e}")
                     model_tried_count += 1
-                    current_model_idx = (current_model_idx + 1) % len(model_pool)
+                    async with model_lock:
+                        current_model_idx = (current_model_idx + 1) % len(model_pool)
                     continue # Пробуем следующую модель в пуле немедленно
         
         # Если весь пул моделей исчерпан (все вернули 429 или ошибки)
@@ -555,7 +567,7 @@ def make_event_key(entities: List[str]) -> str:
     if not result_ents:
         return "GLOBAL"
 
-    return "_".join(result_ents)
+    return "_".join(result_ents).strip().upper()
 
 # =========================
 # MARKET SIGNAL ENGINE
@@ -578,7 +590,7 @@ def market_signals(score: float, event_key: str) -> Dict[str, str]:
 # WEIGHT / IMPACT MODEL
 # =========================
 
-def get_weight(event_key: str) -> float:
+async def get_weight(event_key: str) -> float:
     """
     Возвращает вес для ключа. Если точного ключа нет, 
     ищет максимальный вес среди отдельных сущностей в этом ключе.
@@ -670,7 +682,7 @@ def should_send(key: str, current_score: float, is_black_swan: bool = False) -> 
 # LEARNING SYSTEM
 # =========================
 
-def update_weights(event_key: str, error: float):
+async def update_weights(event_key: str, error: float):
     """Обновляет веса событий на основе ошибки прогноза."""
     adjustment = learning_rate * error * 0.01
 
@@ -730,7 +742,7 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
         "^GSPC": "sp500_change",
         "CL=F": "oil_change",
         "^VIX": "vix_change",
-        "GC=F": "gold_change",
+        "GLD": "gold_change",
         "BTC-USD": "btc_change",
         "SOXS": "soxs_change",
         "SMH": "smh_change",
@@ -811,7 +823,11 @@ async def learning_cycle(session: aiohttp.ClientSession):
         logging.warning("Skipping learning cycle: No market data available.")
         return
 
-    with get_db_connection() as conn:
+    loop = asyncio.get_event_loop()
+    async with db_lock:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            # Берем только неразрешенные прогнозы, созданные более MARKET_LOOKBACK_HOURS назад.
         cursor = conn.cursor()
         # Берем только неразрешенные прогнозы, созданные более MARKET_LOOKBACK_HOURS назад.
         # Это исключает преждевременную оценку новостей, которые только что вышли.
@@ -918,7 +934,7 @@ async def learning_cycle(session: aiohttp.ClientSession):
         # 1. Агрегированное обновление весов (защита от "двойного" обучения на пачке новостей)
         for e_key, errors in updates_by_key.items():
             avg_err = sum(errors) / len(errors)
-            update_weights(e_key, avg_err)
+            await update_weights(e_key, avg_err)
 
         # 2. Калибровка глобального множителя (один раз за цикл на основе всей выборки)
         if all_errors:
@@ -928,12 +944,13 @@ async def learning_cycle(session: aiohttp.ClientSession):
     save_state()
     logging.info(f"System settings saved. New IMPACT_MULTIPLIER: {global_impact_multiplier:.2f}")
 
-def cleanup_db():
+async def cleanup_db():
     """
     Удаляет записи из БД, которые старше RETENTION_DAYS, чтобы предотвратить разрастание файла.
     Также удаляет ключи из таблицы весов, значение которых ниже MIN_WEIGHT_THRESHOLD.
     """
-    try:
+    async with db_lock:
+        try:
         global event_weights
         with get_db_connection() as conn:
             cursor = conn.cursor()
@@ -962,12 +979,12 @@ def cleanup_db():
             deleted_weights = cursor.rowcount
             
             conn.commit()  # Завершаем транзакцию после удаления
-            
-            # VACUUM пересобирает базу, освобождая место на диске
-            old_isolation = conn.isolation_level
-            conn.isolation_level = None  # Включаем autocommit для VACUUM
+        
+        # VACUUM должен выполняться вне транзакции
+        with get_db_connection() as conn:
+            conn.execute("PRAGMA journal_mode=DELETE") # Отключаем WAL для VACUUM
             conn.execute("VACUUM")
-            conn.isolation_level = old_isolation
+            conn.execute("PRAGMA journal_mode=WAL") # Возвращаем WAL
             
             # Обновляем веса в оперативной памяти после очистки БД
             event_weights = load_weights()
@@ -1052,31 +1069,31 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         original_title = entry.title
         cleaned_t = clean_title(original_title)
 
-        # 1. Проверка по URL (мгновенно из памяти)
-        if entry.link in processed_urls:
-            continue
-            
-        # 3. Проверка в БД за последние 3 часа (на случай если кэш в памяти пуст)
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            # Сначала получаем список последних заголовков
-            cursor.execute("SELECT title FROM events WHERE timestamp > datetime('now', '-3 hours') ORDER BY timestamp DESC LIMIT 20")
-            db_titles = [row['title'] for row in cursor.fetchall()]
-            if is_fuzzy_duplicate(original_title, db_titles, config.DUPLICATE_TITLE_THRESHOLD):
+        async with state_lock:
+            # 1. Проверка по URL (мгновенно из памяти)
+            if entry.link in processed_urls:
                 continue
             
-        # 2. Нечеткая проверка заголовка (предотвращает дубли с разным текстом)
-        if is_fuzzy_duplicate(entry.title, processed_titles, config.DUPLICATE_TITLE_THRESHOLD):
-            logging.debug(f"Обнаружен нечеткий дубликат заголовка: {entry.title}")
-            processed_urls.add(entry.link)
-            continue
-
-        # Резервируем новость в памяти ПЕРЕД запуском AI (устранение race condition)
-        if entry.link not in processed_urls:
+            # 2. Нечеткая проверка заголовка (предотвращает дубли с разным текстом)
+            if is_fuzzy_duplicate(entry.title, processed_titles, config.DUPLICATE_TITLE_THRESHOLD):
+                logging.debug(f"Обнаружен нечеткий дубликат заголовка: {entry.title}")
+                processed_urls.add(entry.link)
+                continue
+            
+            # Резервируем новость в памяти ПЕРЕД запуском AI
             processed_urls.add(entry.link)
             processed_titles.append(entry.title)
             if len(processed_titles) > 1000: # Увеличим кэш до 1000 для надежности
                 processed_titles.pop(0)
+
+        # 3. Проверка в БД за последние 3 часа
+        async with db_lock:
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT title FROM events WHERE timestamp > datetime('now', '-3 hours') ORDER BY timestamp DESC LIMIT 20")
+                db_titles = [row['title'] for row in cursor.fetchall()]
+                if is_fuzzy_duplicate(original_title, db_titles, config.DUPLICATE_TITLE_THRESHOLD):
+                    continue
 
         text = entry.title + " " + entry.get("summary", "")
         analysis = await ai_analyze(text, session=session)
@@ -1088,16 +1105,17 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
 
         # 4. Семантическая проверка дубликатов по slug (AI-generated)
         # Если этот 'смысл' новости уже встречался недавно, пропускаем
-        if slug and slug in processed_slugs:
-            if time.time() - processed_slugs[slug] < config.MAX_NEWS_AGE_HOURS * 3600:
-                logging.info(f"Семантический дубликат пропущен: {slug} | {entry.title}")
-                continue
-        
-        if slug:
-            processed_slugs[slug] = time.time()
-            if len(processed_slugs) > 1000: # Прунинг кэша
-                first_key = next(iter(processed_slugs))
-                del processed_slugs[first_key]
+        async with state_lock:
+            if slug and slug in processed_slugs:
+                if time.time() - processed_slugs[slug] < config.MAX_NEWS_AGE_HOURS * 3600:
+                    logging.info(f"Семантический дубликат пропущен: {slug} | {entry.title}")
+                    continue
+            
+            if slug:
+                processed_slugs[slug] = time.time()
+                if len(processed_slugs) > 1000: # Прунинг кэша
+                    first_key = next(iter(processed_slugs))
+                    del processed_slugs[first_key]
 
         # Определение рейтинга доверия источнику новости
         # Google News RSS обычно указывает источник в конце заголовка через дефис или в поле source
@@ -1126,7 +1144,7 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         event_key = make_event_key(entities)
 
         # Применяем затухание к существующему баллу перед добавлением новой новости
-        apply_decay(event_key, is_market_active)
+        await apply_decay(event_key, is_market_active)
 
         # Фильтр значимости: теперь в базу попадают только новости с баллом >= NEUTRAL_SCORE_THRESHOLD (2.5)
         if abs(score) < config.NEUTRAL_SCORE_THRESHOLD:
@@ -1134,15 +1152,16 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             continue
 
         # МЕХАНИЗМ ПОЛНОГО РАЗВОРОТА (PIVOT): Если новость сильная и против тренда — забываем историю
-        if event_scores[event_key] != 0 and (event_scores[event_key] * score) < 0:
-            if abs(score) >= config.PIVOT_THRESHOLD:
-                logging.info(f"💥 FULL PIVOT for {event_key}: Resetting accumulated score ({event_scores[event_key]:.2f}) due to high-impact opposite news ({score:+.2f})")
-                event_scores[event_key] = 0
+        async with scores_lock:
+            if event_scores[event_key] != 0 and (event_scores[event_key] * score) < 0:
+                if abs(score) >= config.PIVOT_THRESHOLD:
+                    logging.info(f"💥 FULL PIVOT for {event_key}: Resetting accumulated score ({event_scores[event_key]:.2f}) due to high-impact opposite news ({score:+.2f})")
+                    event_scores[event_key] = 0
 
-        # Применяем вес ключа (например, 0.6 для GOLD) и накапливаем балл.
-        # Фильтр NEUTRAL_SCORE_THRESHOLD уже гарантировал значимость новости выше.
-        weighted_score = score * get_weight(event_key)
-        event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + weighted_score))
+            # Применяем вес ключа и накапливаем балл.
+            weight = await get_weight(event_key)
+            weighted_score = score * weight
+            event_scores[event_key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, event_scores[event_key] + weighted_score))
 
         market = market_signals(event_scores[event_key], event_key)
         prob = predict_impact(event_scores[event_key], event_key) 
@@ -1175,9 +1194,14 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         if not target_assets:
             target_assets = ["global"]
 
-        try:
+        # Проверяем анти-спам ДО записи в базу, чтобы не плодить дубли
+        can_send_alert = should_send(event_key, score, is_black_swan)
+
+        async with db_lock:
+            try:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
+                # Сохраняем событие (link UNIQUE защитит от полных дублей)
                 cursor.execute("""
                     INSERT INTO events (title, link, score, event, nasdaq, sp500, oil, soxs, gold, btc, vix, fear_greed, slug, is_black_swan)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1190,12 +1214,11 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                     """, (event_key, event_scores[event_key], prob, str(asset_name)))
                 conn.commit()
         except sqlite3.IntegrityError:
-            logging.info(f"Новость уже обработана другой лентой: {entry.title}")
+            logging.info(f"Новость уже обработана другой лентой (URL duplicate): {entry.title}")
             continue
 
-        # Отправляем уведомление, если сработал кулдаун анти-спама.
-        # Условие is_significant теперь выполняется автоматически для всех новостей в базе.
-        if should_send(event_key, score, is_black_swan):
+        # Отправляем уведомление, если прошли все фильтры и кулдаун
+        if can_send_alert:
             if event_key == "BTC" and abs(market_context.get("btc_change", 0)) < config.BTC_MIN_VOLATILITY_FOR_ALERT:
                 continue
             
@@ -1271,7 +1294,7 @@ async def main():
             # Принудительно обновляем затухание для всех ключей в начале цикла,
             # чтобы Dashboard видел актуальные "остывшие" значения.
             for key in list(event_scores.keys()):
-                apply_decay(key, is_market_active)
+                await apply_decay(key, is_market_active)
 
             fng_val = current_market_data.get("fng_val", 50)
             fng_label = current_market_data.get("fng_label", "Neutral")
@@ -1288,7 +1311,7 @@ async def main():
                 last_learning_run = current_time
 
             if current_time - last_cleanup_run >= config.CLEANUP_INTERVAL:
-                cleanup_db()
+                await cleanup_db()
                 last_cleanup_run = current_time
 
             await asyncio.sleep(config.CHECK_INTERVAL)

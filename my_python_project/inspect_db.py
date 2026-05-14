@@ -1,6 +1,73 @@
 import pandas as pd
 import config
 from db import get_db_connection, init_db
+import yfinance as yf
+from datetime import datetime, timedelta
+
+def calculate_hbm_index_value():
+    """
+    Calculates the HBM Index value based on defined components and weights.
+    Returns the current index value and its daily percentage change.
+    """
+    all_tickers = []
+    for segment, tickers in config.HBM_INDEX_COMPONENTS.items():
+        all_tickers.extend(tickers)
+
+    if not all_tickers:
+        return None, None
+
+    # Fetch data for the last few days to ensure we have at least 2 days of data
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=365) # Fetch 1 year of data for robust index calculation
+
+    try:
+        data = yf.download(all_tickers, start=start_date, end=end_date, progress=False)
+        if data.empty:
+            print("⚠️ HBM Index: No data fetched from yfinance.")
+            return None, None
+    except Exception as e:
+        print(f"⚠️ HBM Index: Error fetching data from yfinance: {e}")
+        return None, None
+
+    # Extract 'Close' prices. yfinance returns MultiIndex for multiple tickers.
+    close_prices = data['Close'] if isinstance(data.columns, pd.MultiIndex) else data[['Close']]
+
+    # Calculate daily returns for each stock
+    daily_returns = close_prices.pct_change().dropna()
+
+    if daily_returns.empty:
+        print("⚠️ HBM Index: Not enough data to calculate daily returns.")
+        return None, None
+
+    # Calculate weighted daily return for the HBM Index for each day
+    index_returns_series = pd.Series(0.0, index=daily_returns.index)
+
+    for segment, tickers in config.HBM_INDEX_COMPONENTS.items():
+        segment_weight = config.HBM_INDEX_SEGMENT_WEIGHTS.get(segment, 0.0)
+        if segment_weight == 0:
+            continue
+        num_stocks_in_segment = len(tickers)
+        if num_stocks_in_segment == 0:
+            continue
+        stock_weight_in_segment = 1.0 / num_stocks_in_segment
+
+        for ticker in tickers:
+            if ticker in daily_returns.columns:
+                index_returns_series += segment_weight * stock_weight_in_segment * daily_returns[ticker].fillna(0) # Fillna to handle missing daily returns for some stocks
+
+    # Calculate the cumulative index value, starting from 100
+    base_index_value = 100.0
+    cumulative_index = (1 + index_returns_series).cumprod() * base_index_value
+
+    if cumulative_index.empty:
+        return base_index_value, 0.0 # Return base and 0 change if no cumulative data
+
+    current_hbm_index = cumulative_index.iloc[-1]
+    
+    # Daily change is the last calculated weighted return
+    daily_change_percent = index_returns_series.iloc[-1] * 100
+
+    return current_hbm_index, daily_change_percent
 
 def inspect_gts():
     # Настраиваем Pandas, чтобы он не скрывал колонки и показывал текст полностью
@@ -105,28 +172,50 @@ def inspect_gts():
         # Считаем общее количество обработанных записей (включая нейтральные)
         all_resolved = pd.read_sql("SELECT COUNT(*) as count FROM predictions WHERE resolved = 1", conn).iloc[0]['count']
 
-        # Считаем статистику только по тем новостям, которые выше порога шума
-        query = f"SELECT COUNT(*) as resolved, AVG(actual_move) as avg_move, SUM(is_correct) as correct FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm'"
-        resolved_df = pd.read_sql(query, conn)
+        # Загружаем все значимые resolved прогнозы для детального анализа трендов
+        query = f"SELECT is_correct, actual_move FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm' ORDER BY timestamp ASC"
+        df_sig = pd.read_sql(query, conn)
 
         cursor = conn.cursor()
         cursor.execute("SELECT value FROM settings WHERE key = 'impact_multiplier'")
         curr_mult = cursor.fetchone()
         multiplier_val = curr_mult[0] if curr_mult else config.IMPACT_MULTIPLIER
-        
-        trained_count = resolved_df['resolved'].iloc[0]
-        avg_move = resolved_df['avg_move'].iloc[0]
-        avg_move_display = float(avg_move) if avg_move is not None else 0.0
-        correct_count = resolved_df['correct'].iloc[0] if resolved_df['correct'].iloc[0] is not None else 0
-        win_rate = (correct_count / trained_count * 100) if trained_count > 0 else 0
 
         print(f"Всего прогнозов в базе: {total}")
         print(f"Всего обработано (resolved): {all_resolved}")
-        print(f"Прошли обучение (значимые): {trained_count}")
-        print(f"Верных прогнозов (✅): {correct_count}")
-        print(f"Точность (Win Rate): {win_rate:.1f}%")
-        print(f"Текущий множитель влияния (Multiplier): {multiplier_val:.4f}")
-        print(f"Среднее реальное движение: {avg_move_display:.2f}")
+
+        if not df_sig.empty:
+            trained_count = len(df_sig)
+            avg_move_total = df_sig['actual_move'].mean()
+            correct_count = df_sig['is_correct'].sum()
+            win_rate_total = (correct_count / trained_count * 100)
+            
+            # Считаем "недавние" показатели (последние 20 значимых прогнозов) для выявления тренда
+            recent_df = df_sig.tail(20)
+            recent_count = len(recent_df)
+            win_rate_recent = (recent_df['is_correct'].sum() / recent_count * 100)
+            avg_move_recent = recent_df['actual_move'].mean()
+            
+            wr_delta = win_rate_recent - win_rate_total
+            am_delta = avg_move_recent - avg_move_total
+            mult_delta = multiplier_val - config.IMPACT_MULTIPLIER
+
+            print(f"Прошли обучение (значимые): {trained_count}")
+            print(f"Верных прогнозов (✅): {correct_count}")
+            print(f"Точность (Win Rate): {win_rate_total:.1f}% ({wr_delta:+.1f}% за последние 20)")
+            print(f"Текущий множитель влияния (Multiplier): {multiplier_val:.4f} ({mult_delta:+.4f} к базе)")
+            print(f"Среднее реальное движение: {avg_move_total:.2f} ({am_delta:+.2f} тренд)")
+        else:
+            print("Недостаточно данных для расчета статистики обучения.")
+
+        # HBM Index
+        hbm_index_val, hbm_daily_change = calculate_hbm_index_value()
+        if hbm_index_val is not None:
+            print(f"\n--- HBM Index ---")
+            print(f"Current HBM Index Value: {hbm_index_val:.2f}")
+            print(f"Daily Change: {hbm_daily_change:+.2f}%")
+        else:
+            print("\n--- HBM Index: Could not calculate ---")
 
 if __name__ == "__main__":
     inspect_gts()
