@@ -6,7 +6,9 @@ import time
 import json
 import asyncio
 import aiohttp
+import math
 from google import genai
+import pandas as pd
 from difflib import SequenceMatcher
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
@@ -31,12 +33,6 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-
-# Полная блокировка сообщения про AFC через глобальный фильтр
-# logging.getLogger().addFilter(lambda record: "AFC is enabled" not in record.getMessage())
-
-# logging.getLogger("google").setLevel(logging.WARNING)
-# logging.getLogger("absl").setLevel(logging.WARNING)
 
 # Пул потоков для синхронных библиотек (feedparser, yfinance)
 sync_executor = ThreadPoolExecutor(max_workers=5)
@@ -112,12 +108,10 @@ def init_model_pool():
         if config.OPENROUTER_API_KEY:
             or_models = [
                 {"name": "nvidia/nemotron-3-super-120b-a12b:free", "supports_json": True, "provider": "openrouter"},
-                # {"name": "deepseek/deepseek-r1:free", "supports_json": True, "provider": "openrouter"},
-                # {"name": "google/gemma-3-27b-it:free", "supports_json": True, "provider": "openrouter"},
                 {"name": "openai/gpt-oss-120b:free", "supports_json": True, "provider": "openrouter"},
-                {"name": "google/gemini-2.0-flash-lite-preview-02-05:free", "supports_json": True, "provider": "openrouter"},
-                # {"name": "qwen/qwen-2.5-72b-instruct:free", "supports_json": True, "provider": "openrouter"},
-                # {"name": "mistralai/mistral-7b-instruct:free", "supports_json": True, "provider": "openrouter"},
+                {"name": "deepseek/deepseek-r1:free", "supports_json": False, "provider": "openrouter"},
+                {"name": "meta-llama/llama-3.3-70b-instruct:free", "supports_json": False, "provider": "openrouter"},
+                {"name": "openrouter/free", "supports_json": False, "provider": "openrouter"}
             ]
             for m in or_models:
                 pool.append(m)
@@ -164,6 +158,7 @@ class GTSStateManager:
         self.last_update = {}
         self.urls = OrderedDict()  # LRU кэш для URL
         self.titles = OrderedDict() # LRU кэш для заголовков (нечеткий поиск)
+        self.embeddings = OrderedDict() # LRU кэш для векторных эмбеддингов
         self.slugs = OrderedDict()  # LRU кэш для AI-тегов событий
         self.metrics = Counter()
         self.ai_timings = []
@@ -288,6 +283,7 @@ class GTSStateManager:
         while len(self.urls) > 2000: self.urls.popitem(last=False)
         while len(self.titles) > 1000: self.titles.popitem(last=False)
         while len(self.slugs) > 1000: self.slugs.popitem(last=False)
+        while len(self.embeddings) > 500: self.embeddings.popitem(last=False)
 
     def is_url_processed(self, url: str) -> bool:
         if url in self.urls:
@@ -295,11 +291,13 @@ class GTSStateManager:
             return True
         return False
 
-    def add_url(self, url: str, title: str):
+    def add_url(self, url: str, title: str, embedding: Optional[List[float]] = None):
         self.urls[url] = True
         self.urls.move_to_end(url)
         self.titles[title] = True
         self.titles.move_to_end(title)
+        if embedding:
+            self.embeddings[title] = embedding
         self._prune_caches()
 
     def log_metrics(self):
@@ -366,7 +364,69 @@ def _get_fallback_entity_search_map() -> Dict[str, str]:
 
 fallback_entity_map = _get_fallback_entity_search_map()
 
-async def ai_analyze(text: str, rotator: ModelRotator, session: Optional[aiohttp.ClientSession] = None, max_retries: int = 3) -> Tuple[Optional[float], Optional[str], Optional[List[str]], Optional[str], bool, str]:
+async def get_embedding(text: str, rotator: ModelRotator, session: Optional[aiohttp.ClientSession] = None) -> Optional[List[float]]:
+    """Получает векторное представление текста через API с автоматическим фоллбеком."""
+    embedding = None
+
+    # 1. Попытка через Gemini
+    if config.EMBEDDING_PROVIDER == "gemini":
+        try:
+            res = await client.aio.models.embed_content(
+                model=config.EMBEDDING_MODEL,
+                contents=text
+            )
+            if res and res.embeddings:
+                embedding = res.embeddings[0].values
+                return embedding
+        except Exception as e:
+            err_str = str(e).lower()
+            if "429" in err_str or "quota" in err_str:
+                logging.warning("⚠️ Gemini Embedding Rate Limit (429). Попытка фоллбека на OpenRouter...")
+            else:
+                logging.warning(f"⚠️ Ошибка эмбеддинга Gemini: {e}")
+    
+    # 2. Попытка через OpenRouter (как основной или как фоллбек для Gemini)
+    if embedding is None and config.OPENROUTER_API_KEY:
+        # Если мы попали сюда как фоллбек для Gemini, нам нужно привести имя модели к формату OpenRouter
+        or_model = config.EMBEDDING_MODEL
+        if "models/" in or_model:
+            or_model = or_model.replace("models/", "google/")
+
+        s = session if session else aiohttp.ClientSession()
+        try:
+            async with s.post(
+                "https://openrouter.ai/api/v1/embeddings",
+                headers={"Authorization": f"Bearer {config.OPENROUTER_API_KEY}"},
+                json={
+                    "model": or_model,
+                    "input": text
+                },
+                timeout=15
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if 'data' in data and len(data['data']) > 0:
+                        logging.info(f"✅ Эмбеддинг успешно получен через OpenRouter (Model: {or_model})")
+                        return data['data'][0]['embedding']
+                else:
+                    logging.warning(f"⚠️ OpenRouter Embeddings Error: {resp.status}")
+        except Exception as e:
+            logging.warning(f"⚠️ Ошибка эмбеддинга OpenRouter: {e}")
+        finally:
+            if not session: await s.close()
+            
+    return embedding
+
+def cosine_similarity(v1: List[float], v2: List[float]) -> float:
+    """Вычисляет косинусное сходство между двумя векторами."""
+    dot_product = sum(a * b for a, b in zip(v1, v2))
+    magnitude1 = math.sqrt(sum(a * a for a in v1))
+    magnitude2 = math.sqrt(sum(b * b for b in v2))
+    if not magnitude1 or not magnitude2:
+        return 0.0
+    return dot_product / (magnitude1 * magnitude2)
+
+async def ai_analyze(text: str, rotator: ModelRotator, session: Optional[aiohttp.ClientSession] = None, max_retries: int = 3) -> Tuple[Optional[float], Optional[str], Optional[List[str]], Optional[str], bool, str, float]:
     """
     Uses Gemini AI to perform deep sentiment analysis and NER.
     """
@@ -389,7 +449,8 @@ async def ai_analyze(text: str, rotator: ModelRotator, session: Optional[aiohttp
       "event_type": "military" | "economic" | "diplomatic" | "neutral" | "tech",
       "entities": ["list of countries, companies or key regions"],
       "slug": "short_snake_case_event_id (2-4 words). Use the same slug for different articles reporting the same core event (e.g., 'korea_ai_tax_impact').",
-      "is_black_swan": boolean (True ONLY for extreme, unpredictable, market-shaking rarities like 9/11, sudden wars, or total structural collapses)
+      "is_black_swan": boolean (True ONLY for extreme, unpredictable, market-shaking rarities like 9/11, sudden wars, or total structural collapses),
+      "confidence": float (0.0 to 1.0, reflecting your certainty about the impact and entity identification)
     }}
     Do not include any markdown formatting or explanations.
     """
@@ -464,7 +525,8 @@ async def ai_analyze(text: str, rotator: ModelRotator, session: Optional[aiohttp
                 
                 duration = time.time() - start_time
                 state.ai_timings.append(duration)
-                return float(data.get("score", 0)), data.get("event_type", "neutral"), data.get("entities", []), data.get("slug"), bool(data.get("is_black_swan", False)), active["name"]
+                confidence = float(data.get("confidence", 1.0))
+                return float(data.get("score", 0)), data.get("event_type", "neutral"), data.get("entities", []), data.get("slug"), bool(data.get("is_black_swan", False)), active["name"], confidence
 
             except Exception as e:
                 err_msg = str(e).lower()
@@ -506,10 +568,10 @@ async def ai_analyze(text: str, rotator: ModelRotator, session: Optional[aiohttp
 
     # Если это не критично и сущности не найдены — лучше пропустить анализ, чем гадать
     if not found_entities and score == 0:
-        return None, None, None, None, False, "No Relevance"
+        return None, None, None, None, False, "No Relevance", 0.0
     
     slug = "_".join([e.lower() for e in found_entities[:2]]) if found_entities else "general_market"
-    return score, "neutral", found_entities, slug, False, "Fallback (Regex)"
+    return score, "neutral", found_entities, slug, False, "Fallback (Regex)", 0.5
 
 # =========================
 # EVENT ENGINE
@@ -613,9 +675,9 @@ def market_signals(score: float, event_key: str) -> Dict[str, str]:
 # WEIGHT / IMPACT MODEL
 # =========================
 
-def predict_impact(score: float, state: GTSStateManager) -> float:
-    # Вес уже применен в event_scores, здесь используем только глобальный множитель
-    return min(abs(score) * state.multiplier, 100)
+def predict_impact(score: float, state: GTSStateManager, confidence: float = 1.0) -> float:
+    # Применяем уверенность модели к финальному прогнозу влияния
+    return min(abs(score) * state.multiplier * confidence, 100)
 
 # =========================
 # SIGNAL ENGINE
@@ -751,28 +813,43 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
     stale_map = {}
     last_bar_time = 0
     try:
+        # Проверка на будущую дату в системе (частая причина ошибок yfinance 'possibly delisted')
+        if datetime.now().year > 2026: # Обновлено до текущего года
+            logging.warning(f"⚠️ ВНИМАНИЕ: Системное время ({datetime.now().year}) может быть некорректным. Yahoo Finance не сможет найти данные для будущего периода.")
+
         # yfinance синхронный, запускаем в экзекуторе
         loop = asyncio.get_event_loop()
+        # Используем period="5d" вместо "1wk" для 15м данных — это надежнее для большинства активов
         all_data = await loop.run_in_executor(
             sync_executor, 
-            lambda: yf.download(list(tickers_to_fetch.keys()), period="1wk", interval="15m", progress=False)
+            lambda: yf.download(list(tickers_to_fetch.keys()), period="5d", interval="15m", progress=False)
         )
         
-        if all_data.empty or 'Close' not in all_data.columns:
+        if all_data.empty:
             logging.error("Yahoo Finance returned no data. Check internet connection and system clock.")
             return {}
 
         lookback = config.MARKET_LOOKBACK_HOURS
 
-        # Кэшируем доступ к ценам закрытия для оптимизации
-        close_prices = all_data['Close']
+        # Безопасное извлечение цен закрытия (учитываем MultiIndex для нескольких тикеров)
+        if isinstance(all_data.columns, pd.MultiIndex):
+            if 'Close' in all_data.columns.levels[0]:
+                close_prices = all_data['Close']
+            else:
+                # Попытка извлечь Close через кросс-секцию, если структура иная
+                close_prices = all_data.xs('Close', axis=1, level=0)
+        else:
+            # Если вернулся только один тикер (например, только BTC-USD)
+            # Создаем DataFrame с именем тикера в колонке для совместимости с циклом
+            ticker_returned = list(tickers_to_fetch.keys())[0] 
+            close_prices = all_data[['Close']].rename(columns={'Close': ticker_returned})
 
         market_data['price_history'] = close_prices # Передаем историю цен для обучения
 
         for ticker_symbol, data_key in tickers_to_fetch.items():
             try:
                 # Извлекаем данные для конкретного тикера, если они есть в ответе
-                if ticker_symbol in close_prices:
+                if ticker_symbol in close_prices.columns:
                     ticker_data = close_prices[ticker_symbol].dropna()
                     # Нам нужно как минимум lookback + 1 свечей, чтобы вычислить разницу
                     if len(ticker_data) > lookback:
@@ -1020,9 +1097,13 @@ def clean_title(title: str) -> str:
     """Удаляет мусор из заголовка (названия источников, лишние знаки)."""
     # Удаляем источники в конце: "Title - Reuters" или "Title | CNBC"
     cleaned = re.sub(r'\s+[-|]\s+.*$', '', title)
-    # Удаляем пунктуацию и нормализуем пробелы для лучшего нечеткого сравнения
+    # Список стоп-слов, которые часто меняются в заголовках об одном событии
+    stop_words = {'reports', 'hit', 'triggers', 'massive', 'says', 'amid', 'following', 'after', 'due', 'warns', 'shows'}
+    # Удаляем пунктуацию
     cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
-    return " ".join(cleaned.lower().split())
+    # Очищаем от стоп-слов и нормализуем пробелы
+    words = [w for w in cleaned.lower().split() if w not in stop_words]
+    return " ".join(words)
 
 def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: float) -> bool:
     """Проверяет заголовок на схожесть с уже существующими в кэше."""
@@ -1032,8 +1113,23 @@ def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: fl
     new_clean = clean_title(new_title)
     for title in existing_titles:
         # Сравниваем очищенные версии
-        if SequenceMatcher(None, new_clean, clean_title(title)).ratio() > threshold:
+        ratio = SequenceMatcher(None, new_clean, clean_title(title)).ratio()
+        if ratio > threshold:
+            logging.info(f"🚫 Fuzzy duplicate ({ratio:.2f}): '{new_title}' ≈ '{title}'")
             return True
+    return False
+
+async def is_semantic_duplicate(new_title: str, new_embedding: List[float], state: GTSStateManager) -> bool:
+    """Сравнивает эмбеддинг новой новости с кэшем эмбеддингов."""
+    if not new_embedding:
+        return False
+    
+    async with state.lock:
+        for title, cached_emb in state.embeddings.items():
+            similarity = cosine_similarity(new_embedding, cached_emb)
+            if similarity > config.SEMANTIC_DUPLICATE_THRESHOLD:
+                logging.info(f"🔍 Семантический дубликат ({similarity:.2f}): '{new_title}' ≈ '{title}'")
+                return True
     return False
 
 async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop, market_data: Dict[str, Any]):
@@ -1090,17 +1186,36 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
 
         async with state.lock: # Используем лок из state manager
             if state.is_url_processed(entry.link):
+                logging.info(f"🔗 URL duplicate skipped: {entry.link}")
                 state.metrics["news_duplicate_url"] += 1
                 continue
-            if is_fuzzy_duplicate(entry.title, list(state.titles.keys()), config.DUPLICATE_TITLE_THRESHOLD):
+            
+            # Проверяем доступность семантического поиска через Google (Gemini)
+            use_semantic = (config.EMBEDDING_PROVIDER == "gemini")
+            # Если Gemini недоступен, используем более строгий порог из конфига
+            fuzzy_threshold = config.DUPLICATE_TITLE_THRESHOLD if use_semantic else config.FALLBACK_DUPLICATE_THRESHOLD
+
+            # 1. Быстрая проверка Fuzzy
+            if is_fuzzy_duplicate(entry.title, list(state.titles.keys()), fuzzy_threshold):
                 state.metrics["news_duplicate_fuzzy"] += 1
                 state.add_url(entry.link, entry.title)
                 continue
-            state.add_url(entry.link, entry.title)
+
+            # 2. Семантическая проверка (только при наличии Google-модели)
+            new_embedding = None
+            if use_semantic:
+                new_embedding = await get_embedding(entry.title, model_rotator, session=session)
+                if new_embedding and await is_semantic_duplicate(entry.title, new_embedding, state):
+                    state.metrics["news_duplicate_fuzzy"] += 1
+                    state.add_url(entry.link, entry.title, embedding=new_embedding)
+                    continue
+            
+            # Если все проверки пройдены — добавляем в кэш
+            state.add_url(entry.link, entry.title, embedding=new_embedding)
 
         # Проверка в БД
         db_titles = await state.get_db_titles()
-        if is_fuzzy_duplicate(original_title, db_titles, config.DUPLICATE_TITLE_THRESHOLD):
+        if is_fuzzy_duplicate(original_title, db_titles, fuzzy_threshold):
             state.metrics["news_duplicate_fuzzy"] += 1
             continue # Пропускаем, если дубликат, и идем к следующей новости
 
@@ -1128,12 +1243,13 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
         text = entry.title + " " + entry.get("summary", "")
         analysis = await ai_analyze(text, rotator, session=session)
         if analysis[0] is None: return
-        score, event_type, entities, slug, is_black_swan, source = analysis
+        score, event_type, entities, slug, is_black_swan, model_name, confidence = analysis
 
         # Семантическая проверка дубликатов по slug (AI-generated)
         async with state.lock: # Используем лок из state manager
             if slug and slug in state.slugs:
                 if time.time() - state.slugs[slug] < config.MAX_NEWS_AGE_HOURS * 3600:
+                    logging.info(f"🐌 Slug duplicate (AI): {slug} for '{entry.title}'")
                     state.metrics["news_duplicate_slug"] += 1
                     return
             if slug:
@@ -1143,18 +1259,18 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
 
         # Определение рейтинга доверия источнику новости
         # Google News RSS обычно указывает источник в конце заголовка через дефис или в поле source
-        news_source = entry.get('source', {}).get('title', '').lower()
-        if not news_source and ' - ' in entry.title:
-            news_source = entry.title.split(' - ')[-1].lower()
+        source_title = entry.get('source', {}).get('title', '').lower()
+        if not source_title and ' - ' in entry.title:
+            source_title = entry.title.split(' - ')[-1].lower()
             
         trust_factor = config.DEFAULT_TRUST_SCORE
         for s_key, s_weight in config.SOURCE_TRUST_LEVELS.items():
-            if s_key.lower() in news_source:
+            if s_key.lower() in source_title:
                 trust_factor = s_weight
                 break
         
-        # Применяем коэффициент доверия к баллу новости
-        score *= trust_factor
+        # Применяем коэффициент доверия источника и уверенность модели
+        score *= (trust_factor * confidence)
         
         # Дополнительное снижение веса для нефинансовых типов событий
         # Применяем decay ко всем нейтральным новостям, а не только к тем, что выше порога
@@ -1177,7 +1293,7 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
             return # Используем return вместо continue, так как это функция
 
         market = market_signals(state.scores[event_key], event_key) # Используем state.scores
-        prob = predict_impact(state.scores[event_key], state) # Используем state.scores и state
+        prob = predict_impact(state.scores[event_key], state, confidence=confidence) # Используем state.scores и state
         sig_type = generate_signal(prob, state.scores[event_key]) # Используем state.scores
 
         # Улучшенный поиск активов: проверяем event_key и его части на соответствие event_asset_map
@@ -1221,9 +1337,9 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
                     
                     for asset_name in target_assets:
                         cursor.execute("""
-                            INSERT INTO predictions (event_key, score, predicted_impact, target_asset, resolved, event_type, is_black_swan)
-                            VALUES (?, ?, ?, ?, 0, ?, ?)
-                        """, (event_key, state.scores[event_key], prob, str(asset_name), event_type, 1 if is_black_swan else 0))
+                            INSERT INTO predictions (event_key, score, predicted_impact, target_asset, resolved, event_type, is_black_swan, confidence, source_domain)
+                            VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+                        """, (event_key, state.scores[event_key], prob, str(asset_name), event_type, 1 if is_black_swan else 0, confidence, source_title))
                     conn.commit()
             except sqlite3.IntegrityError:
                 logging.info(f"Новость уже обработана другой лентой (URL duplicate): {entry.title}") # Используем return вместо continue
@@ -1267,7 +1383,7 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
             msg = (
                 f"{black_swan_header}"
                 f"🧠 EVENT: {event_key}\n"
-                f"🤖 Model: {source}\n"
+                f"🤖 Model: {model_name} (Conf: {confidence:.2f})\n"
                 f"{divergence_tag}"
                 f"Score: {state.scores[event_key]:.2f} (News: {score:+.2f}) | Impact: {prob:+.2f}%\n" # Используем state.scores
                 f"-------------------\n"
