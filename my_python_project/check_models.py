@@ -10,7 +10,7 @@ def check_available_models():
     
     try:
         for m in client.models.list():
-            if 'generateContent' in m.supported_actions:
+            if 'generateContent' in m.supported_actions or 'embedContent' in m.supported_actions:
                 # input_token_limit - это размер контекстного окна (сколько текста модель примет)
                 print(f"{m.display_name:<30} | {m.name:<40} | {m.input_token_limit:<12}")
     except Exception as e:

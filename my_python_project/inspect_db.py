@@ -216,6 +216,28 @@ def inspect_gts():
             print(f"Daily Change: {hbm_daily_change:+.2f}%")
         else:
             print("\n--- HBM Index: Could not calculate ---")
+            
+        print("\n--- АНАЛИЗ ИСТОЧНИКОВ: WINRATE И УВЕРЕННОСТЬ ---")
+        source_stats_query = f"""
+            SELECT 
+                source_domain as Source, 
+                COUNT(*) as Total, 
+                ROUND(AVG(is_correct) * 100, 1) as "WinRate%", 
+                ROUND(AVG(confidence), 2) as "AvgConf",
+                ROUND(AVG(ABS(actual_move - predicted_impact)), 2) as AvgErr
+            FROM predictions
+            WHERE resolved = 1 
+              AND source_domain IS NOT NULL 
+              AND source_domain != ''
+              AND ABS(score) >= {config.NEUTRAL_SCORE_THRESHOLD}
+            GROUP BY source_domain
+            ORDER BY "WinRate%" DESC, Total DESC
+        """
+        source_df = pd.read_sql(source_stats_query, conn)
+        if not source_df.empty:
+            print(source_df.to_string(index=False))
+        else:
+            print("Недостаточно данных для анализа источников.")
 
 if __name__ == "__main__":
     inspect_gts()

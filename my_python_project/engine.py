@@ -210,6 +210,13 @@ class GTSStateManager:
                 if row['slug']:
                     dt = datetime.strptime(row['timestamp'], '%Y-%m-%d %H:%M:%S')
                     self.slugs[row['slug']] = dt.timestamp()
+
+            # 5. Векторные эмбеддинги для семантической дедупликации (за последние 3 дня)
+            cursor.execute("SELECT title, vector FROM embeddings WHERE timestamp > datetime('now', '-3 days')")
+            for row in cursor.fetchall():
+                try:
+                    self.embeddings[row['title']] = json.loads(row['vector'])
+                except: continue
             self._prune_caches()
 
     def _load_config_weights(self):
@@ -298,6 +305,13 @@ class GTSStateManager:
         self.titles.move_to_end(title)
         if embedding:
             self.embeddings[title] = embedding
+            try:
+                with get_db_connection() as conn:
+                    conn.execute("INSERT OR REPLACE INTO embeddings (title, vector) VALUES (?, ?)", 
+                                 (title, json.dumps(embedding)))
+                    conn.commit()
+            except Exception as e:
+                logging.debug(f"DB Embedding save skip: {e}")
         self._prune_caches()
 
     def log_metrics(self):
@@ -377,6 +391,7 @@ async def get_embedding(text: str, rotator: ModelRotator, session: Optional[aioh
             )
             if res and res.embeddings:
                 embedding = res.embeddings[0].values
+                logging.debug(f"💎 Embedding received from Gemini for: {text[:30]}...")
                 return embedding
         except Exception as e:
             err_str = str(e).lower()
@@ -389,8 +404,10 @@ async def get_embedding(text: str, rotator: ModelRotator, session: Optional[aioh
     if embedding is None and config.OPENROUTER_API_KEY:
         # Если мы попали сюда как фоллбек для Gemini, нам нужно привести имя модели к формату OpenRouter
         or_model = config.EMBEDDING_MODEL
-        if "models/" in or_model:
+        if or_model.startswith("models/"):
             or_model = or_model.replace("models/", "google/")
+        elif "/" not in or_model:
+            or_model = f"google/{or_model}"
 
         s = session if session else aiohttp.ClientSession()
         try:
@@ -675,9 +692,9 @@ def market_signals(score: float, event_key: str) -> Dict[str, str]:
 # WEIGHT / IMPACT MODEL
 # =========================
 
-def predict_impact(score: float, state: GTSStateManager, confidence: float = 1.0) -> float:
-    # Применяем уверенность модели к финальному прогнозу влияния
-    return min(abs(score) * state.multiplier * confidence, 100)
+def predict_impact(score: float, state: GTSStateManager) -> float:
+    # Вес уже применен в накопленном балле через confidence при обновлении
+    return min(abs(score) * state.multiplier, 100)
 
 # =========================
 # SIGNAL ENGINE
@@ -1060,6 +1077,7 @@ async def cleanup_db(state: GTSStateManager): # Принимаем state
                 # Удаляем старые события и прогнозы
                 cursor.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
                 cursor.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+                cursor.execute("DELETE FROM embeddings WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
                 
                 # 1. Удаляем ключи с критически низким весом
                 cursor.execute("DELETE FROM weights WHERE weight <= ?", (config.MIN_WEIGHT_THRESHOLD,))
@@ -1180,37 +1198,41 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         if published:
             pub_time = time.mktime(published)
             if (time.time() - pub_time) > (max_age_h * 3600):
+                logging.info(f"Skipping old news: '{entry.title}' (Age: {(time.time() - pub_time)/3600:.1f}h, Max: {max_age_h}h)")
                 continue
 
         original_title = entry.title
 
-        async with state.lock: # Используем лок из state manager
+        # 1. Быстрая проверка на дубликаты (URL и Fuzzy)
+        use_semantic = config.USE_EMBEDDINGS and config.EMBEDDING_PROVIDER in ["gemini", "openrouter"]
+        fuzzy_threshold = config.DUPLICATE_TITLE_THRESHOLD if use_semantic else config.FALLBACK_DUPLICATE_THRESHOLD
+
+        async with state.lock:
             if state.is_url_processed(entry.link):
                 logging.info(f"🔗 URL duplicate skipped: {entry.link}")
                 state.metrics["news_duplicate_url"] += 1
                 continue
-            
-            # Проверяем доступность семантического поиска через Google (Gemini)
-            use_semantic = (config.EMBEDDING_PROVIDER == "gemini")
-            # Если Gemini недоступен, используем более строгий порог из конфига
-            fuzzy_threshold = config.DUPLICATE_TITLE_THRESHOLD if use_semantic else config.FALLBACK_DUPLICATE_THRESHOLD
 
-            # 1. Быстрая проверка Fuzzy
+            # Проверка по заголовкам из кэша (быстрая)
             if is_fuzzy_duplicate(entry.title, list(state.titles.keys()), fuzzy_threshold):
                 state.metrics["news_duplicate_fuzzy"] += 1
                 state.add_url(entry.link, entry.title)
                 continue
 
-            # 2. Семантическая проверка (только при наличии Google-модели)
-            new_embedding = None
-            if use_semantic:
-                new_embedding = await get_embedding(entry.title, model_rotator, session=session)
-                if new_embedding and await is_semantic_duplicate(entry.title, new_embedding, state):
-                    state.metrics["news_duplicate_fuzzy"] += 1
-                    state.add_url(entry.link, entry.title, embedding=new_embedding)
-                    continue
+        # 2. Получение эмбеддинга (БЕЗ блокировки, так как это сетевой запрос)
+        new_embedding = None
+        if use_semantic:
+            new_embedding = await get_embedding(entry.title, model_rotator, session=session)
             
-            # Если все проверки пройдены — добавляем в кэш
+            # 3. Семантическая проверка (is_semantic_duplicate сам управляет своей блокировкой)
+            if new_embedding and await is_semantic_duplicate(entry.title, new_embedding, state):
+                state.metrics["news_duplicate_fuzzy"] += 1
+                async with state.lock:
+                    state.add_url(entry.link, entry.title, embedding=new_embedding)
+                continue
+
+        # 4. Финальное добавление в кэш (если новость прошла все фильтры)
+        async with state.lock:
             state.add_url(entry.link, entry.title, embedding=new_embedding)
 
         # Проверка в БД
@@ -1245,16 +1267,22 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
         if analysis[0] is None: return
         score, event_type, entities, slug, is_black_swan, model_name, confidence = analysis
 
+        # Фильтр по уровню уверенности
+        if confidence < config.CONFIDENCE_THRESHOLD:
+            logging.info(f"Skipping news '{entry.title}': Confidence {confidence:.2f} is below threshold {config.CONFIDENCE_THRESHOLD}")
+            return
+
         # Семантическая проверка дубликатов по slug (AI-generated)
+        normalized_slug = slug.strip().lower() if slug else None
         async with state.lock: # Используем лок из state manager
-            if slug and slug in state.slugs:
-                if time.time() - state.slugs[slug] < config.MAX_NEWS_AGE_HOURS * 3600:
-                    logging.info(f"🐌 Slug duplicate (AI): {slug} for '{entry.title}'")
+            if normalized_slug and normalized_slug in state.slugs:
+                if time.time() - state.slugs[normalized_slug] < config.MAX_NEWS_AGE_HOURS * 3600:
+                    logging.info(f"🐌 Slug duplicate (AI): {normalized_slug} for '{entry.title}'")
                     state.metrics["news_duplicate_slug"] += 1
                     return
-            if slug:
-                state.slugs[slug] = time.time()
-                state.slugs.move_to_end(slug)
+            if normalized_slug:
+                state.slugs[normalized_slug] = time.time()
+                state.slugs.move_to_end(normalized_slug)
                 while len(state.slugs) > 1000: state.slugs.popitem(last=False)
 
         # Определение рейтинга доверия источнику новости
@@ -1293,7 +1321,7 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
             return # Используем return вместо continue, так как это функция
 
         market = market_signals(state.scores[event_key], event_key) # Используем state.scores
-        prob = predict_impact(state.scores[event_key], state, confidence=confidence) # Используем state.scores и state
+        prob = predict_impact(state.scores[event_key], state) # Используем state.scores и state
         sig_type = generate_signal(prob, state.scores[event_key]) # Используем state.scores
 
         # Улучшенный поиск активов: проверяем event_key и его части на соответствие event_asset_map

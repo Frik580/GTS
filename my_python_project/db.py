@@ -47,6 +47,16 @@ def init_db():
             event_type TEXT,
             is_black_swan INTEGER DEFAULT 0,
             resolved INTEGER DEFAULT 0,
+            confidence REAL DEFAULT 1.0,
+            source_domain TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS embeddings (
+            title TEXT PRIMARY KEY,
+            vector TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -96,7 +106,9 @@ def init_db():
                 "is_correct": "INTEGER DEFAULT 0",
                 "target_asset": "TEXT",
                 "event_type": "TEXT",
-                "is_black_swan": "INTEGER DEFAULT 0"
+                "is_black_swan": "INTEGER DEFAULT 0",
+                "confidence": "REAL DEFAULT 1.0",
+                "source_domain": "TEXT"
             }
         }
 
