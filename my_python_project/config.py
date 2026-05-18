@@ -137,7 +137,11 @@ PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, пр
 MIN_WEIGHT_THRESHOLD = 0.5 # Повышено для автоматического удаления слабых/случайных связей
 NEUTRAL_SCORE_THRESHOLD = 2.5 # Еще выше порог для отсечения около-рыночного шума
 MAX_ENTITY_PARTS = 2 # Сокращаем до 2 для лучшей группировки и консолидации весов
-DUPLICATE_TITLE_THRESHOLD = 0.45 # Более агрессивный фильтр (чем ниже, тем сильнее подавление похожих новостей)
+DUPLICATE_TITLE_THRESHOLD = 0.75 # Порог для почти идентичных строк (опечатки, разные хвосты источников)
+FALLBACK_DUPLICATE_THRESHOLD = 0.5 # Порог схожести, когда семантический поиск недоступен
+SEMANTIC_DUPLICATE_THRESHOLD = 0.88 # Порог схожести векторов (0.85-0.92 оптимально)
+EMBEDDING_PROVIDER = "gemini" # "gemini" или "openrouter"
+EMBEDDING_MODEL = "models/text-embedding-004"
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
 # Рейтинг доверия источникам (Trust Factor)
