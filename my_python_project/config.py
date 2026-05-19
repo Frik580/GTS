@@ -84,7 +84,7 @@ YAHOO_FINANCE_FEEDS = [
     "https://home.treasury.gov/news/press-releases/rss" # Лента для новостей Министерства финансов США
 ]
 
-RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}+when:24h" for k in TRACKED_KEYWORDS.keys()] + YAHOO_FINANCE_FEEDS
+RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}+when:12h" for k in TRACKED_KEYWORDS.keys()] + YAHOO_FINANCE_FEEDS
 RSS_MAX_ENTRIES = 4 # Количество записей RSS для обработки в активное время рынка
 RSS_MAX_ENTRIES_INACTIVE = RSS_MAX_ENTRIES*3 # Количество записей RSS для обработки, когда рынок неактивен (ночь/выходные)
 
