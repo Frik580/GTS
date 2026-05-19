@@ -7,6 +7,7 @@ import json
 import asyncio
 import aiohttp
 import math
+import calendar
 from google import genai
 import pandas as pd
 from difflib import SequenceMatcher
@@ -319,7 +320,7 @@ class GTSStateManager:
         avg_ai_time = sum(self.ai_timings) / len(self.ai_timings) if self.ai_timings else 0
         logging.info("--- [GTS METRICS REPORT] ---")
         logging.info(f"📊 News: {self.metrics['news_sent_telegram']} sent / {self.metrics['news_received']} received")
-        logging.info(f"🛡️ Filters: URL={self.metrics['news_duplicate_url']}, Fuzzy={self.metrics['news_duplicate_fuzzy']}, Slug={self.metrics['news_duplicate_slug']}, LowScore={self.metrics['news_low_score']}")
+        logging.info(f"🛡️ Filters: URL={self.metrics['news_duplicate_url']}, Fuzzy={self.metrics['news_duplicate_fuzzy']}, Semantic={self.metrics['news_duplicate_semantic']}, Slug={self.metrics['news_duplicate_slug']}, LowScore={self.metrics['news_low_score']}")
         logging.info(f"🧠 AI: Avg Time {avg_ai_time:.2f}s, Requests {self.metrics['ai_requests']}")
         
         err_429 = {k: v for k, v in self.metrics.items() if k.startswith("429_")}
@@ -1034,6 +1035,20 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager)
                     if is_correct == 0 and abs(score) > config.NEUTRAL_SCORE_THRESHOLD:
                         async with state.lock:
                             state.scores[event_key] *= 0.5 # Штраф за ошибку в Primary окне
+
+                    # Накопление статистики по источникам (только при первом переходе в 'resolved')
+                    if row['resolved'] == 0:
+                        source_domain = row['source_domain']
+                        if source_domain:
+                            cursor.execute("""
+                                INSERT INTO source_stats (source_domain, total_resolved, correct_count, sum_error, sum_confidence)
+                                VALUES (?, 1, ?, ?, ?)
+                                ON CONFLICT(source_domain) DO UPDATE SET
+                                    total_resolved = total_resolved + 1,
+                                    correct_count = correct_count + EXCLUDED.correct_count,
+                                    sum_error = sum_error + EXCLUDED.sum_error,
+                                    sum_confidence = sum_confidence + EXCLUDED.sum_confidence
+                            """, (source_domain, is_correct, abs(error), row['confidence']))
                 else:
                     # Фаза 2: Уточнение веса конкретного события (Long-term)
                     updates_by_key[event_key].append(error)
@@ -1184,23 +1199,32 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
 
     feed = await loop.run_in_executor(sync_executor, lambda: feedparser.parse(raw_data))
 
-    # Адаптивное количество записей RSS для обработки
-    max_entries_to_process = config.RSS_MAX_ENTRIES if is_market_active else config.RSS_MAX_ENTRIES_INACTIVE
+    # Адаптивное окно возраста новости:
+    # Если рынок активен — окно узкое (согласно конфигу), если закрыт — расширяем до 72ч.
+    max_age_h = config.MAX_NEWS_AGE_HOURS if is_market_active else 72
     
-    for entry in feed.entries[:max_entries_to_process]:
-        state.metrics["news_received"] += 1
-        # Адаптивное окно возраста новости:
-        # Если рынок активен — окно узкое (6ч), чтобы реагировать на свежее.
-        # Если рынок закрыт — расширяем окно до 72ч (уикенд), чтобы собрать контекст к открытию.
-        max_age_h = config.MAX_NEWS_AGE_HOURS if is_market_active else 72
-        
+    # 1. Фильтруем всю ленту от старых записей ПЕРЕД обработкой
+    fresh_entries = []
+    for entry in feed.entries:
         published = entry.get('published_parsed')
         if published:
-            pub_time = time.mktime(published)
-            if (time.time() - pub_time) > (max_age_h * 3600):
-                logging.info(f"Skipping old news: '{entry.title}' (Age: {(time.time() - pub_time)/3600:.1f}h, Max: {max_age_h}h)")
-                continue
+            # Используем calendar.timegm для корректного преобразования UTC struct_time
+            pub_time = calendar.timegm(published)
+            age_h = (time.time() - pub_time) / 3600
+            if age_h <= max_age_h:
+                fresh_entries.append(entry)
+            else:
+                # Переводим в DEBUG, чтобы не спамить в консоль
+                logging.debug(f"Skipping old news: '{entry.title}' (Age: {age_h:.1f}h, Max: {max_age_h}h)")
+        else:
+            # Если даты нет (редкий случай), пропускаем новость в обработку
+            fresh_entries.append(entry)
 
+    # 2. Берем только свежие новости в пределах лимита
+    max_entries_to_process = config.RSS_MAX_ENTRIES if is_market_active else config.RSS_MAX_ENTRIES_INACTIVE
+    
+    for entry in fresh_entries[:max_entries_to_process]:
+        state.metrics["news_received"] += 1
         original_title = entry.title
 
         # 1. Быстрая проверка на дубликаты (URL и Fuzzy)
@@ -1226,7 +1250,7 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             
             # 3. Семантическая проверка (is_semantic_duplicate сам управляет своей блокировкой)
             if new_embedding and await is_semantic_duplicate(entry.title, new_embedding, state):
-                state.metrics["news_duplicate_fuzzy"] += 1
+                state.metrics["news_duplicate_semantic"] += 1
                 async with state.lock:
                     state.add_url(entry.link, entry.title, embedding=new_embedding)
                 continue

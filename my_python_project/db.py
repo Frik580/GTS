@@ -137,4 +137,15 @@ def init_db():
         # Очистка существующих пустых значений в активах (миграция данных)
         cursor.execute("UPDATE predictions SET target_asset = 'global' WHERE target_asset IS NULL OR target_asset = ''")
 
+        # Таблица для долгосрочной статистики источников (накопительная)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS source_stats (
+            source_domain TEXT PRIMARY KEY,
+            total_resolved INTEGER DEFAULT 0,
+            correct_count INTEGER DEFAULT 0,
+            sum_error REAL DEFAULT 0,
+            sum_confidence REAL DEFAULT 0
+        )
+        """)
+
         conn.commit()

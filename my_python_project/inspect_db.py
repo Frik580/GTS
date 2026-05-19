@@ -218,19 +218,15 @@ def inspect_gts():
             print("\n--- HBM Index: Could not calculate ---")
             
         print("\n--- АНАЛИЗ ИСТОЧНИКОВ: WINRATE И УВЕРЕННОСТЬ ---")
-        source_stats_query = f"""
+        source_stats_query = """
             SELECT 
                 source_domain as Source, 
-                COUNT(*) as Total, 
-                ROUND(AVG(is_correct) * 100, 1) as "WinRate%", 
-                ROUND(AVG(confidence), 2) as "AvgConf",
-                ROUND(AVG(ABS(actual_move - predicted_impact)), 2) as AvgErr
-            FROM predictions
-            WHERE resolved = 1 
-              AND source_domain IS NOT NULL 
-              AND source_domain != ''
-              AND ABS(score) >= {config.NEUTRAL_SCORE_THRESHOLD}
-            GROUP BY source_domain
+                total_resolved as Total, 
+                ROUND((CAST(correct_count AS REAL) / total_resolved) * 100, 1) as "WinRate%", 
+                ROUND(sum_confidence / total_resolved, 2) as "AvgConf",
+                ROUND(sum_error / total_resolved, 2) as AvgErr
+            FROM source_stats
+            WHERE total_resolved > 0
             ORDER BY "WinRate%" DESC, Total DESC
         """
         source_df = pd.read_sql(source_stats_query, conn)
