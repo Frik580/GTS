@@ -161,9 +161,11 @@ class GTSStateManager:
         self.titles = OrderedDict() # LRU кэш для заголовков (нечеткий поиск)
         self.embeddings = OrderedDict() # LRU кэш для векторных эмбеддингов
         self.slugs = OrderedDict()  # LRU кэш для AI-тегов событий
+        self.narrative_counts = defaultdict(int) # Счетчик повторений для Narrative Tracking
         self.metrics = Counter()
         self.ai_timings = []
         self.weights = {}
+        self.source_performance = {} # Накопленный WinRate источников
         self.last_sent = {}
         self.multiplier = config.IMPACT_MULTIPLIER
         self.asset_map = {}
@@ -187,16 +189,23 @@ class GTSStateManager:
             cursor.execute("SELECT event_key, weight FROM weights")
             for key, val in cursor.fetchall():
                 self.weights[key] = val
+            
+            # 2.5 Загрузка перформанса источников
+            cursor.execute("SELECT source_domain, correct_count, total_resolved FROM source_stats WHERE total_resolved > 5")
+            for domain, correct, total in cursor.fetchall():
+                winrate = correct / total
+                self.source_performance[domain.lower()] = winrate
+                
             logging.info(f"--- Веса загружены: {self.weights} ---")
 
             # 3. Восстановление баллов и времени обновлений
             cursor.execute("""
                 SELECT event_key, SUM(raw_score), MAX(timestamp) FROM (
                     SELECT MAX(score) as raw_score, event_key, timestamp
-                    FROM predictions WHERE timestamp > datetime('now', '-1 day')
+                    FROM predictions WHERE timestamp > datetime('now', '-' || ? || ' day')
                     GROUP BY event_key, timestamp
                 ) GROUP BY event_key
-            """)
+            """, (config.RAM_SCORE_LOOKBACK_DAYS,))
             for key, val, ts_str in cursor.fetchall():
                 self.scores[key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, val))
                 dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S')
@@ -204,7 +213,7 @@ class GTSStateManager:
                 self.last_sent[key] = dt.timestamp()
 
             # 4. История для дедупликации
-            cursor.execute("SELECT link, title, slug, timestamp FROM events WHERE timestamp > datetime('now', '-1 day')")
+            cursor.execute("SELECT link, title, slug, timestamp FROM events WHERE timestamp > datetime('now', '-' || ? || ' day')", (config.RAM_SCORE_LOOKBACK_DAYS,))
             for row in cursor.fetchall():
                 self.urls[row['link']] = True
                 self.titles[row['title']] = True
@@ -213,7 +222,7 @@ class GTSStateManager:
                     self.slugs[row['slug']] = dt.timestamp()
 
             # 5. Векторные эмбеддинги для семантической дедупликации (за последние 3 дня)
-            cursor.execute("SELECT title, vector FROM embeddings WHERE timestamp > datetime('now', '-3 days')")
+            cursor.execute("SELECT title, vector FROM embeddings WHERE timestamp > datetime('now', '-' || ? || ' days')", (config.RAM_EMBEDDING_LOOKBACK_DAYS,))
             for row in cursor.fetchall():
                 try:
                     self.embeddings[row['title']] = json.loads(row['vector'])
@@ -243,34 +252,41 @@ class GTSStateManager:
         if "GLOBAL" not in self.weights: self.weights["GLOBAL"] = 1.0
         if "GLOBAL" not in self.asset_map: self.asset_map["GLOBAL"] = ["global"]
 
+    def _internal_decay(self, key: str, is_market_active: bool, now: float):
+        """Внутренний расчет затухания без блокировки."""
+        if key not in self.scores or self.scores[key] == 0:
+            self.last_update[key] = now
+            return
+
+        last_upd = self.last_update.get(key, now)
+        delta = now - last_upd
+        if delta <= 0: return
+
+        decay = config.DECAY_FACTOR if is_market_active else config.NIGHT_DECAY_FACTOR
+        intervals = delta / config.CHECK_INTERVAL
+        self.scores[key] *= (decay ** intervals)
+        self.last_update[key] = now
+
     async def apply_decay(self, key: str, is_market_active: bool) -> float:
         async with self.lock:
-            if key not in self.scores or self.scores[key] == 0:
-                self.last_update[key] = time.time()
-                return 0.0
-            now = time.time()
-            last_upd = self.last_update.get(key, now)
-            delta = now - last_upd
-            decay = config.DECAY_FACTOR if is_market_active else config.NIGHT_DECAY_FACTOR
-            intervals = delta / config.CHECK_INTERVAL
-            self.scores[key] *= (decay ** intervals)
-            self.last_update[key] = now
+            self._internal_decay(key, is_market_active, time.time())
             return self.scores[key]
 
     async def update_score(self, key: str, score: float, is_market_active: bool):
         """Атомарное обновление балла с учетом PIVOT и затухания."""
-        await self.apply_decay(key, is_market_active)
         async with self.lock:
+            now = time.time()
+            self._internal_decay(key, is_market_active, now)
             # Pivot logic
             if self.scores[key] != 0 and (self.scores[key] * score) < 0:
                 if abs(score) >= config.PIVOT_THRESHOLD:
                     logging.info(f"💥 PIVOT for {key}")
                     self.scores[key] = 0
             
-            weight = await self.get_weight(key)
+            weight = self.get_weight(key)
             self.scores[key] = max(-config.MAX_SCORE_THRESHOLD, min(config.MAX_SCORE_THRESHOLD, self.scores[key] + (score * weight)))
 
-    async def get_weight(self, event_key: str) -> float:
+    def get_weight(self, event_key: str) -> float:
         if event_key in self.weights: return self.weights[event_key]
         parts = event_key.split('_')
         if len(parts) > 1:
@@ -291,6 +307,9 @@ class GTSStateManager:
         while len(self.urls) > 2000: self.urls.popitem(last=False)
         while len(self.titles) > 1000: self.titles.popitem(last=False)
         while len(self.slugs) > 1000: self.slugs.popitem(last=False)
+        # Синхронизируем счетчики нарративов с LRU кэшем слагов
+        if len(self.slugs) > 1000:
+            self.narrative_counts = defaultdict(int, {k: v for k, v in self.narrative_counts.items() if k in self.slugs})
         while len(self.embeddings) > 500: self.embeddings.popitem(last=False)
 
     def is_url_processed(self, url: str) -> bool:
@@ -323,6 +342,12 @@ class GTSStateManager:
         logging.info(f"🛡️ Filters: URL={self.metrics['news_duplicate_url']}, Fuzzy={self.metrics['news_duplicate_fuzzy']}, Semantic={self.metrics['news_duplicate_semantic']}, Slug={self.metrics['news_duplicate_slug']}, LowScore={self.metrics['news_low_score']}")
         logging.info(f"🧠 AI: Avg Time {avg_ai_time:.2f}s, Requests {self.metrics['ai_requests']}")
         
+        # Narrative Tracking Debug
+        active_narratives = {k: v for k, v in self.narrative_counts.items() if v > 0}
+        if active_narratives:
+            top_narratives = dict(sorted(active_narratives.items(), key=lambda x: x[1], reverse=True)[:5])
+            logging.info(f"🔥 Active Narratives (top 5): {top_narratives}")
+
         err_429 = {k: v for k, v in self.metrics.items() if k.startswith("429_")}
         if err_429: logging.info(f"⚠️ Rate Limits (429): {err_429}")
         self.ai_timings = self.ai_timings[-100:] # Храним только последние 100 замеров
@@ -331,7 +356,7 @@ class GTSStateManager:
         async with self.db_lock:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(f"SELECT title FROM events WHERE timestamp > datetime('now', '-{hours} hours') ORDER BY timestamp DESC LIMIT 20")
+                cursor.execute(f"SELECT title FROM events WHERE timestamp > datetime('now', '-{hours} hours') ORDER BY timestamp DESC LIMIT 100")
                 return [row['title'] for row in cursor.fetchall()]
 
 state = GTSStateManager()
@@ -459,6 +484,7 @@ async def ai_analyze(text: str, rotator: ModelRotator, session: Optional[aiohttp
     Identify the core unique event being reported.
     Return ONLY a JSON object with this structure:
     {{
+      "primary_asset": "the most impacted asset from the list, or 'global'",
       "score": float (-10.0 to 10.0). CRITICAL: Use Finance Risk Scale:
                NEGATIVE SCORE (-10 to -1) = GOOD news for markets (Growth, Profits, Rate cuts, Peace).
                POSITIVE SCORE (1 to 10) = BAD news for markets (War, Inflation, Defaults, Rate hikes).
@@ -602,23 +628,8 @@ def make_event_key(entities: List[str]) -> str:
     if not valid_entities:
         return "GLOBAL"
 
-    # Список известных макро-сущностей для нормализации
-    canonical_map = {
-        "USA": "US", "UNITED STATES": "US",
-        "IRAN": "IRAN",
-        "ISRAEL": "ISRAEL",
-        "CHINA": "CHINA",
-        "RUSSIA": "RUSSIA",
-        "FED": "FED", "FEDERAL RESERVE": "FED",
-        "BITCOIN": "BTC", "BTC": "BTC",
-        "GOLD": "GOLD", "XAU": "GOLD",
-        "OIL": "OIL", "CRUDE": "OIL",
-        "HBM": "HBM", "HIGH_BANDWIDTH_MEMORY": "HBM",
-        "NVDA": "NVIDIA", "NVIDIA": "NVIDIA",
-        "DONALD_TRUMP": "TRUMP", "MAGA": "TRUMP"
-    }
-
     # Автоматически добавляем все отслеживаемые слова из конфига в мапу нормализации
+    canonical_map = config.ENTITY_CANONICAL_MAP.copy()
     for kw in config.TRACKED_KEYWORDS.keys():
         kw_up = kw.upper().replace(" ", "_")
         if kw_up not in canonical_map:
@@ -737,8 +748,8 @@ def should_send(key: str, current_score: float, state: GTSStateManager, is_black
 
     # Если новость экстремально важная (например, score > 8), игнорируем кулдаун
     if abs(current_score) >= 8.0 or is_black_swan:
-        # Но даже для важных новостей даем 2 минуты, чтобы не слать дубли от разных агентств
-        if key in state.last_sent and (now - state.last_sent[key] < 120):
+        # Увеличиваем кулдаун до 10 минут (как основной COOLDOWN), чтобы не спамить перепечатками
+        if key in state.last_sent and (now - state.last_sent[key] < config.COOLDOWN):
             logging.info(f"High-score spam prevention for {key}")
             return False # Используем state.last_sent
         state.last_sent[key] = now
@@ -1049,6 +1060,18 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager)
                                     sum_error = sum_error + EXCLUDED.sum_error,
                                     sum_confidence = sum_confidence + EXCLUDED.sum_confidence
                             """, (source_domain, is_correct, abs(error), row['confidence']))
+
+                        # NEW: Update asset_stats
+                        if target: # Ensure target_asset is not empty
+                            cursor.execute("""
+                                INSERT INTO asset_stats (target_asset, total_resolved, correct_count, sum_error)
+                                VALUES (?, 1, ?, ?)
+                                ON CONFLICT(target_asset) DO UPDATE SET
+                                    total_resolved = total_resolved + 1,
+                                    correct_count = correct_count + EXCLUDED.correct_count,
+                                    sum_error = sum_error + EXCLUDED.sum_error
+                            """, (target, is_correct, abs(error)))
+
                 else:
                     # Фаза 2: Уточнение веса конкретного события (Long-term)
                     updates_by_key[event_key].append(error)
@@ -1128,8 +1151,10 @@ async def cleanup_db(state: GTSStateManager): # Принимаем state
 
 def clean_title(title: str) -> str:
     """Удаляет мусор из заголовка (названия источников, лишние знаки)."""
-    # Удаляем источники в конце: "Title - Reuters" или "Title | CNBC"
-    cleaned = re.sub(r'\s+[-|]\s+.*$', '', title)
+    # Удаляем источники в конце: "Title - Reuters", "Title | CNBC", "Title : Source"
+    cleaned = re.sub(r'\s+[-|:]\s+.*$', '', title)
+    # Удаляем префиксы "Breaking:", "Update:"
+    cleaned = re.sub(r'(?i)^(breaking|update|exclusive|just in):\s*', '', cleaned)
     # Список стоп-слов, которые часто меняются в заголовках об одном событии
     stop_words = {'reports', 'hit', 'triggers', 'massive', 'says', 'amid', 'following', 'after', 'due', 'warns', 'shows'}
     # Удаляем пунктуацию
@@ -1243,6 +1268,12 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                 state.add_url(entry.link, entry.title)
                 continue
 
+        # Проверка в БД (перед тяжелым AI запросом эмбеддинга для экономии API)
+        db_titles = await state.get_db_titles()
+        if is_fuzzy_duplicate(original_title, db_titles, fuzzy_threshold):
+            state.metrics["news_duplicate_fuzzy"] += 1
+            continue
+
         # 2. Получение эмбеддинга (БЕЗ блокировки, так как это сетевой запрос)
         new_embedding = None
         if use_semantic:
@@ -1258,12 +1289,6 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         # 4. Финальное добавление в кэш (если новость прошла все фильтры)
         async with state.lock:
             state.add_url(entry.link, entry.title, embedding=new_embedding)
-
-        # Проверка в БД
-        db_titles = await state.get_db_titles()
-        if is_fuzzy_duplicate(original_title, db_titles, fuzzy_threshold):
-            state.metrics["news_duplicate_fuzzy"] += 1
-            continue # Пропускаем, если дубликат, и идем к следующей новости
 
         # Ставим в очередь для AI анализа
         await news_queue.put((entry, market_data))
@@ -1291,19 +1316,39 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
         if analysis[0] is None: return
         score, event_type, entities, slug, is_black_swan, model_name, confidence = analysis
 
+        narrative_multiplier = 1.0
+
         # Фильтр по уровню уверенности
         if confidence < config.CONFIDENCE_THRESHOLD:
             logging.info(f"Skipping news '{entry.title}': Confidence {confidence:.2f} is below threshold {config.CONFIDENCE_THRESHOLD}")
             return
 
-        # Семантическая проверка дубликатов по slug (AI-generated)
+        # Slug Logic (Duplicates & Narrative Tracking)
         normalized_slug = slug.strip().lower() if slug else None
         async with state.lock: # Используем лок из state manager
             if normalized_slug and normalized_slug in state.slugs:
-                if time.time() - state.slugs[normalized_slug] < config.MAX_NEWS_AGE_HOURS * 3600:
-                    logging.info(f"🐌 Slug duplicate (AI): {normalized_slug} for '{entry.title}'")
-                    state.metrics["news_duplicate_slug"] += 1
-                    return
+                delta_sec = time.time() - state.slugs[normalized_slug]
+                
+                if config.USE_NARRATIVE_TRACKING:
+                    # Spam prevention: if news arrives too fast (< 15 min), it's a duplicate
+                    if delta_sec < 900:
+                        logging.info(f"🐌 Slug spam prevention: {normalized_slug}")
+                        state.metrics["news_duplicate_slug"] += 1
+                        return
+                    
+                    # Narrative Boost logic
+                    if delta_sec < config.SLUG_DUPLICATE_HOURS * 3600:
+                        state.narrative_counts[normalized_slug] += 1
+                        boost = state.narrative_counts[normalized_slug] * config.NARRATIVE_BOOST_PER_HIT
+                        narrative_multiplier = min(config.NARRATIVE_MAX_MULTIPLIER, 1.0 + boost)
+                        logging.info(f"📈 Narrative Boost for {normalized_slug}: x{narrative_multiplier:.2f} (Hit #{state.narrative_counts[normalized_slug]})")
+                else:
+                    # Narrative Tracking OFF: use strict duplicate blocking
+                    if delta_sec < config.SLUG_DUPLICATE_HOURS * 3600:
+                        logging.info(f"🐌 Slug duplicate (AI): {normalized_slug} for '{entry.title}'")
+                        state.metrics["news_duplicate_slug"] += 1
+                        return
+
             if normalized_slug:
                 state.slugs[normalized_slug] = time.time()
                 state.slugs.move_to_end(normalized_slug)
@@ -1315,14 +1360,28 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
         if not source_title and ' - ' in entry.title:
             source_title = entry.title.split(' - ')[-1].lower()
             
-        trust_factor = config.DEFAULT_TRUST_SCORE
+        # Комбинированный Trust Factor: Статика + Динамика (из БД)
+        base_trust = config.DEFAULT_TRUST_SCORE
         for s_key, s_weight in config.SOURCE_TRUST_LEVELS.items():
             if s_key.lower() in source_title:
-                trust_factor = s_weight
+                base_trust = s_weight
                 break
+        
+        # Если по источнику есть статистика, корректируем базовый траст
+        dynamic_adj = 1.0
+        s_low = source_title.lower()
+        if s_low in state.source_performance:
+            wr = state.source_performance[s_low]
+            if wr > 0.65: dynamic_adj = 1.2  # Повышаем вес надежным
+            elif wr < 0.45: dynamic_adj = 0.7 # Снижаем вес часто ошибающимся
+        
+        trust_factor = base_trust * dynamic_adj
         
         # Применяем коэффициент доверия источника и уверенность модели
         score *= (trust_factor * confidence)
+        
+        # ПРИМЕНЯЕМ NARRATIVE BOOST
+        score *= narrative_multiplier
         
         # Дополнительное снижение веса для нефинансовых типов событий
         # Применяем decay ко всем нейтральным новостям, а не только к тем, что выше порога
@@ -1431,12 +1490,14 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
                 divergence_tag = "⚠️ COUNTER-TREND NEWS\n"
 
             black_swan_header = "🦢🦢🦢 BLACK SWAN EVENT 🦢🦢🦢\n" if is_black_swan else ""
+            narrative_tag = f"🔥 NARRATIVE x{narrative_multiplier:.2f}\n" if narrative_multiplier > 1.0 else ""
 
             msg = (
                 f"{black_swan_header}"
                 f"🧠 EVENT: {event_key}\n"
                 f"🤖 Model: {model_name} (Conf: {confidence:.2f})\n"
                 f"{divergence_tag}"
+                f"{narrative_tag}"
                 f"Score: {state.scores[event_key]:.2f} (News: {score:+.2f}) | Impact: {prob:+.2f}%\n" # Используем state.scores
                 f"-------------------\n"
                 f"{forecast_str}\n"

@@ -50,6 +50,29 @@ TRACKED_KEYWORDS = {
     "Earnings": (1.5, ["nasdaq", "sp500", "soxs"])
 }
 
+# Нормализация сущностей для формирования консистентных ключей (event_key)
+ENTITY_CANONICAL_MAP = {
+    "USA": "US", "UNITED STATES": "US",
+    "IRAN": "IRAN",
+    "ISRAEL": "ISRAEL",
+    "CHINA": "CHINA",
+    "RUSSIA": "RUSSIA",
+    "FED": "FED", "FEDERAL RESERVE": "FED",
+    "BITCOIN": "BTC", "BTC": "BTC",
+    "GOLD": "GOLD", "XAU": "GOLD",
+    "OIL": "OIL", "CRUDE": "OIL",
+    "HBM": "HBM", "HIGH_BANDWIDTH_MEMORY": "HBM",
+    "NVDA": "NVIDIA", "NVIDIA": "NVIDIA",
+    "DONALD_TRUMP": "TRUMP", "MAGA": "TRUMP",
+    "ALPHABET": "GOOGLE", "GOOGL": "GOOGLE",
+    "MICROSOFT": "MSFT",
+    "TSMC": "TSM", "TENCENT": "TENCENT",
+    "SEMICONDUCTOR": "SOXS",
+    "OPEC": "OIL_SUPPLY", "INVENTORIES": "OIL_SUPPLY",
+    "SHALE": "OIL_SUPPLY",
+    "RED_SEA": "GEOPOLITICS_OIL"
+}
+
 # HBM Index Configuration
 HBM_INDEX_SEGMENT_WEIGHTS = {
     "HBM_MAKERS": 0.45,
@@ -109,6 +132,16 @@ CLEANUP_INTERVAL = 86400 # Интервал очистки (24 часа)
 RESEARCH_INTERVAL = 86400 # Интервал глобального исследования ИИ (раз в сутки)
 RETENTION_DAYS = 7 # Уменьшено для более быстрой ротации данных и компактности БД
 
+# Параметры подгрузки контекста в RAM при старте
+RAM_SCORE_LOOKBACK_DAYS = 1
+RAM_EMBEDDING_LOOKBACK_DAYS = 3
+SLUG_DUPLICATE_HOURS = 18 # Сколько часов хранить слаг для блокировки повторов одного события
+
+# Narrative Tracking
+USE_NARRATIVE_TRACKING = True
+NARRATIVE_BOOST_PER_HIT = 0.2 # +20% к силе новости за каждое повторение темы
+NARRATIVE_MAX_MULTIPLIER = 2.0 # Максимальное усиление (2x)
+
 # AI Delays
 AI_DELAY_JSON = 4 # Оптимально для 15 RPM (бесплатный Gemini)
 AI_DELAY_NO_JSON = 10 # Задержка для тяжелых/медленных моделей
@@ -120,17 +153,17 @@ MAX_SCORE_THRESHOLD = 25.0
 
 # Коэффициенты нормализации для разных классов активов
 ASSET_SCALING_FACTORS = { # Скорректированы для улучшения калибровки
-    "global": 6.0, # Оставляем, так как это агрегированный показатель
-    "nasdaq": 7.0, # Слегка уменьшаем, чтобы снизить переоценку влияния
-    "sp500": 6.0,  # Слегка уменьшаем, чтобы снизить переоценку влияния
-    "oil": 7.0,    # Оставляем
+    "global": 5.0, # Снижено (был высокий Err_Trend)
+    "nasdaq": 5.5, # Снижено (Accuracy < 50%)
+    "sp500": 5.0,  # Снижено
+    "oil": 5.0,    # Снижено для стабилизации
     "btc": 2.5,    # Оставляем, хорошо работает
-    "gold": 7.0,   # Слегка уменьшаем, чтобы помочь с "разбросом" и улучшить калибровку
+    "gold": 4.5,   # Значительно снижено (был критический Err_Trend +11)
     "vix": 5.0,    # Увеличиваем, VIX очень волатилен и требует большего масштабирования
     "soxs": 3.0,   # Увеличиваем, SOXS 3x leveraged, требует большего масштабирования
 }
 
-LEARNING_RATE = 0.05  # Снижаем для большей стабильности, так как по основным активам точность начала падать
+LEARNING_RATE = 0.02  # Еще больше снижаем для защиты от рыночного шума
 IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
 LEARNING_THRESHOLD = 0.2 # Снижен порог рыночного движения, чтобы учиться на более мелких изменениях
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется

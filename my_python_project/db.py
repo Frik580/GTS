@@ -148,4 +148,14 @@ def init_db():
         )
         """)
 
+        # Таблица для долгосрочной статистики по активам (накопительная)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS asset_stats (
+            target_asset TEXT PRIMARY KEY,
+            total_resolved INTEGER DEFAULT 0,
+            correct_count INTEGER DEFAULT 0,
+            sum_error REAL DEFAULT 0
+        )
+        """)
+
         conn.commit()

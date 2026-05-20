@@ -18,7 +18,7 @@ def calculate_hbm_index_value():
 
     # Fetch data for the last few days to ensure we have at least 2 days of data
     end_date = datetime.now()
-    start_date = end_date - timedelta(days=365) # Fetch 1 year of data for robust index calculation
+    start_date = end_date - timedelta(days=30) # Fetch 7 days for fast daily change calculation
 
     try:
         data = yf.download(all_tickers, start=start_date, end=end_date, progress=False)
@@ -109,33 +109,49 @@ def inspect_gts():
             print(accuracy_df)
 
         print("\n--- СТАТИСТИКА ПО АКТИВАМ И ТРЕНДЫ ---")
-        # Загружаем все разрешенные прогнозы для анализа трендов
+        # Загружаем все значимые разрешенные прогнозы для анализа *недавних* трендов
         # Исключаем шум из статистики, чтобы он не занижал WinRate и не искажал среднюю ошибку
         all_res_query = f"""
             SELECT target_asset, is_correct, actual_move, predicted_impact, timestamp 
             FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm'
         """
         df_all = pd.read_sql(all_res_query, conn)
+
+        # Загружаем накопленную статистику по активам из новой таблицы asset_stats
+        asset_stats_df = pd.read_sql("""
+            SELECT target_asset, total_resolved, correct_count, sum_error
+            FROM asset_stats
+            WHERE LOWER(target_asset) != 'hbm'
+        """, conn)
         
         if not df_all.empty:
             df_all['error'] = abs(df_all['actual_move'] - df_all['predicted_impact'])
             
             stats_data = []
-            for asset in df_all['target_asset'].unique():
+            # Итерируем по всем активам, которые есть либо в текущих прогнозах, либо в накопленной статистике
+            all_unique_assets = pd.concat([df_all['target_asset'], asset_stats_df['target_asset']]).unique()
+
+            for asset in all_unique_assets:
                 if asset and asset.lower() == 'hbm':
                     continue
-                asset_df = df_all[df_all['target_asset'] == asset].sort_values('timestamp')
-                total_cnt = len(asset_df)
-                
-                # Общие показатели
-                total_wr = asset_df['is_correct'].mean() * 100
-                total_err = asset_df['error'].mean()
-                
-                # Последние показатели (последние 10 прогнозов или 30% данных)
-                recent_window = max(5, int(total_cnt * 0.3))
-                recent_df = asset_df.tail(recent_window)
-                recent_wr = recent_df['is_correct'].mean() * 100
-                recent_err = recent_df['error'].mean()
+
+                # Общие показатели (накопленные)
+                asset_total_stats = asset_stats_df[asset_stats_df['target_asset'] == asset]
+                if not asset_total_stats.empty:
+                    total_cnt = asset_total_stats['total_resolved'].iloc[0]
+                    total_wr = (asset_total_stats['correct_count'].iloc[0] / total_cnt) * 100 if total_cnt > 0 else 0
+                    total_err = asset_total_stats['sum_error'].iloc[0] / total_cnt if total_cnt > 0 else 0
+                else: # Если актива нет в asset_stats (например, новый актив)
+                    total_cnt = 0
+                    total_wr = 0
+                    total_err = 0
+
+                # Последние показатели (из df_all, который содержит только недавние прогнозы)
+                asset_df_from_predictions = df_all[df_all['target_asset'] == asset].sort_values('timestamp')
+                recent_window = max(5, int(len(asset_df_from_predictions) * 0.3)) # Window based on available recent data
+                recent_df = asset_df_from_predictions.tail(recent_window)
+                recent_wr = recent_df['is_correct'].mean() * 100 if not recent_df.empty else 0
+                recent_err = recent_df['error'].mean() if not recent_df.empty else 0
                 
                 # Расчет изменений
                 wr_delta = recent_wr - total_wr
@@ -185,24 +201,31 @@ def inspect_gts():
         print(f"Всего обработано (resolved): {all_resolved}")
 
         if not df_sig.empty:
-            trained_count = len(df_sig)
-            avg_move_total = df_sig['actual_move'].mean()
-            correct_count = df_sig['is_correct'].sum()
-            win_rate_total = (correct_count / trained_count * 100)
+            # Используем накопленную статистику для общего Win Rate
+            overall_stats = pd.read_sql("""
+                SELECT SUM(total_resolved) as total_resolved_overall, SUM(correct_count) as correct_count_overall
+                FROM asset_stats
+                WHERE LOWER(target_asset) != 'hbm'
+            """, conn).iloc[0]
+
+            trained_count_overall = overall_stats['total_resolved_overall']
+            correct_count_overall = overall_stats['correct_count_overall']
+            win_rate_total = (correct_count_overall / trained_count_overall * 100) if trained_count_overall > 0 else 0
             
             # Считаем "недавние" показатели (последние 20 значимых прогнозов) для выявления тренда
             recent_df = df_sig.tail(20)
             recent_count = len(recent_df)
-            win_rate_recent = (recent_df['is_correct'].sum() / recent_count * 100)
+            win_rate_recent = (recent_df['is_correct'].sum() / recent_count * 100) if recent_count > 0 else 0
             avg_move_recent = recent_df['actual_move'].mean()
             
+            avg_move_total = df_sig['actual_move'].mean()
             wr_delta = win_rate_recent - win_rate_total
             am_delta = avg_move_recent - avg_move_total
             mult_delta = multiplier_val - config.IMPACT_MULTIPLIER
 
-            print(f"Прошли обучение (значимые): {trained_count}")
-            print(f"Верных прогнозов (✅): {correct_count}")
-            print(f"Точность (Win Rate): {win_rate_total:.1f}% ({wr_delta:+.1f}% за последние 20)")
+            print(f"Прошли обучение (значимые): {trained_count_overall} (накоплено)")
+            print(f"Верных прогнозов (✅): {correct_count_overall} (накоплено)")
+            print(f"Точность (Win Rate): {win_rate_total:.1f}% | Recent (20): {win_rate_recent:.1f}% ({wr_delta:+.1f}%)")
             print(f"Текущий множитель влияния (Multiplier): {multiplier_val:.4f} ({mult_delta:+.4f} к базе)")
             print(f"Среднее реальное движение: {avg_move_total:.2f} ({am_delta:+.2f} тренд)")
         else:
