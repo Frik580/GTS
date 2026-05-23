@@ -35,7 +35,7 @@ TRACKED_KEYWORDS = {
     "Intel": (1.3, ["soxs"]),
     "AMD": (1.3, ["soxs"]),
     "Broadcom": (1.2, ["soxs"]),
-    "Anthropic": (1.5, ["soxs"]), # Исправлена опечатка
+    "Anthropic": (1.5, ["soxs", "nasdaq"]), 
     "Qualcomm": (1.2, ["soxs"]),
     "Hormuz": (2.0, ["oil", "vix", "global"]), # Фокус на геополитике в регионе
     "Yield": (1.8, ["global", "vix", "nasdaq"]), # Влияние на общий риск, волатильность и тех. сектор
@@ -47,7 +47,8 @@ TRACKED_KEYWORDS = {
     "Interest Rates": (2.2, ["global", "vix", "nasdaq", "sp500"]),
     "Recession": (2.5, ["global", "vix", "gold", "nasdaq", "sp500"]),
     "Geopolitical Tension": (2.5, ["global", "oil", "vix", "gold"]),
-    "Earnings": (1.5, ["nasdaq", "sp500", "soxs"])
+    "Earnings": (1.5, ["nasdaq", "sp500"]),
+    "Tech Earnings": (1.8, ["nasdaq", "soxs"])
 }
 
 # Нормализация сущностей для формирования консистентных ключей (event_key)
@@ -116,7 +117,8 @@ CHECK_INTERVAL = 180
 COOLDOWN = 600 # Интервал между действиями (10 минут)
 LEARNING_INTERVAL = 1800 # Интервал обучения (30 минут) - оптимально для баланса между адаптацией и стабильностью
 MARKET_LOOKBACK_HOURS = 2 # Окно анализа реакции рынка
-MAX_NEWS_AGE_HOURS = MARKET_LOOKBACK_HOURS*3 # Новость должна быть не старше окна анализа
+MAX_NEWS_AGE_HOURS = MARKET_LOOKBACK_HOURS*2 # Сокращаем до 4ч для активного рынка
+MAX_NEWS_AGE_HOURS_INACTIVE = 24 # Сокращаем с 72ч до 24ч для выходных/ночи
 
 # Адаптивные задержки обучения (в часах) в зависимости от типа события
 EVENT_TYPE_LOOKBACK = {
@@ -124,21 +126,21 @@ EVENT_TYPE_LOOKBACK = {
     "economic":   {"primary": 0.5, "secondary": 4},
     "diplomatic": {"primary": 2, "secondary": 8},
     "tech":       {"primary": 1, "secondary": 3},
-    "neutral":    {"primary": 2, "secondary": 2},
+    "neutral":    {"primary": 2, "secondary": 4},
 }
 BLACK_SWAN_LOOKBACK_HOURS = 24 # Окно для оценки фундаментального сдвига при ЧП
 
 CLEANUP_INTERVAL = 86400 # Интервал очистки (24 часа)
 RESEARCH_INTERVAL = 86400 # Интервал глобального исследования ИИ (раз в сутки)
-RETENTION_DAYS = 7 # Уменьшено для более быстрой ротации данных и компактности БД
+RETENTION_DAYS = 30 # Увеличено до месяца, чтобы система помнила начало затяжных конфликтов
 
 # Параметры подгрузки контекста в RAM при старте
-RAM_SCORE_LOOKBACK_DAYS = 1
+RAM_SCORE_LOOKBACK_DAYS = 7 # Загружаем баллы за неделю, чтобы видеть накопленный фон события
 RAM_EMBEDDING_LOOKBACK_DAYS = 3
-SLUG_DUPLICATE_HOURS = 18 # Сколько часов хранить слаг для блокировки повторов одного события
+SLUG_DUPLICATE_HOURS = 36 # Увеличиваем до 1.5 суток, чтобы блокировать перепечатки в течение выходных
 
 # Narrative Tracking
-USE_NARRATIVE_TRACKING = True
+USE_NARRATIVE_TRACKING = False # Временно отключаем, требует доработки и оптимизации
 NARRATIVE_BOOST_PER_HIT = 0.2 # +20% к силе новости за каждое повторение темы
 NARRATIVE_MAX_MULTIPLIER = 2.0 # Максимальное усиление (2x)
 
@@ -153,22 +155,22 @@ MAX_SCORE_THRESHOLD = 25.0
 
 # Коэффициенты нормализации для разных классов активов
 ASSET_SCALING_FACTORS = { # Скорректированы для улучшения калибровки
-    "global": 5.0, # Снижено (был высокий Err_Trend)
-    "nasdaq": 5.5, # Снижено (Accuracy < 50%)
+    "global": 4.5, # Снижено: Стабилизация при сохранении WinRate выше 60%
+    "nasdaq": 3.2, # Еще ниже: Уменьшаем агрессивность, чтобы выправить WinRate с 25%
     "sp500": 5.0,  # Снижено
-    "oil": 5.0,    # Снижено для стабилизации
+    "oil": 3.5,    # Снижено: Точность 33% требует более консервативных оценок
     "btc": 2.5,    # Оставляем, хорошо работает
-    "gold": 4.5,   # Значительно снижено (был критический Err_Trend +11)
-    "vix": 5.0,    # Увеличиваем, VIX очень волатилен и требует большего масштабирования
-    "soxs": 3.0,   # Увеличиваем, SOXS 3x leveraged, требует большего масштабирования
+    "gold": 2.5,   # Снижено до 2.5: Несмотря на рост WinRate, разброс растет (+6.84)
+    "vix": 4.0,    # Снижено до 4.0: AvgError 24.48 остается слишком высокой, нужно больше приземления
+    "soxs": 2.2,   # Снижено: Полупроводники сейчас крайне волатильны
 }
 
-LEARNING_RATE = 0.02  # Еще больше снижаем для защиты от рыночного шума
+LEARNING_RATE = 0.015 # Делаем обучение более плавным для защиты от шума
 IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
 LEARNING_THRESHOLD = 0.2 # Снижен порог рыночного движения, чтобы учиться на более мелких изменениях
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
 MIN_WEIGHT_THRESHOLD = 0.5 # Повышено для автоматического удаления слабых/случайных связей
-NEUTRAL_SCORE_THRESHOLD = 2.5 # Еще выше порог для отсечения около-рыночного шума
+NEUTRAL_SCORE_THRESHOLD = 2.5 # Повышено для отсечения шума, мешающего WinRate на Nasdaq/SOXS
 MAX_ENTITY_PARTS = 2 # Сокращаем до 2 для лучшей группировки и консолидации весов
 DUPLICATE_TITLE_THRESHOLD = 0.75 # Порог для почти идентичных строк (опечатки, разные хвосты источников)
 FALLBACK_DUPLICATE_THRESHOLD = 0.5 # Порог схожести, когда семантический поиск недоступен
@@ -182,19 +184,28 @@ CONFIDENCE_THRESHOLD = 0.35 # Минимальная уверенность ИИ
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
 # Рейтинг доверия источникам (Trust Factor)
 SOURCE_TRUST_LEVELS = {
-    "reuters": 1.3,        # Повышенное доверие
-    "bloomberg": 1.3,
-    "cnn": 1.2,
+    "nbc news": 1.3,
+    "financial times": 1.3,
     "wsj": 1.2,
-    "financial times": 1.2,
-    "cnbc": 1.0,           # Стандарт
-    "yahoo finance": 1.0,
+    "cnbc": 1.2,           # Повышаем на основе WinRate 82.8%
+    "cnn": 1.2,            # Повышаем на основе WinRate 100%
+    "msn": 1.1,            # Хороший показатель 84%
+    "thestreet": 1.1,
+    "bloomberg": 1.1,      # Снижаем с 1.3 до 1.1 (WinRate 69% — неплохо, но не топ)
+    "seeking alpha": 1.1,
+    "barron's": 1.1,
+    "reuters": 0.7,        # Значительно снижаем (WinRate 48% на огромном объеме — это шум)
+    "yahoo finance": 0.7,  # Снижаем (WinRate 45%)
+    "al jazeera": 0.6,     # WinRate 45%
+    "the new york times": 0.4, # Очень низкая точность (16%)
+    "the national": 0.3,   # WinRate 0%
+    "nvidia newsroom": 0.4, # Корпоративный PR часто контр-тренде
     "reddit": 0.5,         # Пониженное доверие (высокий риск шума)
     "twitter": 0.4,
     "x.com": 0.4,
     "woxx.com": 0.4,
 }
-DEFAULT_TRUST_SCORE = 0.8  # Значение для неизвестных источников
+DEFAULT_TRUST_SCORE = 0.7  # Немного снижаем базу для фильтрации случайных источников
 
 # Thresholds for market signals (Empirical sensitivity)
 SIGNAL_THRESHOLD_HIGH = 3.5  # Повышаем порог для индексов, чтобы уменьшить количество ложных алертов

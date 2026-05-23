@@ -488,12 +488,13 @@ async def ai_analyze(text: str, rotator: ModelRotator, session: Optional[aiohttp
       "score": float (-10.0 to 10.0). CRITICAL: Use Finance Risk Scale:
                NEGATIVE SCORE (-10 to -1) = GOOD news for markets (Growth, Profits, Rate cuts, Peace).
                POSITIVE SCORE (1 to 10) = BAD news for markets (War, Inflation, Defaults, Rate hikes).
+               ADJUSTMENT: If the news is just an update, status report, or continuation of an already known long-term situation (like an ongoing blockade or war), use a much lower score (0.0 to 1.5).
                Example: Alphabet winning in AI is a NEGATIVE score (around -3.0).
                Range 0.0 to 1.5 is for Neutral/Routine news.
       "event_type": "military" | "economic" | "diplomatic" | "neutral" | "tech",
       "entities": ["list of countries, companies or key regions"],
       "slug": "short_snake_case_event_id (2-4 words). Use the same slug for different articles reporting the same core event (e.g., 'korea_ai_tax_impact').",
-      "is_black_swan": boolean (True ONLY for extreme, unpredictable, market-shaking rarities like 9/11, sudden wars, or total structural collapses),
+      "is_black_swan": boolean (True ONLY for NEW, sudden, and extreme shocks. FALSE if this is a development, escalation, or update of a situation that has been ongoing for weeks or months),
       "confidence": float (0.0 to 1.0, reflecting your certainty about the impact and entity identification)
     }}
     Do not include any markdown formatting or explanations.
@@ -704,8 +705,9 @@ def market_signals(score: float, event_key: str) -> Dict[str, str]:
 # WEIGHT / IMPACT MODEL
 # =========================
 
-def predict_impact(score: float, state: GTSStateManager) -> float:
+def predict_impact(score: float, state: GTSStateManager, asset: str = "global") -> float:
     # Вес уже применен в накопленном балле через confidence при обновлении
+    # Будущая реализация: брать множитель конкретного актива из БД/state
     return min(abs(score) * state.multiplier, 100)
 
 # =========================
@@ -775,9 +777,13 @@ def should_send(key: str, current_score: float, state: GTSStateManager, is_black
 # LEARNING SYSTEM
 # =========================
 
-async def update_weights(event_key: str, error: float, state: GTSStateManager):
+async def update_weights(event_key: str, error: float, state: GTSStateManager, is_correct: bool = True):
     """Обновляет веса событий на основе ошибки прогноза."""
-    adjustment = state.learning_rate * error * 0.01
+    # Асимметричное обучение: если направление неверное, учимся в 2 раза быстрее (штрафуем сильнее)
+    lr_multiplier = 1.0 if is_correct else 2.5
+    
+    # Если ошибка отрицательная (переоценили), вес падает. Если положительная (недооценили), растет.
+    adjustment = state.learning_rate * error * 0.01 * lr_multiplier
 
     # Обновляем основной ключ
     state.weights[event_key] = max(0.5, min(5.0, state.weights.get(event_key, 1.0) + adjustment))
@@ -948,7 +954,7 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager)
             cursor.execute("""
                 SELECT * FROM predictions 
                 WHERE resolved < 2 
-                ORDER BY timestamp DESC LIMIT 200
+                ORDER BY timestamp ASC LIMIT 500
             """)
             rows = cursor.fetchall()
             logging.info(f"🧠 Начало цикла обучения. Найдено кандидатов для обработки: {len(rows)}")
@@ -1043,14 +1049,16 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager)
                 if new_resolved_status == 1:
                     # Фаза 1: Быстрая калибровка множителя и фильтрация RAM-баллов
                     all_errors.append(error)
-                    if is_correct == 0 and abs(score) > config.NEUTRAL_SCORE_THRESHOLD:
+                    if not is_correct and abs(score) > config.NEUTRAL_SCORE_THRESHOLD:
                         async with state.lock:
-                            state.scores[event_key] *= 0.5 # Штраф за ошибку в Primary окне
+                            # Штрафуем балл в памяти сильнее при неверном направлении
+                            state.scores[event_key] *= 0.3 
 
                     # Накопление статистики по источникам (только при первом переходе в 'resolved')
                     if row['resolved'] == 0:
                         source_domain = row['source_domain']
                         if source_domain:
+                            # Учитываем ложные срабатывания (is_correct=0) как больший вклад в ошибку
                             cursor.execute("""
                                 INSERT INTO source_stats (source_domain, total_resolved, correct_count, sum_error, sum_confidence)
                                 VALUES (?, 1, ?, ?, ?)
@@ -1074,7 +1082,7 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager)
 
                 else:
                     # Фаза 2: Уточнение веса конкретного события (Long-term)
-                    updates_by_key[event_key].append(error)
+                    updates_by_key[event_key].append((error, is_correct))
 
                 cursor.execute("""
                     UPDATE predictions
@@ -1083,9 +1091,10 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager)
                 """, (new_resolved_status, actual, is_correct, row['id']))
 
             # 1. Агрегированное обновление весов (защита от "двойного" обучения на пачке новостей)
-            for e_key, errors in updates_by_key.items():
-                avg_err = sum(errors) / len(errors)
-                await update_weights(e_key, avg_err, state) # Передаем state
+            for e_key, data_list in updates_by_key.items():
+                avg_err = sum(d[0] for d in data_list) / len(data_list)
+                mostly_correct = sum(1 for d in data_list if d[1]) / len(data_list) > 0.5
+                await update_weights(e_key, avg_err, state, is_correct=mostly_correct)
 
             # 2. Калибровка глобального множителя (один раз за цикл на основе всей выборки)
             if all_errors:
@@ -1225,8 +1234,8 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
     feed = await loop.run_in_executor(sync_executor, lambda: feedparser.parse(raw_data))
 
     # Адаптивное окно возраста новости:
-    # Если рынок активен — окно узкое (согласно конфигу), если закрыт — расширяем до 72ч.
-    max_age_h = config.MAX_NEWS_AGE_HOURS if is_market_active else 72
+    # Если рынок активен — окно узкое, если закрыт — используем лимит для неактивного времени.
+    max_age_h = config.MAX_NEWS_AGE_HOURS if is_market_active else config.MAX_NEWS_AGE_HOURS_INACTIVE
     
     # 1. Фильтруем всю ленту от старых записей ПЕРЕД обработкой
     fresh_entries = []
@@ -1241,9 +1250,7 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             else:
                 # Переводим в DEBUG, чтобы не спамить в консоль
                 logging.debug(f"Skipping old news: '{entry.title}' (Age: {age_h:.1f}h, Max: {max_age_h}h)")
-        else:
-            # Если даты нет (редкий случай), пропускаем новость в обработку
-            fresh_entries.append(entry)
+        # Если даты публикации нет, мы её не добавляем (более строгий подход к качеству данных)
 
     # 2. Берем только свежие новости в пределах лимита
     max_entries_to_process = config.RSS_MAX_ENTRIES if is_market_active else config.RSS_MAX_ENTRIES_INACTIVE

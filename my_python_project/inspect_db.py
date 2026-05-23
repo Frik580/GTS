@@ -112,14 +112,17 @@ def inspect_gts():
         # Загружаем все значимые разрешенные прогнозы для анализа *недавних* трендов
         # Исключаем шум из статистики, чтобы он не занижал WinRate и не искажал среднюю ошибку
         all_res_query = f"""
-            SELECT target_asset, is_correct, actual_move, predicted_impact, timestamp 
-            FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm'
+            SELECT target_asset, is_correct, actual_move, predicted_impact, timestamp, resolved
+            FROM predictions WHERE resolved >= 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm'
         """
         df_all = pd.read_sql(all_res_query, conn)
 
         # Загружаем накопленную статистику по активам из новой таблицы asset_stats
         asset_stats_df = pd.read_sql("""
-            SELECT target_asset, total_resolved, correct_count, sum_error
+            SELECT target_asset, 
+                   COALESCE(total_resolved, 0) as total_resolved, 
+                   COALESCE(correct_count, 0) as correct_count, 
+                   COALESCE(sum_error, 0.0) as sum_error
             FROM asset_stats
             WHERE LOWER(target_asset) != 'hbm'
         """, conn)
@@ -150,12 +153,19 @@ def inspect_gts():
                 asset_df_from_predictions = df_all[df_all['target_asset'] == asset].sort_values('timestamp')
                 recent_window = max(5, int(len(asset_df_from_predictions) * 0.3)) # Window based on available recent data
                 recent_df = asset_df_from_predictions.tail(recent_window)
-                recent_wr = recent_df['is_correct'].mean() * 100 if not recent_df.empty else 0
-                recent_err = recent_df['error'].mean() if not recent_df.empty else 0
                 
-                # Расчет изменений
-                wr_delta = recent_wr - total_wr
-                err_delta = recent_err - total_err
+                wr_trend_str = "---"
+                err_trend_str = "---"
+                wr_delta = 0
+                err_delta = 0
+
+                if not recent_df.empty and len(recent_df) >= 3:
+                    recent_wr = recent_df['is_correct'].mean() * 100
+                    recent_err = recent_df['error'].mean()
+                    wr_delta = recent_wr - total_wr
+                    err_delta = recent_err - total_err
+                    wr_trend_str = f"{wr_delta:+.1f}%"
+                    err_trend_str = f"{err_delta:+.2f}"
                 
                 # Формирование комментария
                 comment = ""
@@ -173,9 +183,9 @@ def inspect_gts():
                     "Asset": asset,
                     "Total": total_cnt,
                     "WinRate%": round(total_wr, 1),
-                    "WR_Trend": f"{wr_delta:+.1f}%",
-                    "AvgError": round(total_err, 2),
-                    "Err_Trend": f"{err_delta:+.2f}",
+                    "WR_Trend": wr_trend_str,
+                    "AvgError": f"{total_err:.2f} ({'🔻' if total_err < 10 else '🔥'})",
+                    "Err_Trend": err_trend_str,
                     "Status/Comment": comment
                 })
             
@@ -184,12 +194,13 @@ def inspect_gts():
 
         print("\n--- СТАТИСТИКА ПРОГНОЗОВ ---")
         total = pd.read_sql("SELECT COUNT(*) as total FROM predictions", conn).iloc[0]['total']
+        pending = pd.read_sql("SELECT COUNT(*) as count FROM predictions WHERE resolved = 0", conn).iloc[0]['count']
         
-        # Считаем общее количество обработанных записей (включая нейтральные)
-        all_resolved = pd.read_sql("SELECT COUNT(*) as count FROM predictions WHERE resolved = 1", conn).iloc[0]['count']
+        # Считаем общее количество обработанных записей (Фазы 1 и 2)
+        all_resolved = pd.read_sql("SELECT COUNT(*) as count FROM predictions WHERE resolved >= 1", conn).iloc[0]['count']
 
         # Загружаем все значимые resolved прогнозы для детального анализа трендов
-        query = f"SELECT is_correct, actual_move FROM predictions WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm' ORDER BY timestamp ASC"
+        query = f"SELECT is_correct, actual_move FROM predictions WHERE resolved >= 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm' ORDER BY timestamp ASC"
         df_sig = pd.read_sql(query, conn)
 
         cursor = conn.cursor()
@@ -198,12 +209,14 @@ def inspect_gts():
         multiplier_val = curr_mult[0] if curr_mult else config.IMPACT_MULTIPLIER
 
         print(f"Всего прогнозов в базе: {total}")
+        print(f"Ожидают разрешения (pending): {pending}")
         print(f"Всего обработано (resolved): {all_resolved}")
 
         if not df_sig.empty:
             # Используем накопленную статистику для общего Win Rate
             overall_stats = pd.read_sql("""
-                SELECT SUM(total_resolved) as total_resolved_overall, SUM(correct_count) as correct_count_overall
+                SELECT COALESCE(SUM(total_resolved), 0) as total_resolved_overall, 
+                       COALESCE(SUM(correct_count), 0) as correct_count_overall
                 FROM asset_stats
                 WHERE LOWER(target_asset) != 'hbm'
             """, conn).iloc[0]

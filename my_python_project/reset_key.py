@@ -74,19 +74,65 @@ def reset_all_learning():
         # 3. Удаляем старые прогнозы, чтобы не обучаться на истории
         cursor.execute("DELETE FROM predictions")
         
+        # 4. Очищаем накопленную статистику и предложения
+        cursor.execute("DELETE FROM source_stats")
+        cursor.execute("DELETE FROM asset_stats")
+        cursor.execute("DELETE FROM ai_global_suggestions")
+
         conn.commit()
         print("✅ Система обучения полностью сброшена.")
         print(f"✅ Глобальный множитель возвращен к: {config.IMPACT_MULTIPLIER}")
         print("🚀 Теперь вы можете запустить engine.py с чистого листа.")
 
+def reset_multiplier_only():
+    """
+    Сбрасывает только глобальный множитель влияния до значения из конфига.
+    Полезно, если система 'переобучилась' и задрала множитель слишком высоко.
+    """
+    print(f"--- Сброс IMPACT_MULTIPLIER до базового ({config.IMPACT_MULTIPLIER}) ---")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE settings SET value = ? WHERE key = 'impact_multiplier'", (config.IMPACT_MULTIPLIER,))
+        conn.commit()
+    print("✅ Множитель успешно сброшен в базе данных.")
+    print("ℹ️ Не забудьте перезапустить engine.py, чтобы он подхватил новое значение.")
+
+def reset_source_stats():
+    """
+    Сбрасывает накопленную статистику по источникам новостей.
+    """
+    print("--- Сброс статистики источников (Source Analysis) ---")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM source_stats")
+        conn.commit()
+    print("✅ Статистика источников успешно очищена.")
+
+def reset_asset_stats():
+    """
+    Сбрасывает накопленную статистику по активам.
+    """
+    print("--- Сброс статистики активов (Asset Stats) ---")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM asset_stats")
+        conn.commit()
+    print("✅ Статистика активов успешно очищена.")
+
 if __name__ == "__main__":
     # Выберите нужное действие:
     
     # Вариант 1: Полный сброс
-    # reset_all_learning()
+    reset_all_learning()
 
     # Вариант 2: Сброс конкретных ключей
     # reset_event_keys(["OIL_US_IRAN"])
 
     # Вариант 3: Удаление ключей с > 2 сущностями (очистка базы согласно новому лимиту)
-    reset_long_keys(max_entities=2)
+    # reset_long_keys(max_entities=2)
+
+    # Вариант 4: Сброс только множителя
+    # reset_multiplier_only()
+
+    # Вариант 5: Сброс статистики источников
+    # reset_source_stats()
