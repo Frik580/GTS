@@ -1,5 +1,6 @@
 import feedparser
 import logging
+from logging.handlers import RotatingFileHandler
 import re
 import sqlite3
 import time
@@ -46,7 +47,12 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler(config.LOG_FILE, encoding='utf-8'),
+        RotatingFileHandler(
+            config.LOG_FILE, 
+            encoding='utf-8', 
+            maxBytes=10*1024*1024, # 10 МБ
+            backupCount=2          # Хранить 2 старых архива
+        ),
         logging.StreamHandler()
     ]
 )

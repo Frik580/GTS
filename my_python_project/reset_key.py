@@ -37,24 +37,46 @@ def reset_long_keys(max_entities=2):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
-        # Получаем все уникальные ключи из таблиц весов и прогнозов
-        cursor.execute("SELECT event_key FROM weights UNION SELECT event_key FROM predictions")
-        keys = [row[0] for row in cursor.fetchall() if row[0]]
-        
-        long_keys = [k for k in keys if len(k.split('_')) > max_entities]
-        
+        # Оптимизированный поиск длинных ключей через SQL (если возможно) или фильтрация в Python
+        cursor.execute("SELECT DISTINCT event_key FROM weights UNION SELECT DISTINCT event_key FROM predictions")
+        long_keys = [row[0] for row in cursor.fetchall() if row[0] and len(row[0].split('_')) > max_entities]
+
         if not long_keys:
             print("🔍 Длинных ключей не обнаружено.")
             return
 
-        for key_name in long_keys:
-            cursor.execute("DELETE FROM predictions WHERE event_key = ?", (key_name,))
-            cursor.execute("DELETE FROM weights WHERE event_key = ?", (key_name,))
-            print(f"🗑 Удален длинный ключ: {key_name}")
-            
+        placeholders = ', '.join(['?'] * len(long_keys))
+        cursor.execute(f"DELETE FROM predictions WHERE event_key IN ({placeholders})", long_keys)
+        cursor.execute(f"DELETE FROM weights WHERE event_key IN ({placeholders})", long_keys)
+
         conn.commit()
         print(f"✅ Всего удалено уникальных длинных ключей: {len(long_keys)}")
-        print("Перезапустите engine.py для обновления состояния в памяти.")
+
+def deep_clean_db():
+    """
+    Выполняет глубокую оптимизацию:
+    1. Удаляет осиротевшие эмбеддинги (для которых нет событий).
+    2. Удаляет старые прогнозы согласно конфигу.
+    3. Выполняет VACUUM.
+    """
+    print("🧹 Запуск глубокой очистки базы данных...")
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # 1. Удаляем старые записи
+        cursor.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+        cursor.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+        
+        # 2. Удаляем эмбеддинги, у которых нет соответствующих заголовков в events
+        cursor.execute("DELETE FROM embeddings WHERE title NOT IN (SELECT title FROM events)")
+        
+        conn.commit()
+
+    with get_db_connection() as conn:
+        print("📦 Сжатие базы данных (VACUUM)...")
+        conn.execute("VACUUM")
+    
+    print("✅ База данных полностью оптимизирована.")
 
 def reset_all_learning():
     """
@@ -73,6 +95,7 @@ def reset_all_learning():
         
         # 3. Удаляем старые прогнозы, чтобы не обучаться на истории
         cursor.execute("DELETE FROM predictions")
+        cursor.execute("DELETE FROM embeddings")
         
         # 4. Очищаем накопленную статистику и предложения
         cursor.execute("DELETE FROM source_stats")
@@ -119,11 +142,26 @@ def reset_asset_stats():
         conn.commit()
     print("✅ Статистика активов успешно очищена.")
 
+def clear_log():
+    """
+    Очищает содержимое лог-файла, указанного в config.py.
+    """
+    print(f"--- Очистка файла логов: {config.LOG_FILE} ---")
+    try:
+        with open(config.LOG_FILE, 'w', encoding='utf-8') as f:
+            pass  # Открытие в режиме 'w' обнуляет файл
+        print("✅ Лог-файл успешно очищен.")
+    except Exception as e:
+        print(f"❌ Ошибка: {e} (Возможно, файл занят запущенным engine.py)")
+
 if __name__ == "__main__":
     # Выберите нужное действие:
     
     # Вариант 1: Полный сброс
-    reset_all_learning()
+    # reset_all_learning()
+
+    # Вариант 6: Глубокая очистка без потери весов обучения
+    deep_clean_db()
 
     # Вариант 2: Сброс конкретных ключей
     # reset_event_keys(["OIL_US_IRAN"])
@@ -136,3 +174,6 @@ if __name__ == "__main__":
 
     # Вариант 5: Сброс статистики источников
     # reset_source_stats()
+
+    # Вариант 7: Очистка логов
+    clear_log()
