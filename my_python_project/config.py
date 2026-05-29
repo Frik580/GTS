@@ -9,6 +9,10 @@ CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
+# Network Settings
+HTTP_PROXY = os.getenv("HTTP_PROXY") # Например: "http://user:pass@ip:port"
+USE_PROXY = True if HTTP_PROXY else False
+
 # Database and Logs
 DB_PATH = "gts.db"
 LOG_FILE = "gts.log"
@@ -21,34 +25,38 @@ LOG_FILE = "gts.log"
 TRACKED_KEYWORDS = {
     "US Iran": (2.5, ["global", "oil", "vix", "btc", "sp500"]), # Пример: влияет на общий риск и нефть
     "Nvidia": (1.8, ["nasdaq", "soxs", "vix", "global"]), # Добавлен VIX для учета волатильности техов
-    "OpenAI": (1.8, ["soxs"]), # Пример: влияет на AI и полупроводники
+    "OpenAI": (1.8, ["soxs", "global"]), # Пример: влияет на AI и полупроводники
     "Oil": (1.5, ["oil", "global", "vix"]), # Пример: влияет на нефть и общий риск
     "Gold": (0.8, ["gold"]), # Слегка повышаем вес, чтобы модель уделяла больше внимания золоту
     "BTC": (1.2, ["btc", "global"]), # Повышен вес для учета высокой волатильности
     "Nasdaq": (1.0, ["nasdaq"]),
-    "AI Sector": (1.3, ["nasdaq", "soxs"]),
-    "AI Infrastructure": (1.4, ["nasdaq", "soxs"]),
+    "AI Sector": (1.3, ["nasdaq", "soxs", "global"]),
+    "AI Infrastructure": (1.4, ["nasdaq", "soxs", "global"]),
     "Trump Policy": (2.2, ["global", "nasdaq", "sp500", "oil", "vix"]),
-    "MU": (1.2, ["soxs"]),
-    "Semiconductor": (1.5, ["soxs", "nasdaq"]),
+    "MU": (1.2, ["soxs", "global"]),
+    "Semiconductor": (1.5, ["soxs", "nasdaq", "global"]),
     "US Inflation": (2.0, ["global", "vix", "gold"]),
-    "Intel": (1.3, ["soxs"]),
-    "AMD": (1.3, ["soxs"]),
-    "Broadcom": (1.2, ["soxs"]),
-    "Anthropic": (1.5, ["soxs", "nasdaq"]), 
-    "Qualcomm": (1.2, ["soxs"]),
+    "Intel": (1.3, ["soxs", "global"]),
+    "AMD": (1.3, ["soxs", "global"]),
+    "Broadcom": (1.2, ["soxs", "global"]),
+    "Anthropic": (1.5, ["soxs", "nasdaq", "global"]), 
+    "Qualcomm": (1.2, ["soxs", "global"]),
+    "Fed": (2.2, ["global", "vix", "sp500", "nasdaq", "gold"]),
     "Hormuz": (2.0, ["oil", "vix", "global"]), # Фокус на геополитике в регионе
     "Yield": (1.8, ["global", "vix", "nasdaq"]), # Влияние на общий риск, волатильность и тех. сектор
     "Treasury": (1.5, ["global", "vix", "nasdaq"]), # Влияние на общий риск, волатильность и тех. сектор
-    "Jerome Powell": (2.2, ["global", "vix", "nasdaq"]), # Прямое влияние на монетарную политику и рынки
-    "HBM": (1.5, ["soxs", "nasdaq"]),
-    "HBM Memory": (1.5, ["soxs", "nasdaq"]), # Ключевой компонент для производства AI-ускорителей
+    "HBM": (1.5, ["soxs", "nasdaq", "global"]),
+    "HBM Memory": (1.5, ["soxs", "nasdaq", "global"]), # Ключевой компонент для производства AI-ускорителей
     "Inflation": (2.0, ["global", "vix", "gold", "nasdaq", "sp500"]), # Добавлены макроэкономические факторы
     "Interest Rates": (2.2, ["global", "vix", "nasdaq", "sp500"]),
     "Recession": (2.5, ["global", "vix", "gold", "nasdaq", "sp500"]),
     "Geopolitical Tension": (2.5, ["global", "oil", "vix", "gold"]),
     "Earnings": (1.5, ["nasdaq", "sp500"]),
-    "Tech Earnings": (1.8, ["nasdaq", "soxs"])
+    "Tech Earnings": (1.8, ["nasdaq", "soxs", "global"]),
+    "Tech Upgrade": (1.7, ["nasdaq", "soxs", "global"]), # Повышение рейтингов акций тех. сектора
+    "Tech Downgrade": (1.7, ["nasdaq", "soxs", "global"]), # Понижение рейтингов акций тех. сектора
+    "Analyst Rating Tech": (1.5, ["nasdaq", "soxs", "global"]), # Аналитические рейтинги в тех. секторе
+    "Investment Firm Tech": (1.3, ["nasdaq", "soxs", "global"]) # Новости от инвест. фирм по тех. сектору
 }
 
 # Нормализация сущностей для формирования консистентных ключей (event_key)
@@ -58,7 +66,8 @@ ENTITY_CANONICAL_MAP = {
     "ISRAEL": "ISRAEL",
     "CHINA": "CHINA",
     "RUSSIA": "RUSSIA",
-    "FED": "FED", "FEDERAL RESERVE": "FED",
+    "FED": "FED", "FEDERAL RESERVE": "FED", "US_FEDERAL_RESERVE": "FED",
+    "ФРС": "FED", "ФРС_США": "FED",
     "BITCOIN": "BTC", "BTC": "BTC",
     "GOLD": "GOLD", "XAU": "GOLD",
     "OIL": "OIL", "CRUDE": "OIL",
@@ -68,10 +77,13 @@ ENTITY_CANONICAL_MAP = {
     "ALPHABET": "GOOGLE", "GOOGL": "GOOGLE",
     "MICROSOFT": "MSFT",
     "TSMC": "TSM", "TENCENT": "TENCENT",
+    "HORMUZ": "IRAN_US", # Стягиваем новости про Ормуз к теме США-Иран
     "SEMICONDUCTOR": "SOXS",
     "OPEC": "OIL_SUPPLY", "INVENTORIES": "OIL_SUPPLY",
     "SHALE": "OIL_SUPPLY",
-    "RED_SEA": "GEOPOLITICS_OIL"
+    "RED_SEA": "GEOPOLITICS_OIL",
+    "UPGRADE": "UPGRADE",
+    "DOWNGRADE": "DOWNGRADE"
 }
 
 # HBM Index Configuration
@@ -94,31 +106,85 @@ HBM_INDEX_COMPONENTS = {
 
 # Основные RSS-ленты Yahoo Finance для расширения охвата рынка
 YAHOO_FINANCE_FEEDS = [
-    "https://finance.yahoo.com/news/rssindex", # Общая лента финансовых новостей
+    "https://finance.yahoo.com/news/rss", # Общая лента финансовых новостей
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AMD,AVGO,TSM,INTC,MU&region=US&lang=en-US", # Лента для полупроводников
-    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=MU,SKHYNIX.KS,SAMSUNG.KS&region=US&lang=en-US", # Лента для памяти (HBM)
+    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=MU,000660.KS,005930.KS&region=US&lang=en-US", # Лента для памяти (HBM)
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=ASML,AMAT,LRCX,KLAC&region=US&lang=en-US", # Лента для оборудования для производства чипов
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,MSFT,GOOGL,AMZN,META&region=US&lang=en-US", # Лента для AI и крупных технологических компаний
-    "https://feeds.finance.yahoo.com/rss/2.0/headline?s=ASML,AMAT,LRCX,KLAC&region=US&lang=en-US", # Лента для оборудования для производства чипов (повтор для усиления охвата)
-    "https://rsshub.app/bloomberg/topics/economics", # Лента для экономики
-    "https://www.reuters.com/world/rss", # Актуальная лента мировых новостей
-    "https://www.reuters.com/business/commodities/rss", # Актуальная лента сырьевых товаров
-    "https://www.maritime-executive.com/rss", # Лента для морских новостей, включая новости о Ормузском проливе
+    "https://news.google.com/rss/search?q=site:bloomberg.com+economics&hl=en-US", # Экономика Bloomberg через Google
+    "https://news.google.com/rss/search?q=site:bloomberg.com+markets&hl=en-US", # Рынки Bloomberg через Google
+    "https://news.google.com/rss/search?q=site:reuters.com+world&hl=en-US", # Мировые новости Reuters через Google
+    "https://news.google.com/rss/search?q=site:reuters.com+business&hl=en-US", # Бизнес новости Reuters через Google
+    "https://news.google.com/rss/search?q=site:reuters.com+technology+semiconductor+OR+AI&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=site:reuters.com+commodities&hl=en-US", # Сырьевые товары Reuters через Google
+    "https://news.google.com/rss/search?q=site:maritime-executive.com&hl=en-US", # Морские новости через Google (Ормузский пролив и логистика)
     "https://www.federalreserve.gov/feeds/press_monetary.xml", # Лента для новостей Федеральной резервной системы США
-    "https://home.treasury.gov/news/press-releases/rss" # Лента для новостей Министерства финансов США
+    "https://news.google.com/rss/search?q=site:home.treasury.gov+press+releases&hl=en-US", # Новости Минфина США через Google
+    "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=&company=&dateb=&owner=include&start=0&count=40&output=atom", # Последние отчеты SEC EDGAR
+    "https://news.google.com/rss/search?q=Deltaone+news&hl=en-US", # Замена Twitter на поиск новостей Deltaone
+    "https://news.google.com/rss/search?q=unusual+whales+macro&hl=en-US", # Замена Twitter Unusual Whales
+    "https://news.google.com/rss/search?q=FirstSquawk+news&hl=en-US",
+    "https://www.tomshardware.com/feeds.xml", # Лента для новостей о технологиях и полупроводниках от Tom's Hardware
+    "https://www.tomshardware.com/feeds/tag/semiconductors", # Лента для новостей о полупроводниках от Tom's Hardware
+    "https://www.tomshardware.com/feeds/tag/artificial-intelligence", # Лента для новостей об искусственном интеллекте от Tom's Hardware
+    "https://www.trendforce.com/feed/Semiconductors.html", # Лента для новостей о полупроводниках от TrendForce
+    "https://www.digitimes.com/rss/daily.xml", # Лента для новостей о технологиях и полупроводниках от DigiTimes
+    "https://www.theregister.com/software/ai_ml/headlines.atom", # Лента для новостей об ИИ от The Register
+    # "https://www.eetimes.com/feed/", # Общая лента для новостей о технологиях от EE Times
+    # "https://www.eetimes.com/tag/semiconductors/feed/" # Лента для новостей о полупроводниках от EE Times
+    "https://news.google.com/rss/search?q=site:eetimes.com&hl=en-US", # Общая лента EE Times через Google
+    "https://news.google.com/rss/search?q=site:eetimes.com+semiconductors&hl=en-US" # Лента о полупроводниках от EE Times через Google
 ]
 
-RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}+when:12h" for k in TRACKED_KEYWORDS.keys()] + YAHOO_FINANCE_FEEDS
-RSS_MAX_ENTRIES = 4 # Количество записей RSS для обработки в активное время рынка
-RSS_MAX_ENTRIES_INACTIVE = RSS_MAX_ENTRIES*3 # Количество записей RSS для обработки, когда рынок неактивен (ночь/выходные)
+# Настройки фильтрации источников
+ONLY_SPECIFIC_SOURCES = True # Теперь только доверенные источники (Reuters, Bloomberg и т.д.)
+SPECIFIC_SOURCES_LIST = [
+    "reuters.com",
+    "bloomberg.com",
+    "ft.com",
+    "wsj.com",
+    "federalreserve.gov",
+    "treasury.gov",
+    "sec.gov",
+    "ecb.europa.eu",
+    "asia.nikkei.com",
+    "economist.com",
+
+    # SEMI_SOURCES
+    "semianalysis.com",
+    "trendforce.com",
+    "tomshardware.com",
+    "digitimes.com",
+    "theregister.com",
+    "eetimes.com",
+    "anandtech.com",
+    "techpowerup.com",
+
+    # FAST_SIGNAL
+    "x.com",
+    "twitter.com",
+    "reddit.com",
+    "stocktwits.com",
+    "wccftech.com",
+
+    # GEO_SOURCES
+    "ukmto.org",
+    "maritime-executive.com",
+    "gcaptain.com",
+    "hellenicshippingnews.com",
+]
+
+RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}+when:6h" for k in TRACKED_KEYWORDS.keys()] + YAHOO_FINANCE_FEEDS
+RSS_MAX_ENTRIES = 15 # Увеличено до 15, чтобы находить доверенные источники внутри агрегаторов
+RSS_MAX_ENTRIES_INACTIVE = 30 # Увеличено до 30 для более глубокого охвата за ночь
 
 # Time Intervals (in seconds)
-CHECK_INTERVAL = 180 
-COOLDOWN = 600 # Интервал между действиями (10 минут)
-LEARNING_INTERVAL = 1800 # Интервал обучения (30 минут) - оптимально для баланса между адаптацией и стабильностью
-MARKET_LOOKBACK_HOURS = 2 # Окно анализа реакции рынка
-MAX_NEWS_AGE_HOURS = MARKET_LOOKBACK_HOURS*2 # Сокращаем до 4ч для активного рынка
-MAX_NEWS_AGE_HOURS_INACTIVE = 24 # Сокращаем с 72ч до 24ч для выходных/ночи
+CHECK_INTERVAL = 60 # Сканируем новости каждую минуту для более быстрой реакции на события
+COOLDOWN = 900 # Увеличиваем до 15 минут, чтобы не спамить повторами одного события
+LEARNING_INTERVAL = 1200 # Увеличиваем до 20 минут, чтобы дать системе больше времени на обучение и адаптацию
+MARKET_LOOKBACK_HOURS = 1 # Сокращено до 1 часа для более острой реакции на изменения цен
+MAX_NEWS_AGE_HOURS = 4 # Увеличено до 4ч для надежности захвата RSS
+MAX_NEWS_AGE_HOURS_INACTIVE = 12 # Увеличено до 12ч для ночного периода
 
 # Адаптивные задержки обучения (в часах) в зависимости от типа события
 EVENT_TYPE_LOOKBACK = {
@@ -137,75 +203,81 @@ RETENTION_DAYS = 30 # Увеличено до месяца, чтобы сист�
 # Параметры подгрузки контекста в RAM при старте
 RAM_SCORE_LOOKBACK_DAYS = 7 # Загружаем баллы за неделю, чтобы видеть накопленный фон события
 RAM_EMBEDDING_LOOKBACK_DAYS = 3
-SLUG_DUPLICATE_HOURS = 36 # Увеличиваем до 1.5 суток, чтобы блокировать перепечатки в течение выходных
+SLUG_DUPLICATE_HOURS = 48 # Увеличено до 2 суток, чтобы блокировать повторные обсуждения старых событий
 
-# Narrative Tracking
-USE_NARRATIVE_TRACKING = False # Временно отключаем, требует доработки и оптимизации
+# Dynamic Narrative Discovery
+USE_NARRATIVE_TRACKING = True 
+NARRATIVE_AUTO_DISCOVERY = True # Автоматическое добавление новых сущностей в веса
+MIN_NARRATIVE_STREAK = 3 # Сколько раз тема должна появиться за окно, чтобы стать ключом
+NARRATIVE_DISCOVERY_WINDOW = 24 # Окно поиска новых тем (в часах)
 NARRATIVE_BOOST_PER_HIT = 0.2 # +20% к силе новости за каждое повторение темы
 NARRATIVE_MAX_MULTIPLIER = 2.0 # Максимальное усиление (2x)
 
 # AI Delays
 AI_DELAY_JSON = 4 # Оптимально для 15 RPM (бесплатный Gemini)
 AI_DELAY_NO_JSON = 10 # Задержка для тяжелых/медленных моделей
+ENABLE_HOURLY_REPORT = False # Включить/выключить отправку часового отчета в Telegram
+HOURLY_SUMMARY_INTERVAL = 3600 # Интервал отправки часового отчета в Telegram (1 час)
+NUM_WORKERS = 2 # Количество параллельных воркеров для обработки новостей (1 или 2)
 
 # Logic Factors
 DECAY_FACTOR = 0.9 # Оптимальный баланс: новость сохраняет 50% силы через 15-20 минут и затухает за 2-3 часа.
 NIGHT_DECAY_FACTOR = 0.98 # Почти не снижаем балл, когда рынок закрыт, чтобы сохранить контекст к открытию
-MAX_SCORE_THRESHOLD = 25.0 
+MAX_SCORE_THRESHOLD = 25.0
+DECAY_REFERENCE_SECONDS = 180 # Базовый интервал времени для расчета затухания
 
-# Коэффициенты нормализации для разных классов активов
-ASSET_SCALING_FACTORS = { # Скорректированы для улучшения калибровки
-    "global": 4.5, # Снижено: Стабилизация при сохранении WinRate выше 60%
-    "nasdaq": 3.2, # Еще ниже: Уменьшаем агрессивность, чтобы выправить WinRate с 25%
-    "sp500": 5.0,  # Снижено
-    "oil": 3.5,    # Снижено: Точность 33% требует более консервативных оценок
-    "btc": 2.5,    # Оставляем, хорошо работает
-    "gold": 2.5,   # Снижено до 2.5: Несмотря на рост WinRate, разброс растет (+6.84)
-    "vix": 4.0,    # Снижено до 4.0: AvgError 24.48 остается слишком высокой, нужно больше приземления
-    "soxs": 2.2,   # Снижено: Полупроводники сейчас крайне волатильны
-}
+BLACK_SWAN_SCORE_THRESHOLD = 7.0 # Порог индивидуального скора новости для подтверждения статуса Black Swan
+LEARNING_RATE = 0.002 # Шаг обучения (теперь применяется напрямую к ошибке в %)
+ASYMMETRIC_LR_FACTOR = 2.0 # Ускорение коррекции при ошибке в направлении (is_correct = False)
 
-LEARNING_RATE = 0.015 # Делаем обучение более плавным для защиты от шума
-IMPACT_MULTIPLIER = 4.0 # Начальное значение. После старта система обучается и берет значение из БД.
+# Multiplier Reset Logic
+MIN_WINRATE_BEFORE_RESET = 40.0 # Порог WinRate (%), ниже которого множитель актива сбрасывается
+MIN_SAMPLE_SIZE_FOR_RESET = 15 # Увеличим выборку для более точного сброса
+
+IMPACT_MULTIPLIER = 0.3 # Базовая чувствительность к Z-score (Sigmas)
 LEARNING_THRESHOLD = 0.2 # Снижен порог рыночного движения, чтобы учиться на более мелких изменениях
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
-MIN_WEIGHT_THRESHOLD = 0.5 # Повышено для автоматического удаления слабых/случайных связей
-NEUTRAL_SCORE_THRESHOLD = 2.5 # Повышено для отсечения шума, мешающего WinRate на Nasdaq/SOXS
-MAX_ENTITY_PARTS = 2 # Сокращаем до 2 для лучшей группировки и консолидации весов
-DUPLICATE_TITLE_THRESHOLD = 0.75 # Порог для почти идентичных строк (опечатки, разные хвосты источников)
-FALLBACK_DUPLICATE_THRESHOLD = 0.5 # Порог схожести, когда семантический поиск недоступен
-SEMANTIC_DUPLICATE_THRESHOLD = 0.88 # Порог схожести векторов (0.85-0.92 оптимально)
+MIN_WEIGHT_THRESHOLD = 0.8 # Чистим базу от слабых связей активнее
+NEUTRAL_SCORE_THRESHOLD = 2.0 # Повышаем порог, чтобы игнорировать "слабые" перепечатки
+MAX_ENTITY_PARTS = 2 # Ограничиваем до 2 слов для более лаконичных ключей и плотной группировки
+DUPLICATE_TITLE_THRESHOLD = 0.75 # Более строгий текстовый фильтр
+FALLBACK_DUPLICATE_THRESHOLD = 0.6 # Повышаем порог для не-семантического поиска
+SEMANTIC_DEDUPLICATION_WINDOW = 6 # Окно в часах: похожие новости за этот период считаются дублями
+SEMANTIC_DUPLICATE_THRESHOLD = 0.88 # Увеличиваем чувствительность (0.82 было слишком мало)
 USE_EMBEDDINGS = True # Включить/выключить семантическую дедупликацию через векторы
-EMBEDDING_PROVIDER = "gemini" # "gemini" или "openrouter"
-# EMBEDDING_MODEL = "models/gemini-embedding-2-preview"
-EMBEDDING_MODEL = "models/gemini-embedding-2" # Более легкая модель для экономии токенов, хорошо работает для новостей
+EMBEDDING_MODEL = "models/gemini-embedding-2" # Основная модель эмбеддингов (Gemini)
+OPENROUTER_EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2:free" # Высокопроизводительная альтернатива для OpenRouter
 CONFIDENCE_THRESHOLD = 0.35 # Минимальная уверенность ИИ для принятия новости
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
 # Рейтинг доверия источникам (Trust Factor)
 SOURCE_TRUST_LEVELS = {
-    "nbc news": 1.3,
-    "financial times": 1.3,
-    "wsj": 1.2,
-    "cnbc": 1.2,           # Повышаем на основе WinRate 82.8%
-    "cnn": 1.2,            # Повышаем на основе WinRate 100%
-    "msn": 1.1,            # Хороший показатель 84%
-    "thestreet": 1.1,
-    "bloomberg": 1.1,      # Снижаем с 1.3 до 1.1 (WinRate 69% — неплохо, но не топ)
-    "seeking alpha": 1.1,
-    "barron's": 1.1,
-    "reuters": 0.7,        # Значительно снижаем (WinRate 48% на огромном объеме — это шум)
-    "yahoo finance": 0.7,  # Снижаем (WinRate 45%)
-    "al jazeera": 0.6,     # WinRate 45%
-    "the new york times": 0.4, # Очень низкая точность (16%)
-    "the national": 0.3,   # WinRate 0%
-    "nvidia newsroom": 0.4, # Корпоративный PR часто контр-тренде
-    "reddit": 0.5,         # Пониженное доверие (высокий риск шума)
-    "twitter": 0.4,
-    "x.com": 0.4,
-    "woxx.com": 0.4,
+    # Official / primary
+    "sec.gov": 1.15,
+    "federalreserve.gov": 1.15,
+    "treasury.gov": 1.15,
+
+    # Tier 1 financial journalism
+    "reuters.com": 1.0,
+    "bloomberg.com": 1.0,
+    "ft.com": 0.96,
+    "wsj.com": 0.95,
+
+    # Semiconductor specialists
+    "semianalysis.com": 0.92,
+    "trendforce.com": 0.87,
+    "tomshardware.com": 0.82,
+    "anandtech.com": 0.9,
+    "servethehome.com": 0.84,
+
+    # Supply chain / rumor-heavy
+    "digitimes.com": 0.74,
+
+    # Social
+    "x.com": 0.25,
+    "reddit.com": 0.2,
 }
-DEFAULT_TRUST_SCORE = 0.7  # Немного снижаем базу для фильтрации случайных источников
+DEFAULT_TRUST_SCORE = 0.65  # Немного снижаем базу для фильтрации случайных источников
 
 # Thresholds for market signals (Empirical sensitivity)
 SIGNAL_THRESHOLD_HIGH = 3.5  # Повышаем порог для индексов, чтобы уменьшить количество ложных алертов
@@ -213,8 +285,34 @@ SIGNAL_THRESHOLD_MED = 2.5   # Повышено для VIX и Oil для фил�
 SIGNAL_THRESHOLD_LOW = 1.5   # For Safe-havens (Gold)
 SIGNAL_THRESHOLD_BTC = 4.0   # For Crypto (Volatility buffer)
 BTC_MIN_VOLATILITY_FOR_ALERT = 1.0 # Минимальное изменение цены BTC (%) для отправки уведомления
+OIL_SHARP_MOVE_THRESHOLD = 2.0 # Порог для оповещения о резком движении нефти (%)
 
+# Конфигурация бенчмарков для расчета Alpha (Abnormal Return)
+ASSET_BENCHMARK_CONFIG = {
+    "nasdaq": {"primary": "^GSPC", "type": "rolling_beta"}, 
+    "sp500":  {"primary": "ACWI", "type": "rolling_beta"}, # Смена на ACWI (MSCI World)
+    "soxs":   {"primary": "SOXX", "type": "leveraged", "factor": -3.0}, # Прямая связь с полупроводниками
+    "btc":    {"primary": "^IXIC", "secondary": "DX-Y.NYB", "type": "multi_factor", "weights": [0.7, -0.3]}, 
+    "oil":    {"primary": "DX-Y.NYB", "type": "rolling_beta"}, 
+    "gold":   {"primary": "TIP", "type": "rolling_beta"}, # TIP = Real Yields Proxy
+    "global": {"primary": "GLOBAL_REGIME", "type": "fixed", "factor": 1.0}
+}
 
+# Веса для композитного режима Global Regime
+GLOBAL_REGIME_WEIGHTS = {
+    "vix": 0.35,      # Equity Stress
+    "move": 0.20,     # Bond Stress (^MOVE)
+    "dxy": 0.15,      # Liquidity (Dollar Index)
+    "hyg": 0.20,      # Credit Stress (High Yield Corp) - Inverted
+    "growth": 0.10    # Growth Expectations (Yield Curve 10Y-3M) - Inverted
+}
+CLEANUP_INTERVAL = 86400 # Интервал очистки базы (24 часа)
+
+# Параметры Квантовой Модели
+EWMA_LAMBDA = 0.94 # Параметр затухания RiskMetrics
+BETA_CLIP = 3.0 # Ограничение экстремальных значений беты
+VOLATILITY_WINDOW = 40 # Окно для расчета реализованной волатильности
+ALPHA_MIN_THRESHOLD = 0.05 
 
 # Если твой Win Rate выше 60% — система работает отлично. 
 # Если ниже 40% — значит, либо веса в config.py настроены неверно, либо рынок сейчас ведет себя иррационально.

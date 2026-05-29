@@ -73,14 +73,14 @@ def inspect_gts():
     # Настраиваем Pandas, чтобы он не скрывал колонки и показывал текст полностью
     pd.set_option('display.max_columns', None)  # Показывать все колонки
     pd.set_option('display.expand_frame_repr', False)  # Не переносить таблицу на новую строку
-    pd.set_option('display.max_colwidth', 100)  # Увеличить ширину текста в колонках
+    pd.set_option('display.max_colwidth', 50)  # Показывать текст в колонках полностью без обрезки
 
     # Инициализируем БД, чтобы автоматически добавить недостающие колонки (is_correct)
     init_db()
 
     with get_db_connection() as conn:
         print("--- ТЕКУЩИЕ ВЕСА (ПОСЛЕ ОБУЧЕНИЯ) ---")
-        weights = pd.read_sql("SELECT * FROM weights ORDER BY weight DESC", conn)
+        weights = pd.read_sql("SELECT event_key, target_asset, weight FROM weights ORDER BY weight DESC", conn)
         print(weights if not weights.empty else "Таблица весов пуста (используются дефолтные)")
         
         print("\n--- ГЛОБАЛЬНЫЕ ПРЕДЛОЖЕНИЯ ИИ (AI GLOBAL SUGGESTIONS) ---")
@@ -122,7 +122,8 @@ def inspect_gts():
             SELECT target_asset, 
                    COALESCE(total_resolved, 0) as total_resolved, 
                    COALESCE(correct_count, 0) as correct_count, 
-                   COALESCE(sum_error, 0.0) as sum_error
+                   COALESCE(sum_error, 0.0) as sum_error,
+                   COALESCE(multiplier, 0.0) as multiplier
             FROM asset_stats
             WHERE LOWER(target_asset) != 'hbm'
         """, conn)
@@ -183,6 +184,7 @@ def inspect_gts():
                     "Asset": asset,
                     "Total": total_cnt,
                     "WinRate%": round(total_wr, 1),
+                    "Multiplier": round(asset_total_stats['multiplier'].iloc[0], 2) if not asset_total_stats.empty else "---",
                     "WR_Trend": wr_trend_str,
                     "AvgError": f"{total_err:.2f} ({'🔻' if total_err < 10 else '🔥'})",
                     "Err_Trend": err_trend_str,

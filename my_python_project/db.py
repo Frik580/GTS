@@ -31,6 +31,8 @@ def init_db():
             vix TEXT,
             fear_greed REAL,
             slug TEXT,
+            summary TEXT,
+            title_ru TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -49,6 +51,7 @@ def init_db():
             resolved INTEGER DEFAULT 0,
             confidence REAL DEFAULT 1.0,
             source_domain TEXT,
+            model_name TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -63,8 +66,10 @@ def init_db():
 
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS weights (
-            event_key TEXT PRIMARY KEY,
-            weight REAL
+            event_key TEXT,
+            target_asset TEXT,
+            weight REAL,
+            PRIMARY KEY (event_key, target_asset)
         )
         """)
 
@@ -98,7 +103,9 @@ def init_db():
                 "vix": "TEXT",
                 "fear_greed": "REAL",
                 "slug": "TEXT",
-                "is_black_swan": "INTEGER DEFAULT 0"
+                "is_black_swan": "INTEGER DEFAULT 0",
+                "summary": "TEXT",
+                "title_ru": "TEXT"
             },
             "predictions": {
                 "actual_move": "REAL DEFAULT 0",
@@ -108,9 +115,18 @@ def init_db():
                 "event_type": "TEXT",
                 "is_black_swan": "INTEGER DEFAULT 0",
                 "confidence": "REAL DEFAULT 1.0",
-                "source_domain": "TEXT"
+                "source_domain": "TEXT",
+                "model_name": "TEXT"
+            },
+            "asset_stats": {
+                "multiplier": f"REAL DEFAULT {config.IMPACT_MULTIPLIER}"
             }
         }
+
+        # Миграция для таблицы weights (добавление target_asset)
+        cursor.execute("PRAGMA table_info(weights)")
+        if "target_asset" not in [info[1] for info in cursor.fetchall()]:
+            cursor.execute("ALTER TABLE weights ADD COLUMN target_asset TEXT DEFAULT 'global'")
 
         for table_name, columns in required_columns.items():
             cursor.execute(f"PRAGMA table_info({table_name})")
@@ -154,7 +170,8 @@ def init_db():
             target_asset TEXT PRIMARY KEY,
             total_resolved INTEGER DEFAULT 0,
             correct_count INTEGER DEFAULT 0,
-            sum_error REAL DEFAULT 0
+            sum_error REAL DEFAULT 0,
+            multiplier REAL DEFAULT 4.0
         )
         """)
 
