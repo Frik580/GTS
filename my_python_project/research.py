@@ -124,11 +124,11 @@ async def run_global_research():
                             res_text = (res_json.get('choices', [{}])[0].get('message', {}).get('content') or "").strip()
                 else:
                     gen_config = {"response_mime_type": "application/json"} if active["supports_json"] else {}
-                    response = await client.aio.models.generate_content(
+                    response = await asyncio.wait_for(client.aio.models.generate_content(
                         model=active["name"],
                         contents=prompt,
                         config=gen_config
-                    )
+                    ), timeout=120)
                     res_text = (response.text or "").strip()
 
                 start, end = res_text.find('['), res_text.rfind(']') + 1

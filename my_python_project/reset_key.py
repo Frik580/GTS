@@ -96,6 +96,7 @@ def reset_all_learning():
         # 3. Удаляем старые прогнозы, чтобы не обучаться на истории
         cursor.execute("DELETE FROM predictions")
         cursor.execute("DELETE FROM embeddings")
+        cursor.execute("DELETE FROM events")
         
         # 4. Очищаем накопленную статистику и предложения
         cursor.execute("DELETE FROM source_stats")

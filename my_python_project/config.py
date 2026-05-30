@@ -8,6 +8,9 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+MARKET_DATA_API_KEY = os.getenv("MARKET_DATA_API_KEY") # Ключ от TwelveData или др.
+# Провайдер данных: "twelvedata" или "yfinance" (фоллбек)
+MARKET_DATA_PROVIDER = os.getenv("MARKET_DATA_PROVIDER", "yfinance")
 
 # Network Settings
 HTTP_PROXY = os.getenv("HTTP_PROXY") # Например: "http://user:pass@ip:port"
@@ -62,28 +65,46 @@ TRACKED_KEYWORDS = {
 # Нормализация сущностей для формирования консистентных ключей (event_key)
 ENTITY_CANONICAL_MAP = {
     "USA": "US", "UNITED STATES": "US",
-    "IRAN": "IRAN",
-    "ISRAEL": "ISRAEL",
-    "CHINA": "CHINA",
-    "RUSSIA": "RUSSIA",
-    "FED": "FED", "FEDERAL RESERVE": "FED", "US_FEDERAL_RESERVE": "FED",
-    "ФРС": "FED", "ФРС_США": "FED",
+    "FED": "FED", "FEDERAL RESERVE": "FED", "US_FEDERAL_RESERVE": "FED", "POWELL": "FED", "JEROME_POWELL": "FED",
+    "ФРС": "FED", "ФРС_США": "FED", "БЕЖЕВАЯ_КНИГА": "FED",
+    "ECB": "ECB", "EUROPEAN_CENTRAL_BANK": "ECB", "LAGARDE": "ECB",
+    "BOJ": "BOJ", "BANK_OF_JAPAN": "BOJ", "YEN": "BOJ",
+    
     "BITCOIN": "BTC", "BTC": "BTC",
     "GOLD": "GOLD", "XAU": "GOLD",
     "OIL": "OIL", "CRUDE": "OIL",
-    "HBM": "HBM", "HIGH_BANDWIDTH_MEMORY": "HBM",
-    "NVDA": "NVIDIA", "NVIDIA": "NVIDIA",
+    
+    "NVDA": "NVIDIA", "NVIDIA": "NVIDIA", "BLACKWELL": "NVIDIA", "H100": "NVIDIA",
+    "AMD": "AMD", "ADVANCED_MICRO_DEVICES": "AMD",
+    "INTC": "INTEL", "INTEL": "INTEL",
+    "AVGO": "BROADCOM", "BROADCOM": "BROADCOM",
+    "ASML": "ASML", "ASML_HOLDING": "ASML",
+    "TSMC": "TSM", "TSM": "TSM", "TAIWAN_SEMICONDUCTOR": "TSM",
+    
+    "HBM": "HBM", "HIGH_BANDWIDTH_MEMORY": "HBM", "SK_HYNIX": "HBM",
+    "OPENAI": "OPENAI", "CHATGPT": "OPENAI", "SAM_ALTMAN": "OPENAI",
+    "ANTHROPIC": "ANTHROPIC", "CLAUDE": "ANTHROPIC",
+    
     "DONALD_TRUMP": "TRUMP", "MAGA": "TRUMP",
     "ALPHABET": "GOOGLE", "GOOGL": "GOOGLE",
     "MICROSOFT": "MSFT",
-    "TSMC": "TSM", "TENCENT": "TENCENT",
-    "HORMUZ": "IRAN_US", # Стягиваем новости про Ормуз к теме США-Иран
+    
+    "CPI": "INFLATION", "PCE": "INFLATION", "INFLATION": "INFLATION", "CONSUMER_PRICE_INDEX": "INFLATION",
+    "GDP": "ECONOMY", "GROWTH": "ECONOMY",
+    "NONFARM_PAYROLLS": "EMPLOYMENT", "NFP": "EMPLOYMENT", "JOBS": "EMPLOYMENT", "UNEMPLOYMENT": "EMPLOYMENT",
+    "YIELD": "TREASURY", "TREASURY": "TREASURY", "BOND": "TREASURY", "10Y": "TREASURY",
+    
+    "HORMUZ": "GEOPOLITICS_ME", "RED_SEA": "GEOPOLITICS_ME", "MIDDLE_EAST": "GEOPOLITICS_ME",
+    "TAIWAN": "GEOPOLITICS_ASIA", "SOUTH_CHINA_SEA": "GEOPOLITICS_ASIA",
+    "UKRAINE": "GEOPOLITICS_EU", "RUSSIA": "GEOPOLITICS_EU",
+    
     "SEMICONDUCTOR": "SOXS",
     "OPEC": "OIL_SUPPLY", "INVENTORIES": "OIL_SUPPLY",
     "SHALE": "OIL_SUPPLY",
-    "RED_SEA": "GEOPOLITICS_OIL",
+    
     "UPGRADE": "UPGRADE",
-    "DOWNGRADE": "DOWNGRADE"
+    "DOWNGRADE": "DOWNGRADE",
+    "EARNINGS": "EARNINGS", "QUARTERLY_RESULTS": "EARNINGS"
 }
 
 # HBM Index Configuration
@@ -174,24 +195,62 @@ SPECIFIC_SOURCES_LIST = [
     "hellenicshippingnews.com",
 ]
 
-RSS_FEEDS = [f"https://news.google.com/rss/search?q={k.replace(' ', '+')}+when:6h" for k in TRACKED_KEYWORDS.keys()] + YAHOO_FINANCE_FEEDS
+# Настройки для поиска в соцсетях
+SOCIAL_SEARCH_ENABLED = True
+# Список надежных Nitter-инстансов (для Twitter RSS без API ключа)
+NITTER_INSTANCES = ["nitter.net", "nitter.it", "nitter.privacydev.net"]
+
+# Логика формирования целевых запросов Google News
+RSS_FEEDS = []
+GOOGLE_BASE_URL = "https://news.google.com/rss/search?q="
+
+if ONLY_SPECIFIC_SOURCES:
+    _news_domains = [d for d in SPECIFIC_SOURCES_LIST if d not in ["x.com", "twitter.com", "reddit.com", "stocktwits.com"]]
+    
+    # Разбиваем список доменов на чанки по 10 штук, чтобы не превысить лимит длины URL
+    def chunk_list(lst, n):
+        for i in range(0, len(lst), n):
+            yield lst[i:i + n]
+    
+    _domain_chunks = list(chunk_list(_news_domains, 10))
+    
+    for k in TRACKED_KEYWORDS.keys():
+        keyword_q = k.replace(' ', '+')
+        for chunk in _domain_chunks:
+            _chunk_query = "+(" + "+OR+".join([f"site:{d}" for d in chunk]) + ")"
+            RSS_FEEDS.append(f"{GOOGLE_BASE_URL}{keyword_q}{_chunk_query}+when:6h")
+
+    # Добавляем поиск по соцсетям, если включено
+    if SOCIAL_SEARCH_ENABLED:
+        for k in TRACKED_KEYWORDS.keys():
+            keyword_q = k.replace(' ', '+')
+            # Reddit Search RSS
+            RSS_FEEDS.append(f"https://www.reddit.com/search.rss?q={keyword_q}&sort=new&t=hour")
+            # Twitter via Nitter RSS (берем первый инстанс для примера)
+            RSS_FEEDS.append(f"https://{NITTER_INSTANCES[0]}/search/rss?f=tweets&q={keyword_q}")
+            # StockTwits не имеет RSS, он будет обрабатываться отдельным методом в engine.py
+
+else:
+    RSS_FEEDS = [f"{GOOGLE_BASE_URL}{k.replace(' ', '+')}+when:6h" for k in TRACKED_KEYWORDS.keys()]
+
+RSS_FEEDS += YAHOO_FINANCE_FEEDS
 RSS_MAX_ENTRIES = 15 # Увеличено до 15, чтобы находить доверенные источники внутри агрегаторов
 RSS_MAX_ENTRIES_INACTIVE = 30 # Увеличено до 30 для более глубокого охвата за ночь
 
 # Time Intervals (in seconds)
-CHECK_INTERVAL = 60 # Сканируем новости каждую минуту для более быстрой реакции на события
+CHECK_INTERVAL = 300 # 5 минут — оптимальный баланс между скоростью и риском блокировки IP
 COOLDOWN = 900 # Увеличиваем до 15 минут, чтобы не спамить повторами одного события
-LEARNING_INTERVAL = 1200 # Увеличиваем до 20 минут, чтобы дать системе больше времени на обучение и адаптацию
-MARKET_LOOKBACK_HOURS = 1 # Сокращено до 1 часа для более острой реакции на изменения цен
+LEARNING_INTERVAL = 1800 # 30 минут — оптимально для накопления выборки цен
+MARKET_LOOKBACK_HOURS = 2 # Увеличиваем до 2 часов: macro-alpha требует времени для проявления
 MAX_NEWS_AGE_HOURS = 4 # Увеличено до 4ч для надежности захвата RSS
 MAX_NEWS_AGE_HOURS_INACTIVE = 12 # Увеличено до 12ч для ночного периода
 
 # Адаптивные задержки обучения (в часах) в зависимости от типа события
 EVENT_TYPE_LOOKBACK = {
-    "military":   {"primary": 0.5, "secondary": 6},
-    "economic":   {"primary": 0.5, "secondary": 4},
+    "military":   {"primary": 1, "secondary": 8},
+    "economic":   {"primary": 1, "secondary": 6},
     "diplomatic": {"primary": 2, "secondary": 8},
-    "tech":       {"primary": 1, "secondary": 3},
+    "tech":       {"primary": 1.5, "secondary": 4},
     "neutral":    {"primary": 2, "secondary": 4},
 }
 BLACK_SWAN_LOOKBACK_HOURS = 24 # Окно для оценки фундаментального сдвига при ЧП
@@ -199,6 +258,7 @@ BLACK_SWAN_LOOKBACK_HOURS = 24 # Окно для оценки фундамент
 CLEANUP_INTERVAL = 86400 # Интервал очистки (24 часа)
 RESEARCH_INTERVAL = 86400 # Интервал глобального исследования ИИ (раз в сутки)
 RETENTION_DAYS = 30 # Увеличено до месяца, чтобы система помнила начало затяжных конфликтов
+EMBEDDING_RETENTION_DAYS = 1 # Векторы нужны только для дедупликации (1-3 дня достаточно)
 
 # Параметры подгрузки контекста в RAM при старте
 RAM_SCORE_LOOKBACK_DAYS = 7 # Загружаем баллы за неделю, чтобы видеть накопленный фон события
@@ -216,6 +276,11 @@ NARRATIVE_MAX_MULTIPLIER = 2.0 # Максимальное усиление (2x)
 # AI Delays
 AI_DELAY_JSON = 4 # Оптимально для 15 RPM (бесплатный Gemini)
 AI_DELAY_NO_JSON = 10 # Задержка для тяжелых/медленных моделей
+
+# Concurrency Settings
+GEMINI_CONCURRENCY = 1 # Бесплатный тариф требует последовательных запросов
+OPENROUTER_CONCURRENCY = 5 # Платные/быстрые модели могут обрабатываться параллельно
+
 ENABLE_HOURLY_REPORT = False # Включить/выключить отправку часового отчета в Telegram
 HOURLY_SUMMARY_INTERVAL = 3600 # Интервал отправки часового отчета в Telegram (1 час)
 NUM_WORKERS = 2 # Количество параллельных воркеров для обработки новостей (1 или 2)
@@ -227,7 +292,7 @@ MAX_SCORE_THRESHOLD = 25.0
 DECAY_REFERENCE_SECONDS = 180 # Базовый интервал времени для расчета затухания
 
 BLACK_SWAN_SCORE_THRESHOLD = 7.0 # Порог индивидуального скора новости для подтверждения статуса Black Swan
-LEARNING_RATE = 0.002 # Шаг обучения (теперь применяется напрямую к ошибке в %)
+LEARNING_RATE = 0.001 # Уменьшаем шаг обучения, чтобы веса не "прыгали" от одной ошибки
 ASYMMETRIC_LR_FACTOR = 2.0 # Ускорение коррекции при ошибке в направлении (is_correct = False)
 
 # Multiplier Reset Logic
@@ -235,15 +300,15 @@ MIN_WINRATE_BEFORE_RESET = 40.0 # Порог WinRate (%), ниже которо�
 MIN_SAMPLE_SIZE_FOR_RESET = 15 # Увеличим выборку для более точного сброса
 
 IMPACT_MULTIPLIER = 0.3 # Базовая чувствительность к Z-score (Sigmas)
-LEARNING_THRESHOLD = 0.2 # Снижен порог рыночного движения, чтобы учиться на более мелких изменениях
+LEARNING_THRESHOLD = 0.4 # Повышаем порог: учимся только на движениях > 0.4 сигмы
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
 MIN_WEIGHT_THRESHOLD = 0.8 # Чистим базу от слабых связей активнее
 NEUTRAL_SCORE_THRESHOLD = 2.0 # Повышаем порог, чтобы игнорировать "слабые" перепечатки
 MAX_ENTITY_PARTS = 2 # Ограничиваем до 2 слов для более лаконичных ключей и плотной группировки
-DUPLICATE_TITLE_THRESHOLD = 0.75 # Более строгий текстовый фильтр
-FALLBACK_DUPLICATE_THRESHOLD = 0.6 # Повышаем порог для не-семантического поиска
+DUPLICATE_TITLE_THRESHOLD = 0.70 # Чуть более мягкий текстовый фильтр
+FALLBACK_DUPLICATE_THRESHOLD = 0.55 # Повышаем чувствительность для не-семантического поиска
 SEMANTIC_DEDUPLICATION_WINDOW = 6 # Окно в часах: похожие новости за этот период считаются дублями
-SEMANTIC_DUPLICATE_THRESHOLD = 0.88 # Увеличиваем чувствительность (0.82 было слишком мало)
+SEMANTIC_DUPLICATE_THRESHOLD = 0.84 # Оптимально для склейки новостей от разных моделей
 USE_EMBEDDINGS = True # Включить/выключить семантическую дедупликацию через векторы
 EMBEDDING_MODEL = "models/gemini-embedding-2" # Основная модель эмбеддингов (Gemini)
 OPENROUTER_EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2:free" # Высокопроизводительная альтернатива для OpenRouter
@@ -275,7 +340,7 @@ SOURCE_TRUST_LEVELS = {
 
     # Social
     "x.com": 0.25,
-    "reddit.com": 0.2,
+    "reddit.com": 0.5,
 }
 DEFAULT_TRUST_SCORE = 0.65  # Немного снижаем базу для фильтрации случайных источников
 

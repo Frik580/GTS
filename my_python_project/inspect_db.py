@@ -258,7 +258,7 @@ def inspect_gts():
         print("\n--- АНАЛИЗ ИСТОЧНИКОВ: WINRATE И УВЕРЕННОСТЬ ---")
         source_stats_query = """
             SELECT 
-                source_domain as Source, 
+                COALESCE(NULLIF(source_domain, ''), '[unknown]') as Source, 
                 total_resolved as Total, 
                 ROUND((CAST(correct_count AS REAL) / total_resolved) * 100, 1) as "WinRate%", 
                 ROUND(sum_confidence / total_resolved, 2) as "AvgConf",

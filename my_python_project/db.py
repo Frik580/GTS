@@ -84,10 +84,33 @@ def init_db():
         )
         """)
 
+        # Таблица для долгосрочной статистики источников (накопительная)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS source_stats (
+            source_domain TEXT PRIMARY KEY,
+            total_resolved INTEGER DEFAULT 0,
+            correct_count INTEGER DEFAULT 0,
+            sum_error REAL DEFAULT 0,
+            sum_confidence REAL DEFAULT 0
+        )
+        """)
+
+        # Таблица для долгосрочной статистики по активам (накопительная)
+        cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS asset_stats (
+            target_asset TEXT PRIMARY KEY,
+            total_resolved INTEGER DEFAULT 0,
+            correct_count INTEGER DEFAULT 0,
+            sum_error REAL DEFAULT 0,
+            multiplier REAL DEFAULT {config.IMPACT_MULTIPLIER}
+        )
+        """)
+
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_link ON events(link)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_resolved ON predictions(resolved)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_key ON predictions(event_key)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_timestamp ON predictions(timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_timestamp ON embeddings(timestamp)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_slug ON events(slug)")
 
         # Словарь миграций: описываем колонки, которые должны быть в таблицах
@@ -152,27 +175,5 @@ def init_db():
 
         # Очистка существующих пустых значений в активах (миграция данных)
         cursor.execute("UPDATE predictions SET target_asset = 'global' WHERE target_asset IS NULL OR target_asset = ''")
-
-        # Таблица для долгосрочной статистики источников (накопительная)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS source_stats (
-            source_domain TEXT PRIMARY KEY,
-            total_resolved INTEGER DEFAULT 0,
-            correct_count INTEGER DEFAULT 0,
-            sum_error REAL DEFAULT 0,
-            sum_confidence REAL DEFAULT 0
-        )
-        """)
-
-        # Таблица для долгосрочной статистики по активам (накопительная)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS asset_stats (
-            target_asset TEXT PRIMARY KEY,
-            total_resolved INTEGER DEFAULT 0,
-            correct_count INTEGER DEFAULT 0,
-            sum_error REAL DEFAULT 0,
-            multiplier REAL DEFAULT 4.0
-        )
-        """)
 
         conn.commit()
