@@ -162,7 +162,7 @@ if __name__ == "__main__":
     # reset_all_learning()
 
     # Вариант 6: Глубокая очистка без потери весов обучения
-    deep_clean_db()
+    # deep_clean_db()
 
     # Вариант 2: Сброс конкретных ключей
     # reset_event_keys(["OIL_US_IRAN"])
@@ -177,4 +177,4 @@ if __name__ == "__main__":
     # reset_source_stats()
 
     # Вариант 7: Очистка логов
-    clear_log()
+    # clear_log()

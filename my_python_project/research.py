@@ -62,6 +62,16 @@ def init_model_pool():
             for m in or_models:
                 sorted_pool.append(m)
 
+        if config.DEEPSEEK_API_KEY:
+            ds_models = [
+                {"name": "deepseek-v4-flash", "supports_json": True, "provider": "deepseek"},
+                {"name": "deepseek-chat", "supports_json": True, "provider": "deepseek"},
+                {"name": "deepseek-reasoner", "supports_json": False, "provider": "deepseek"}
+            ]
+            for m in ds_models:
+                sorted_pool.append(m)
+                logging.info(f"✅ Добавлена в пул ротации (DeepSeek): {m['name']}")
+
         return sorted_pool
     except Exception:
         return [{"name": "models/gemini-1.5-flash", "supports_json": True, "provider": "gemini"}]
@@ -72,21 +82,14 @@ current_model_idx = 0
 async def run_global_research():
     """Анализирует макро-триггеры и сохраняет предложения в БД."""
     global current_model_idx
-    assets = ["nasdaq", "oil", "soxs", "vix", "gold", "btc"]
-    prompt = f"""
-    As a senior macro strategist, identify the top 15 global entities, geopolitical triggers, or economic factors 
-    that will most significantly impact these assets over the next 30 days: {assets}.
-    
-    Return ONLY a JSON list of objects:
-    [
-      {{
-        "keyword": "Entity Name",
-        "asset": "target asset from the list",
-        "impact_direction": "bullish/bearish",
-        "reasoning": "Short professional explanation"
-      }}
-    ]
+    current_model_idx = 0  # Всегда начинаем с самого приоритетного провайдера (Gemini)
+    # Переносим изменяемые активы в конец промпта, если они могут меняться
+    static_research_instruction = """
+    As a senior macro strategist, identify the top 15 global entities, geopolitical triggers, or economic factors.
+    Return ONLY a JSON list of objects: [ { "keyword": "Entity Name", "asset": "target", "impact_direction": "bullish/bearish", "reasoning": "Short explanation" } ].
     """
+    assets = ["nasdaq", "oil", "soxs", "vix", "gold", "btc"]
+    prompt = f"{static_research_instruction} Focus on these assets over the next 30 days: {assets}."
     
     logging.info("--- Starting Global AI Research ---")
     max_retries = 3
@@ -98,7 +101,10 @@ async def run_global_research():
                 active = model_pool[current_model_idx]
                 res_text = ""
 
-                if active.get("provider") == "openrouter":
+                if active.get("provider") in ["openrouter", "deepseek"]:
+                    api_url = "https://openrouter.ai/api/v1/chat/completions" if active.get("provider") == "openrouter" else "https://api.deepseek.com/chat/completions"
+                    api_key = config.OPENROUTER_API_KEY if active.get("provider") == "openrouter" else config.DEEPSEEK_API_KEY
+                    
                     payload = {
                         "model": active["name"],
                         "messages": [{"role": "user", "content": prompt}]
@@ -108,9 +114,9 @@ async def run_global_research():
                     
                     async with aiohttp.ClientSession() as session:
                         async with session.post(
-                            "https://openrouter.ai/api/v1/chat/completions",
+                            api_url,
                             headers={
-                                "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+                                "Authorization": f"Bearer {api_key}",
                                 "HTTP-Referer": "https://gts-project.io",
                                 "X-Title": "GTS Research",
                                 "Content-Type": "application/json"

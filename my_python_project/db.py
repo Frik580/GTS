@@ -40,6 +40,7 @@ def init_db():
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id INTEGER,
             event_key TEXT,
             score REAL,
             predicted_impact REAL,
@@ -50,6 +51,7 @@ def init_db():
             is_black_swan INTEGER DEFAULT 0,
             resolved INTEGER DEFAULT 0,
             confidence REAL DEFAULT 1.0,
+            signed_alpha REAL DEFAULT 0,
             source_domain TEXT,
             model_name TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -91,7 +93,9 @@ def init_db():
             total_resolved INTEGER DEFAULT 0,
             correct_count INTEGER DEFAULT 0,
             sum_error REAL DEFAULT 0,
-            sum_confidence REAL DEFAULT 0
+            sum_confidence REAL DEFAULT 0,
+            sum_alpha REAL DEFAULT 0,
+            sum_alpha_sq REAL DEFAULT 0
         )
         """)
 
@@ -105,13 +109,6 @@ def init_db():
             multiplier REAL DEFAULT {config.IMPACT_MULTIPLIER}
         )
         """)
-
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_link ON events(link)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_resolved ON predictions(resolved)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_key ON predictions(event_key)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_timestamp ON predictions(timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_timestamp ON embeddings(timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_slug ON events(slug)")
 
         # Словарь миграций: описываем колонки, которые должны быть в таблицах
         # Это позволяет добавлять новые активы просто дополняя этот список
@@ -131,6 +128,7 @@ def init_db():
                 "title_ru": "TEXT"
             },
             "predictions": {
+                "event_id": "INTEGER",
                 "actual_move": "REAL DEFAULT 0",
                 "resolved": "INTEGER DEFAULT 0",
                 "is_correct": "INTEGER DEFAULT 0",
@@ -138,11 +136,16 @@ def init_db():
                 "event_type": "TEXT",
                 "is_black_swan": "INTEGER DEFAULT 0",
                 "confidence": "REAL DEFAULT 1.0",
+                "signed_alpha": "REAL DEFAULT 0",
                 "source_domain": "TEXT",
                 "model_name": "TEXT"
             },
             "asset_stats": {
                 "multiplier": f"REAL DEFAULT {config.IMPACT_MULTIPLIER}"
+            },
+            "source_stats": {
+                "sum_alpha": "REAL DEFAULT 0",
+                "sum_alpha_sq": "REAL DEFAULT 0"
             }
         }
 
@@ -175,5 +178,14 @@ def init_db():
 
         # Очистка существующих пустых значений в активах (миграция данных)
         cursor.execute("UPDATE predictions SET target_asset = 'global' WHERE target_asset IS NULL OR target_asset = ''")
+
+        # Создание индексов (перенесено в конец, чтобы гарантировать наличие колонок после миграций)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_link ON events(link)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_resolved ON predictions(resolved)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_key ON predictions(event_key)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_timestamp ON predictions(timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_id ON predictions(event_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_timestamp ON embeddings(timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_slug ON events(slug)")
 
         conn.commit()

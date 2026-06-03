@@ -8,6 +8,7 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 MARKET_DATA_API_KEY = os.getenv("MARKET_DATA_API_KEY") # Ключ от TwelveData или др.
 # Провайдер данных: "twelvedata" или "yfinance" (фоллбек)
 MARKET_DATA_PROVIDER = os.getenv("MARKET_DATA_PROVIDER", "yfinance")
@@ -21,6 +22,21 @@ DB_PATH = "gts.db"
 LOG_FILE = "gts.log"
 
 # Feeds
+# Глобальный маппинг активов на тикеры
+ASSET_TICKER_MAP = {
+    "nasdaq": "^IXIC",
+    "sp500": "^GSPC",
+    "acwi": "ACWI",
+    "tip": "TIP",
+    "oil": "CL=F",
+    "vix": "^VIX",
+    "gold": "GLD",
+    "btc": "BTC-USD",
+    "soxs": "SOXS",
+    "soxx": "SOXX",
+    "global": "GLOBAL_REGIME"
+}
+
 # Список ключевых слов для отслеживания. Можно менять, добавлять или удалять.
 # Теперь это словарь: "Ключевое слово": Вес (приоритет)
 # Формат: "Ключевое слово": (Вес, ["целевой_актив_1", "целевой_актив_2"])
@@ -32,6 +48,9 @@ TRACKED_KEYWORDS = {
     "Oil": (1.5, ["oil", "global", "vix"]), # Пример: влияет на нефть и общий риск
     "Gold": (0.8, ["gold"]), # Слегка повышаем вес, чтобы модель уделяла больше внимания золоту
     "BTC": (1.2, ["btc", "global"]), # Повышен вес для учета высокой волатильности
+    "AI": (1.5, ["nasdaq", "soxs", "global"]),
+    "SOXX": (1.4, ["soxs", "nasdaq", "global"]),
+    "Computing": (1.3, ["nasdaq", "soxs", "global"]),
     "Nasdaq": (1.0, ["nasdaq"]),
     "AI Sector": (1.3, ["nasdaq", "soxs", "global"]),
     "AI Infrastructure": (1.4, ["nasdaq", "soxs", "global"]),
@@ -83,6 +102,7 @@ ENTITY_CANONICAL_MAP = {
     
     "HBM": "HBM", "HIGH_BANDWIDTH_MEMORY": "HBM", "SK_HYNIX": "HBM",
     "OPENAI": "OPENAI", "CHATGPT": "OPENAI", "SAM_ALTMAN": "OPENAI",
+    "COMPUTE": "AI_INFRASTRUCTURE", "COMPUTING": "AI_INFRASTRUCTURE",
     "ANTHROPIC": "ANTHROPIC", "CLAUDE": "ANTHROPIC",
     
     "DONALD_TRUMP": "TRUMP", "MAGA": "TRUMP",
@@ -193,10 +213,14 @@ SPECIFIC_SOURCES_LIST = [
     "maritime-executive.com",
     "gcaptain.com",
     "hellenicshippingnews.com",
+    "benzinga.com",
+    "investors.com",
+    "barrons.com",
+    "seekingalpha.com"
 ]
 
 # Настройки для поиска в соцсетях
-SOCIAL_SEARCH_ENABLED = True
+SOCIAL_SEARCH_ENABLED = False # Временно отключаем, так как RSS от соцсетей может быть шумным и требует доработки фильтров
 # Список надежных Nitter-инстансов (для Twitter RSS без API ключа)
 NITTER_INSTANCES = ["nitter.net", "nitter.it", "nitter.privacydev.net"]
 
@@ -266,6 +290,7 @@ RAM_EMBEDDING_LOOKBACK_DAYS = 3
 SLUG_DUPLICATE_HOURS = 48 # Увеличено до 2 суток, чтобы блокировать повторные обсуждения старых событий
 
 # Dynamic Narrative Discovery
+WEIGHT_DECAY_FACTOR = 0.999 # Ежедневный коэффициент затухания весов (EWMA) для борьбы с переобучением
 USE_NARRATIVE_TRACKING = True 
 NARRATIVE_AUTO_DISCOVERY = True # Автоматическое добавление новых сущностей в веса
 MIN_NARRATIVE_STREAK = 3 # Сколько раз тема должна появиться за окно, чтобы стать ключом
@@ -274,16 +299,17 @@ NARRATIVE_BOOST_PER_HIT = 0.2 # +20% к силе новости за каждо�
 NARRATIVE_MAX_MULTIPLIER = 2.0 # Максимальное усиление (2x)
 
 # AI Delays
-AI_DELAY_JSON = 4 # Оптимально для 15 RPM (бесплатный Gemini)
+AI_DELAY_JSON = 3 # Немного сокращаем ожидание для повышения пропускной способности
 AI_DELAY_NO_JSON = 10 # Задержка для тяжелых/медленных моделей
 
 # Concurrency Settings
 GEMINI_CONCURRENCY = 1 # Бесплатный тариф требует последовательных запросов
 OPENROUTER_CONCURRENCY = 5 # Платные/быстрые модели могут обрабатываться параллельно
+DEEPSEEK_CONCURRENCY = 2 # Лимит для DeepSeek API
 
 ENABLE_HOURLY_REPORT = False # Включить/выключить отправку часового отчета в Telegram
 HOURLY_SUMMARY_INTERVAL = 3600 # Интервал отправки часового отчета в Telegram (1 час)
-NUM_WORKERS = 2 # Количество параллельных воркеров для обработки новостей (1 или 2)
+NUM_WORKERS = 4 # Увеличиваем до 4, так как DeepSeek и OpenRouter могут работать параллельно с Gemini
 
 # Logic Factors
 DECAY_FACTOR = 0.9 # Оптимальный баланс: новость сохраняет 50% силы через 15-20 минут и затухает за 2-3 часа.
@@ -304,15 +330,16 @@ LEARNING_THRESHOLD = 0.4 # Повышаем порог: учимся тольк�
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
 MIN_WEIGHT_THRESHOLD = 0.8 # Чистим базу от слабых связей активнее
 NEUTRAL_SCORE_THRESHOLD = 2.0 # Повышаем порог, чтобы игнорировать "слабые" перепечатки
-MAX_ENTITY_PARTS = 2 # Ограничиваем до 2 слов для более лаконичных ключей и плотной группировки
-DUPLICATE_TITLE_THRESHOLD = 0.70 # Чуть более мягкий текстовый фильтр
+MAX_ENTITY_PARTS = 3 # Увеличено до 3, чтобы лучше обрабатывать сложные Slug от ИИ
+DUPLICATE_TITLE_THRESHOLD = 0.65 # Снижен порог для более агрессивной дедупликации
 FALLBACK_DUPLICATE_THRESHOLD = 0.55 # Повышаем чувствительность для не-семантического поиска
-SEMANTIC_DEDUPLICATION_WINDOW = 6 # Окно в часах: похожие новости за этот период считаются дублями
-SEMANTIC_DUPLICATE_THRESHOLD = 0.84 # Оптимально для склейки новостей от разных моделей
+SEMANTIC_DEDUPLICATION_WINDOW = 12 # Увеличено до 12ч для борьбы с перепечатками в разных часовых поясах
+SEMANTIC_DUPLICATE_THRESHOLD = 0.81 # Снижен порог для склейки семантически схожих новостей с разными акцентами
 USE_EMBEDDINGS = True # Включить/выключить семантическую дедупликацию через векторы
 EMBEDDING_MODEL = "models/gemini-embedding-2" # Основная модель эмбеддингов (Gemini)
 OPENROUTER_EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2:free" # Высокопроизводительная альтернатива для OpenRouter
 CONFIDENCE_THRESHOLD = 0.35 # Минимальная уверенность ИИ для принятия новости
+SLUG_SPAM_WINDOW = 7200 # 2 часа: если новость с тем же Slug пришла быстрее, она игнорируется как дубль
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
 # Рейтинг доверия источникам (Trust Factor)
@@ -340,7 +367,7 @@ SOURCE_TRUST_LEVELS = {
 
     # Social
     "x.com": 0.25,
-    "reddit.com": 0.5,
+    "reddit.com": 0.3,
 }
 DEFAULT_TRUST_SCORE = 0.65  # Немного снижаем базу для фильтрации случайных источников
 
@@ -377,6 +404,8 @@ CLEANUP_INTERVAL = 86400 # Интервал очистки базы (24 часа
 EWMA_LAMBDA = 0.94 # Параметр затухания RiskMetrics
 BETA_CLIP = 3.0 # Ограничение экстремальных значений беты
 VOLATILITY_WINDOW = 40 # Окно для расчета реализованной волатильности
+Z_ALPHA_VOL_FLOOR = 0.05 # Минимальная волатильность (%) для Z-Alpha по обычным активам
+GLOBAL_Z_ALPHA_VOL_FLOOR = 0.25 # Более высокий floor для GLOBAL_REGIME, чтобы не учиться на микрошуме
 ALPHA_MIN_THRESHOLD = 0.05 
 
 # Если твой Win Rate выше 60% — система работает отлично. 

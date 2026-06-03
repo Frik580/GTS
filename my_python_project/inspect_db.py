@@ -261,17 +261,38 @@ def inspect_gts():
                 COALESCE(NULLIF(source_domain, ''), '[unknown]') as Source, 
                 total_resolved as Total, 
                 ROUND((CAST(correct_count AS REAL) / total_resolved) * 100, 1) as "WinRate%", 
-                ROUND(sum_confidence / total_resolved, 2) as "AvgConf",
+                ROUND(sum_alpha / total_resolved, 3) as "AvgAlpha",
+                ROUND(
+                    (sum_alpha / total_resolved) / 
+                    NULLIF(SQRT(ABS(sum_alpha_sq / total_resolved - (sum_alpha / total_resolved) * (sum_alpha / total_resolved))), 0), 
+                2) as "InfoRatio",
                 ROUND(sum_error / total_resolved, 2) as AvgErr
             FROM source_stats
             WHERE total_resolved > 0
-            ORDER BY "WinRate%" DESC, Total DESC
+            ORDER BY "InfoRatio" DESC, "AvgAlpha" DESC
         """
         source_df = pd.read_sql(source_stats_query, conn)
         if not source_df.empty:
             print(source_df.to_string(index=False))
         else:
             print("Недостаточно данных для анализа источников.")
+
+        print("\n--- ЭФФЕКТИВНОСТЬ МОДЕЛЕЙ (AI PERFORMANCE) ---")
+        model_stats_query = """
+            SELECT 
+                model_name as Model,
+                COUNT(*) as Total,
+                SUM(is_correct) as Correct,
+                ROUND(AVG(confidence), 2) as AvgConf,
+                ROUND((CAST(SUM(is_correct) AS REAL) / COUNT(*)) * 100, 1) as "WinRate%"
+            FROM predictions
+            WHERE resolved >= 1
+            GROUP BY model_name
+            ORDER BY "WinRate%" DESC
+        """
+        model_df = pd.read_sql(model_stats_query, conn)
+        if not model_df.empty:
+            print(model_df.to_string(index=False))
 
 if __name__ == "__main__":
     inspect_gts()

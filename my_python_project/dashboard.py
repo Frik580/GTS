@@ -12,7 +12,7 @@ def load_data():
             SELECT e.title, e.score as news_score, e.event as type, e.is_black_swan, e.timestamp, 
                    p.target_asset, p.resolved, p.is_correct
             FROM events e
-            LEFT JOIN predictions p ON e.timestamp = p.timestamp AND p.event_type = e.event
+            LEFT JOIN predictions p ON e.id = p.event_id
             ORDER BY e.timestamp DESC LIMIT 50
         """, conn)
         return df
