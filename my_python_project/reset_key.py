@@ -1,8 +1,8 @@
-import sqlite3
+import asyncio
 import config
 from db import get_db_connection
 
-def reset_event_keys(keys):
+async def reset_event_keys(keys):
     if not keys:
         print("⚠️ Список ключей пуст.")
         return
@@ -11,48 +11,47 @@ def reset_event_keys(keys):
         keys = [keys]
         
     print(f"--- Сброс ключей: {', '.join(keys)} ---")
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
+    async with get_db_connection() as conn:
         placeholders = ', '.join(['?'] * len(keys))
         
         # 1. Удаляем из таблицы прогнозов (откуда init_state берет баллы)
-        cursor.execute(f"DELETE FROM predictions WHERE event_key IN ({placeholders})", keys)
-        rows_deleted = cursor.rowcount
+        async with conn.execute(f"DELETE FROM predictions WHERE event_key IN ({placeholders})", keys) as cursor:
+            rows_deleted = cursor.rowcount
         
         # 2. Удаляем из таблицы весов (если система успела на нем "обучиться")
-        cursor.execute(f"DELETE FROM weights WHERE event_key IN ({placeholders})", keys)
-        weights_deleted = cursor.rowcount
+        async with conn.execute(f"DELETE FROM weights WHERE event_key IN ({placeholders})", keys) as cursor:
+            weights_deleted = cursor.rowcount
         
-        conn.commit()
+        await conn.commit()
         print(f"✅ Удалено записей прогнозов: {rows_deleted}")
         print(f"✅ Удалено кастомных весов: {weights_deleted}")
         print("Теперь перезапустите engine.py, чтобы обнулить балл в RAM.")
 
-def reset_long_keys(max_entities=2):
+async def reset_long_keys(max_entities=None):
     """
     Находит и удаляет все ключи, в которых количество сущностей (частей, разделенных _) 
-    превышает заданный порог.
+    превышает заданный порог (по умолчанию из config.MAX_ENTITY_PARTS).
     """
+    if max_entities is None:
+        max_entities = config.MAX_ENTITY_PARTS
     print(f"--- Поиск и удаление ключей с количеством сущностей > {max_entities} ---")
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        
+    async with get_db_connection() as conn:
         # Оптимизированный поиск длинных ключей через SQL (если возможно) или фильтрация в Python
-        cursor.execute("SELECT DISTINCT event_key FROM weights UNION SELECT DISTINCT event_key FROM predictions")
-        long_keys = [row[0] for row in cursor.fetchall() if row[0] and len(row[0].split('_')) > max_entities]
+        async with conn.execute("SELECT DISTINCT event_key FROM weights UNION SELECT DISTINCT event_key FROM predictions") as cursor:
+            long_keys = [row[0] for row in await cursor.fetchall() if row[0] and len(row[0].split('_')) > max_entities]
 
         if not long_keys:
             print("🔍 Длинных ключей не обнаружено.")
             return
 
         placeholders = ', '.join(['?'] * len(long_keys))
-        cursor.execute(f"DELETE FROM predictions WHERE event_key IN ({placeholders})", long_keys)
-        cursor.execute(f"DELETE FROM weights WHERE event_key IN ({placeholders})", long_keys)
+        await conn.execute(f"DELETE FROM predictions WHERE event_key IN ({placeholders})", long_keys)
+        await conn.execute(f"DELETE FROM weights WHERE event_key IN ({placeholders})", long_keys)
 
-        conn.commit()
+        await conn.commit()
         print(f"✅ Всего удалено уникальных длинных ключей: {len(long_keys)}")
 
-def deep_clean_db():
+async def deep_clean_db():
     """
     Выполняет глубокую оптимизацию:
     1. Удаляет осиротевшие эмбеддинги (для которых нет событий).
@@ -60,88 +59,92 @@ def deep_clean_db():
     3. Выполняет VACUUM.
     """
     print("🧹 Запуск глубокой очистки базы данных...")
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        
+    async with get_db_connection() as conn:
         # 1. Удаляем старые записи
-        cursor.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
-        cursor.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+        await conn.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+        await conn.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
         
         # 2. Удаляем эмбеддинги, у которых нет соответствующих заголовков в events
-        cursor.execute("DELETE FROM embeddings WHERE title NOT IN (SELECT title FROM events)")
+        await conn.execute("DELETE FROM embeddings WHERE title NOT IN (SELECT title FROM events)")
         
-        conn.commit()
+        await conn.commit()
 
-    with get_db_connection() as conn:
+    async with get_db_connection() as conn:
         print("📦 Сжатие базы данных (VACUUM)...")
-        conn.execute("VACUUM")
+        await conn.execute("VACUUM")
     
     print("✅ База данных полностью оптимизирована.")
 
-def reset_all_learning():
+async def reset_all_learning():
     """
     Полный сброс всего процесса обучения. 
     Удаляет все веса, сбрасывает множитель и очищает историю прогнозов.
     """
     print("⚠️ ВНИМАНИЕ: Запущен полный сброс обучения системы GTS...")
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        
+    async with get_db_connection() as conn:
         # 1. Удаляем все накопленные веса событий
-        cursor.execute("DELETE FROM weights")
+        await conn.execute("DELETE FROM weights")
         
         # 2. Сбрасываем глобальный множитель на значение из конфига
-        cursor.execute("UPDATE settings SET value = ? WHERE key = 'impact_multiplier'", (config.IMPACT_MULTIPLIER,))
+        await conn.execute("UPDATE settings SET value = ? WHERE key = 'impact_multiplier'", (config.IMPACT_MULTIPLIER,))
         
         # 3. Удаляем старые прогнозы, чтобы не обучаться на истории
-        cursor.execute("DELETE FROM predictions")
-        cursor.execute("DELETE FROM embeddings")
-        cursor.execute("DELETE FROM events")
+        await conn.execute("DELETE FROM predictions")
+        await conn.execute("DELETE FROM embeddings")
+        await conn.execute("DELETE FROM events")
         
         # 4. Очищаем накопленную статистику и предложения
-        cursor.execute("DELETE FROM source_stats")
-        cursor.execute("DELETE FROM asset_stats")
-        cursor.execute("DELETE FROM ai_global_suggestions")
+        await conn.execute("DELETE FROM source_stats")
+        await conn.execute("DELETE FROM asset_stats")
+        await conn.execute("DELETE FROM ai_global_suggestions")
 
-        conn.commit()
+        await conn.commit()
         print("✅ Система обучения полностью сброшена.")
         print(f"✅ Глобальный множитель возвращен к: {config.IMPACT_MULTIPLIER}")
         print("🚀 Теперь вы можете запустить engine.py с чистого листа.")
 
-def reset_multiplier_only():
+async def reset_multiplier_only():
     """
     Сбрасывает только глобальный множитель влияния до значения из конфига.
     Полезно, если система 'переобучилась' и задрала множитель слишком высоко.
     """
     print(f"--- Сброс IMPACT_MULTIPLIER до базового ({config.IMPACT_MULTIPLIER}) ---")
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE settings SET value = ? WHERE key = 'impact_multiplier'", (config.IMPACT_MULTIPLIER,))
-        conn.commit()
+    async with get_db_connection() as conn:
+        await conn.execute("UPDATE settings SET value = ? WHERE key = 'impact_multiplier'", (config.IMPACT_MULTIPLIER,))
+        await conn.commit()
     print("✅ Множитель успешно сброшен в базе данных.")
     print("ℹ️ Не забудьте перезапустить engine.py, чтобы он подхватил новое значение.")
 
-def reset_source_stats():
+async def reset_source_stats():
     """
     Сбрасывает накопленную статистику по источникам новостей.
     """
     print("--- Сброс статистики источников (Source Analysis) ---")
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM source_stats")
-        conn.commit()
+    async with get_db_connection() as conn:
+        await conn.execute("DELETE FROM source_stats")
+        await conn.commit()
     print("✅ Статистика источников успешно очищена.")
 
-def reset_asset_stats():
+async def reset_asset_stats():
     """
     Сбрасывает накопленную статистику по активам.
     """
     print("--- Сброс статистики активов (Asset Stats) ---")
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM asset_stats")
-        conn.commit()
+    async with get_db_connection() as conn:
+        await conn.execute("DELETE FROM asset_stats")
+        await conn.commit()
     print("✅ Статистика активов успешно очищена.")
+
+async def reset_model_stats():
+    """
+    Сбрасывает историю прогнозов (откуда берется WinRate моделей и активов).
+    ВНИМАНИЕ: Это обнулит все таблицы в inspect_db, кроме весов обучения.
+    """
+    print("--- Сброс истории прогнозов (WinRate / Model Stats) ---")
+    async with get_db_connection() as conn:
+        await conn.execute("DELETE FROM predictions WHERE resolved >= 1")
+        await conn.commit()
+    print("✅ История прогнозов очищена. Статистика моделей обнулена.")
 
 def clear_log():
     """
@@ -155,26 +158,36 @@ def clear_log():
     except Exception as e:
         print(f"❌ Ошибка: {e} (Возможно, файл занят запущенным engine.py)")
 
+async def menu():
+    print("\n--- GTS Utility Menu ---")
+    print("1. Полный сброс всего обучения (reset_all_learning)")
+    print("2. Сброс конкретных ключей (reset_event_keys)")
+    print("3. Удаление длинных ключей (reset_long_keys)")
+    print("4. Сброс только множителя (reset_multiplier_only)")
+    print("5. Сброс статистики источников (reset_source_stats)")
+    print("6. Сброс статистики активов (reset_asset_stats)")
+    print("7. Сброс эффективности моделей (reset_model_stats)")
+    print("8. Глубокая очистка базы (deep_clean_db)")
+    print("9. Очистка лог-файла (clear_log)")
+    print("0. Выход")
+
+    choice = input("\nВыберите номер действия: ")
+
+    if choice == '1': await reset_all_learning()
+    elif choice == '2':
+        keys = input("Введите ключи через запятую (например: BTC,OIL): ").split(',')
+        await reset_event_keys([k.strip() for k in keys])
+    elif choice == '3':
+        limit = input(f"Введите лимит сущностей (по умолчанию {config.MAX_ENTITY_PARTS}): ")
+        await reset_long_keys(int(limit) if limit else None)
+    elif choice == '4': await reset_multiplier_only()
+    elif choice == '5': await reset_source_stats()
+    elif choice == '6': await reset_asset_stats()
+    elif choice == '7': await reset_model_stats()
+    elif choice == '8': await deep_clean_db()
+    elif choice == '9': clear_log()
+    elif choice == '0': print("Выход.")
+    else: print("Неверный ввод.")
+
 if __name__ == "__main__":
-    # Выберите нужное действие:
-    
-    # Вариант 1: Полный сброс
-    # reset_all_learning()
-
-    # Вариант 6: Глубокая очистка без потери весов обучения
-    # deep_clean_db()
-
-    # Вариант 2: Сброс конкретных ключей
-    # reset_event_keys(["OIL_US_IRAN"])
-
-    # Вариант 3: Удаление ключей с > 2 сущностями (очистка базы согласно новому лимиту)
-    # reset_long_keys(max_entities=2)
-
-    # Вариант 4: Сброс только множителя
-    # reset_multiplier_only()
-
-    # Вариант 5: Сброс статистики источников
-    # reset_source_stats()
-
-    # Вариант 7: Очистка логов
-    # clear_log()
+    asyncio.run(menu())

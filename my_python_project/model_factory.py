@@ -20,12 +20,17 @@ class GeminiDiscovery:
             for m in all_models:
                 if 'generateContent' in m.supported_actions and not any(s in m.name for s in ['-tts', '-image']):
                     # Определяем приоритет на основе имени модели
-                    priority = 10  # По умолчанию для прочих моделей Gemini
+                    priority = None
                     for fam, p in family_priority.items():
                         if fam in m.name:
                             priority = p
                             break
                     
+                    if priority is None:
+                        if config.ONLY_PRIORITY_GEMINI:
+                            continue
+                        priority = 10  # По умолчанию для прочих моделей Gemini
+
                     pool.append({
                         "name": m.name,
                         "supports_json": any(v in m.name for v in ["1.5", "2.0", "2.5", "3", "latest"]),
@@ -42,8 +47,10 @@ class OpenRouterRegistry:
         if not config.OPENROUTER_API_KEY: return []
         return [
             {"name": "nvidia/nemotron-3-super-120b-a12b:free", "supports_json": True, "provider": "openrouter", "priority": 20},
+            {"name": "nvidia/nemotron-3-ultra-550b-a55b:free", "supports_json": True, "provider": "openrouter", "priority": 20},
             {"name": "openai/gpt-oss-120b:free", "supports_json": True, "provider": "openrouter", "priority": 20},
-            {"name": "openrouter/free", "supports_json": False, "provider": "openrouter", "priority": 20}
+            {"name": "openai/gpt-oss-20b:free", "supports_json": True, "provider": "openrouter", "priority": 20},
+            # {"name": "openrouter/free", "supports_json": False, "provider": "openrouter", "priority": 20}
         ]
 
 class DeepSeekRegistry:
@@ -55,14 +62,28 @@ class DeepSeekRegistry:
             {"name": "deepseek-reasoner", "supports_json": False, "provider": "deepseek", "priority": 30}
         ]
 
+class OllamaRegistry:
+    @staticmethod
+    def get_models(priority: int = 0) -> List[Dict]:
+        return [{"name": config.OLLAMA_MODEL, "supports_json": True, "provider": "ollama", "priority": priority}]
+
 def init_model_pool():
     from google import genai
     client = genai.Client(api_key=config.GEMINI_API_KEY)
     
+    # Если включен режим использования только локальной модели
+    if config.USE_LOCAL_OLLAMA:
+        logging.info(f"🚀 Используется только локальная модель Ollama: {config.OLLAMA_MODEL}")
+        return OllamaRegistry.get_models()
+
     pool = []
     pool.extend(GeminiDiscovery.get_models(client))
     pool.extend(OpenRouterRegistry.get_models())
     pool.extend(DeepSeekRegistry.get_models())
+    
+    # Добавляем Ollama как фоллбек, если включена соответствующая настройка
+    if config.OLLAMA_FALLBACK:
+        pool.extend(OllamaRegistry.get_models(priority=100))
     
     # Сортируем весь пул по приоритету перед использованием
     pool.sort(key=lambda x: x.get('priority', 999))

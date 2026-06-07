@@ -2,11 +2,11 @@ import feedparser
 import logging
 from logging.handlers import RotatingFileHandler
 import re
-import sqlite3
 import time
 import json
 import asyncio
 import aiohttp
+import aiosqlite
 import math
 import html
 import calendar
@@ -25,10 +25,9 @@ import config
 
 # Новые модули
 from state_service import GTSStateManager
-from ai_processor import ai_analyze_refined, get_embedding, is_semantic_duplicate
+from ai_processor import ai_analyze_batch, get_embedding, is_semantic_duplicate
 from model_factory import init_model_pool, ModelRotator
 
-init_db()
 
 START_TIME = time.time()
 
@@ -57,6 +56,15 @@ logging.getLogger().addFilter(lambda record: "AFC is enabled" not in record.getM
 
 # Пул потоков для синхронных библиотек (feedparser, yfinance)
 sync_executor = ThreadPoolExecutor(max_workers=5)
+
+async def metrics_reporter_task(state: GTSStateManager):
+    """Отдельный фоновый процесс для вывода статистики раз в минуту."""
+    while True:
+        try:
+            state.log_metrics(news_queue.qsize())
+        except Exception as e:
+            logging.error(f"Error in metrics reporter: {e}")
+        await asyncio.sleep(60) # Выводим отчет ровно раз в минуту
 
 def shutdown_cleanup():
     """Выполняет очистку ресурсов при завершении работы."""
@@ -129,9 +137,13 @@ def make_event_key(entities: List[str], slug: Optional[str] = None) -> str:
     # так как ИИ обучен соблюдать консистентность в рамках одного сюжета.
     if slug:
         # Ограничиваем количество частей слага, чтобы избежать слишком длинных ключей
-        slug_parts = slug.strip().upper().replace(" ", "_").replace(".", "").split("_")
+        # Нормализуем разделители и принудительно удаляем любые нелатинские символы (кириллицу и т.д.)
+        raw_normalized = slug.strip().upper().replace("-", "_").replace(".", "_").replace(" ", "_")
+        normalized_slug = re.sub(r'[^A-Z0-9_]', '', raw_normalized)
+        
+        slug_parts = [p for p in normalized_slug.split("_") if p]
         # Нормализация: убираем 'S' в конце для объединения STRIKES/STRIKE
-        norm_parts = [p[:-1] if p.endswith('S') and len(p) > 3 else p for p in slug_parts[:3]]
+        norm_parts = [p[:-1] if p.endswith('S') and len(p) > 3 else p for p in slug_parts[:config.MAX_ENTITY_PARTS]]
         return "_".join(norm_parts)
 
     if not valid_entities:
@@ -196,17 +208,19 @@ def make_event_key(entities: List[str], slug: Optional[str] = None) -> str:
 # MARKET SIGNAL ENGINE
 # =========================
 
-def market_signals(score: float) -> Dict[str, str]:
-    intensity = score # Вес уже применен при накоплении в event_scores
-
+def market_signals(intensity: float) -> Dict[str, str]:
+    """
+    Определяет сигналы. Теперь intensity — это Bullish Intensity актива.
+    Positive = Bullish, Negative = Bearish.
+    """
     return {
-        "nasdaq": "bearish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
-        "sp500": "bearish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
-        "oil": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
-        "soxs": "bullish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
-        "vix": "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
-        "gold": "bullish" if intensity > config.SIGNAL_THRESHOLD_LOW else "bearish" if intensity < -config.SIGNAL_THRESHOLD_HIGH else "flat",
-        "btc": "bearish" if intensity > config.SIGNAL_THRESHOLD_BTC else "bullish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat"
+        "nasdaq": "bearish" if intensity > config.SIGNAL_THRESHOLD_MED else "bullish" if intensity < -config.SIGNAL_THRESHOLD_HIGH else "flat",
+        "sp500":  "bearish" if intensity > config.SIGNAL_THRESHOLD_MED else "bullish" if intensity < -config.SIGNAL_THRESHOLD_HIGH else "flat",
+        "oil":    "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
+        "soxs":   "bullish" if intensity > config.SIGNAL_THRESHOLD_HIGH else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
+        "vix":    "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_MED else "flat",
+        "gold":   "bullish" if intensity > config.SIGNAL_THRESHOLD_LOW else "bearish" if intensity < -config.SIGNAL_THRESHOLD_HIGH else "flat",
+        "btc":    "bullish" if intensity > config.SIGNAL_THRESHOLD_MED else "bearish" if intensity < -config.SIGNAL_THRESHOLD_BTC else "flat"
     }
 
 # =========================
@@ -221,12 +235,12 @@ def predict_impact(score: float, multiplier: float, realized_vol: float) -> floa
 # SIGNAL ENGINE
 # =========================
 
-def generate_signal(prob: float, score: float) -> str:
-    if score > 0:  # Медвежий сценарий (Risk-Off)
+def generate_signal(prob: float, intensity: float) -> str:
+    if intensity > 0:  # Положительный Score от ИИ = Risk-Off (Напряженность растет)
         if prob > 70: return "🔴 HIGH RISK-OFF"
         if prob > 40: return "🟠 MEDIUM RISK"
         return "🟡 CAUTION"
-    elif score < 0:  # Бычий сценарий (Risk-On)
+    elif intensity < 0:  # Отрицательный Score от ИИ = Risk-On (Позитив для рынков)
         if prob > 70: return "🚀 STRONG RISK-ON"
         return "🟢 RISK-ON"
     
@@ -332,7 +346,7 @@ def calibrate_multiplier(avg_error: float, state: GTSStateManager, asset: Option
         new_mult = max(0.01, min(2.0, old_mult + (state.learning_rate * avg_error)))
         state.asset_multipliers[asset_low] = new_mult
         if abs(new_mult - old_mult) > 0.0001:
-            logging.info(f"⚙️ Multiplier ({asset_low}): {old_mult:.2f} -> {new_mult:.2f}")
+            logging.info(f"⚙️ Multiplier ({asset_low}): {old_mult:.2f} -> {new_mult:.2f} (avg_err: {avg_error:+.2f})")
     else:
         old_mult = state.multiplier
         # Глобальная калибровка чувствительности к сигме
@@ -529,19 +543,20 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
 
     return market_data
 
-def count_eligible_predictions() -> int:
-    """Возвращает количество новостей, готовых к обучению (старше MARKET_LOOKBACK_HOURS)."""
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
+async def count_eligible_predictions() -> int:
+    """Возвращает количество новостей, готовых к обучению."""
+    async with get_db_connection() as conn:
+        async with conn.execute("""
             SELECT 
                 SUM(CASE WHEN resolved = 0 THEN 1 ELSE 0 END) as phase1,
                 SUM(CASE WHEN resolved = 1 THEN 1 ELSE 0 END) as phase2
             FROM predictions 
             WHERE resolved < 2 AND timestamp < datetime('now', '-' || ? || ' hours')
-        """, (config.MARKET_LOOKBACK_HOURS,))
-        row = cursor.fetchone()
-        return (row[0] or 0) + (row[1] or 0)
+        """, (config.MARKET_LOOKBACK_HOURS,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return (row[0] or 0) + (row[1] or 0)
+            return 0
 
 async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager, raw_market_data: Optional[Dict] = None):
     if not raw_market_data:
@@ -591,17 +606,16 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
         except: return 0.0
 
     async with state.db_lock:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
             # JOIN с таблицей events гарантирует, что прогноз привязан к реальному событию из ленты
-            cursor.execute("""
+            async with conn.execute("""
                 SELECT p.*, e.link as source_link 
                 FROM predictions p
                 JOIN events e ON p.event_id = e.id
                 WHERE p.resolved < 2 
                 ORDER BY p.timestamp ASC LIMIT 1000
-            """)
-            rows = cursor.fetchall()
+            """) as cursor:
+                rows = await cursor.fetchall()
             logging.info(f"🧠 Начало цикла обучения. Найдено кандидатов для обработки: {len(rows)}")
 
             updates_by_key = defaultdict(list) # Для агрегации обновлений весов
@@ -681,97 +695,90 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                 
                 target_ticker = config.ASSET_TICKER_MAP.get(target.lower())
                 if target_ticker and target_ticker in price_history.columns:
-                    # Фильтруем серию по времени, чтобы найти цену в момент новости и через N часов
-                    ts = price_history[target_ticker].dropna()
-                    if ts.index.tz is not None:
-                        ts = ts.tz_convert('UTC').tz_localize(None)
-                    
-                    if ts.empty or prediction_time.replace(tzinfo=None) < ts.index[0]:
-                        continue
-
                     try:
+                        # Фильтруем серию по времени, чтобы найти цену в момент новости и через N часов
+                        ts = price_history[target_ticker].dropna()
+                        if ts.index.tz is not None:
+                            ts = ts.tz_convert('UTC').tz_localize(None)
+                        
+                        if ts.empty or prediction_time.replace(tzinfo=None) < ts.index[0]:
+                            continue
+
                         prediction_time_naive = prediction_time.replace(tzinfo=None)
-                        target_time = prediction_time_naive + timedelta(hours=target_lookback)
-
-                        # Ищем ПЕРВУЮ доступную цену после события (метод backfill)
-                        # Это позволяет поймать ГЭП открытия после выходных/ночи
                         idx_at = ts.index.get_indexer([prediction_time_naive], method='backfill')[0]
-                        idx_after = ts.index.get_indexer([target_time], method='backfill')[0]
+                        if idx_at == -1:
+                            continue
 
-                        if idx_at != -1 and idx_after != -1:
-                            # Если индексы одинаковые, значит рынок всё еще закрыт (нет новых свечей)
-                            # Мы НЕ помечаем как resolved, а ждем следующего цикла
-                            if idx_at == idx_after:
-                                # Если это выходной для обычных активов — просто ждем
-                                if target.lower() not in ['btc', 'crypto'] and prediction_time.weekday() >= 5:
-                                    continue
-                                continue
+                        # Смещаем целевое время: отсчитываем окно влияния от первой доступной торговой свечи.
+                        # Это позволяет поймать движение ПОСЛЕ открытия рынка (гэпа).
+                        actual_start_time = ts.index[idx_at]
+                        shifted_target_time = actual_start_time + timedelta(hours=target_lookback)
+
+                        # Ждем, пока рынок "продышится" достаточное время после открытия
+                        if ts.index[-1] < shifted_target_time:
+                            continue
+
+                        idx_after = ts.index.get_indexer([shifted_target_time], method='backfill')[0]
+
+                        if idx_at != -1 and idx_after != -1 and idx_at != idx_after:
                                 
                             p_at = float(ts.iloc[idx_at])
                             p_after = float(ts.iloc[idx_after])
                             
                             if p_at != 0:
-                                raw_change = ((p_after - p_at) / p_at) * 100
+                                raw_change_pct = ((p_after - p_at) / p_at) * 100
                                 
-                                # --- РАСЧЕТ ALPHA (ABNORMAL RETURN) ---
-                                alpha_move = raw_change
+                                # 1. Расчет реализованной волатильности для Z-нормализации
+                                asset_data = price_history[target_ticker].dropna()
+                                asset_rets = asset_data.pct_change().dropna().tail(config.VOLATILITY_WINDOW)
+                                realized_vol_raw = asset_rets.std() * 100
+                                if pd.isna(realized_vol_raw) or realized_vol_raw == 0:
+                                    realized_vol_raw = 1.0
+                                vol_floor = config.GLOBAL_Z_ALPHA_VOL_FLOOR if target.lower() == "global" else config.Z_ALPHA_VOL_FLOOR
+                                realized_vol = max(realized_vol_raw, vol_floor)
+
+                                # 2. Расчет ожидаемого движения (Benchmark)
+                                expected_pct = 0.0
                                 b_cfg = config.ASSET_BENCHMARK_CONFIG.get(target.lower())
-                                
                                 if b_cfg:
                                     bench_key = b_cfg["primary"]
-                                    b_ts = price_history[bench_key].dropna().tz_localize(None)
-                                    # Берем те же точки времени для бенчмарка
-                                    idx_b_at = b_ts.index.get_indexer([prediction_time_naive], method='backfill')[0]
-                                    idx_b_after = b_ts.index.get_indexer([target_time], method='backfill')[0]
-                                    
-                                    if idx_b_at != -1 and idx_b_after != -1:
-                                        b_at = float(b_ts.iloc[idx_b_at])
-                                        b_after = float(b_ts.iloc[idx_b_after])
-                                        if b_at != 0:
-                                            b_move = ((b_after - b_at) / b_at) * 100
-                                            expected = calculate_expected_move(target.lower(), b_cfg, prediction_time, b_move, price_history)
-                                            
-                                            # Расчет реализованной волатильности для Z-нормализации
-                                            vol_window = config.VOLATILITY_WINDOW
-                                            asset_rets = price_history[target_ticker].pct_change().tail(vol_window)
-                                            realized_vol_raw = asset_rets.std() * 100 # В процентах
-                                            vol_floor = config.GLOBAL_Z_ALPHA_VOL_FLOOR if target.lower() == "global" else config.Z_ALPHA_VOL_FLOOR
-                                            realized_vol = max(realized_vol_raw, vol_floor)
-                                            
-                                            alpha_raw = raw_change - expected
-                                            # Z-Alpha: нормализуем избыточную доходность по волатильности
-                                            z_alpha = alpha_raw / realized_vol
-                                            
-                                            alpha_move = z_alpha
-                                            logging.info(f"📐 Z-ALPHA [{target}]: Raw {raw_change:+.2f}% (Exp {expected:+.2f}%) | Vol: {realized_vol_raw:.2f}% -> {realized_vol:.2f}% | Z: {z_alpha:+.2f}")
+                                    if bench_key in price_history.columns:
+                                        b_ts = price_history[bench_key].dropna().tz_localize(None)
+                                        idx_b_at = b_ts.index.get_indexer([prediction_time_naive], method='backfill')[0]
+                                        # Используем смещенное время, чтобы сопоставить движение бенчмарка с активом
+                                        idx_b_after = b_ts.index.get_indexer([shifted_target_time], method='backfill')[0]
+                                        if idx_b_at != -1 and idx_b_after != -1:
+                                            b_at, b_after = float(b_ts.iloc[idx_b_at]), float(b_ts.iloc[idx_b_after])
+                                            if b_at != 0:
+                                                b_move = ((b_after - b_at) / b_at) * 100
+                                                expected_pct = calculate_expected_move(target.lower(), b_cfg, prediction_time, b_move, price_history)
 
-                                if not correlation:
-                                    if target.lower() in ["oil", "vix", "soxs", "gold", "global"]:
-                                        correlation = 1
-                                    else:
-                                        correlation = -1
+                                # 3. Z-Alpha: нормализуем избыточную доходность по волатильности
+                                z_alpha = (raw_change_pct - expected_pct) / realized_vol
                                 
-                                # Для обучения используем очищенную Alpha вместо сырого изменения
-                                raw_change = alpha_move
+                                correlation = config.ASSET_CORRELATION_MAP.get(target.lower(), -1)
+                                # Для обучения и записи в БД используем Z-Alpha (сигмы)
+                                raw_change = z_alpha
+                                logging.info(f"📐 Z-ALPHA [{target}]: Raw {raw_change_pct:+.2f}% (Exp {expected_pct:+.2f}%) | Vol: {realized_vol_raw:.2f}% | Z: {z_alpha:+.2f}")
                         else:
                             
-                             # Цены отсутствуют в истории - проверяем на "протухание"
+                            # Цены отсутствуют в истории - проверяем на "протухание"
                             if age_hours > force_resolve_age:
                                 # Не закрываем в 0, если это выходные для фондового рынка
                                 if target.lower() not in ['btc', 'crypto'] and (datetime.now(timezone.utc).weekday() >= 5 or raw_market_data.get('is_stale', True)):
                                     continue 
                                 logging.info(f"🗑️ Force resolve (No Price Data): {event_key}")
-                            batch_updates.append((2, 0, -1, 0, row['id']))
+                            batch_updates.append((2, 0, 0, 0, row['id']))
                             continue
                     except Exception as e:
                         if age_hours > force_resolve_age:
                             logging.info(f"🗑️ Force resolve (Error): {event_key} - {e}")
-                            batch_updates.append((2, 0, -1, 0, row['id']))
+                            batch_updates.append((2, 0, 0, 0, row['id']))
                         continue
                 else: 
                     if age_hours > force_resolve_age:
                         logging.info(f"🗑️ Force resolve (No Ticker): {event_key}")
-                        batch_updates.append((2, 0, -1, 0, row['id']))
+                        batch_updates.append((2, 0, 0, 0, row['id']))
                     continue
 
                 dynamic_threshold = config.LEARNING_THRESHOLD * (1 + (target_lookback / 10))
@@ -806,6 +813,19 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                 effective_error = (actual - predicted) if is_correct else -(actual + predicted)
                 error = effective_error
 
+                # КАЛИБРОВКА MSF: Подстраиваем чувствительность модели
+                model_sens = state.model_sensitivities.get(row['model_name'], 1.0)
+                state.model_sensitivities[row['model_name']] = max(0.1, min(5.0, model_sens + (state.learning_rate * error * 0.5)))
+                
+                # Обновляем счетчик resolved для модели в базе
+                await conn.execute("""
+                    INSERT INTO model_stats (model_name, total_resolved, sensitivity) 
+                    VALUES (?, 1, ?) 
+                    ON CONFLICT(model_name) DO UPDATE SET 
+                        total_resolved = total_resolved + 1,
+                        sensitivity = EXCLUDED.sensitivity
+                """, (row['model_name'], state.model_sensitivities.get(row['model_name'], 1.0)))
+
                 if new_resolved_status == 1:
                     # Фаза 1: Быстрая калибровка множителя и фильтрация RAM-баллов
                     all_errors.append(error)
@@ -821,9 +841,10 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                         if source_link not in processed_source_links:
                             source_domain = row['source_domain'] if row['source_domain'] else "unknown"
                             if source_domain:
-                                directional_alpha = raw_change if score > 0 else -raw_change
+                                # Учитываем корреляцию: для источника важно, угадал ли он направление конкретного актива
+                                directional_alpha = (raw_change * correlation) if score > 0 else -(raw_change * correlation)
                                 # Учитываем ложные срабатывания (is_correct=0) как больший вклад в ошибку
-                                cursor.execute("""
+                                await conn.execute("""
                                     INSERT INTO source_stats (source_domain, total_resolved, correct_count, sum_error, sum_confidence, sum_alpha, sum_alpha_sq)
                                     VALUES (?, 1, ?, ?, ?, ?, ?)
                                     ON CONFLICT(source_domain) DO UPDATE SET
@@ -838,7 +859,7 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
 
                         # NEW: Update asset_stats
                         if target: # Ensure target_asset is not empty
-                            cursor.execute("""
+                            await conn.execute("""
                                 INSERT INTO asset_stats (target_asset, total_resolved, correct_count, sum_error)
                                 VALUES (?, 1, ?, ?)
                                 ON CONFLICT(target_asset) DO UPDATE SET
@@ -854,7 +875,7 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                 batch_updates.append((new_resolved_status, actual, is_correct, raw_change, row['id']))
 
             if batch_updates:
-                cursor.executemany("""
+                await conn.executemany("""
                     UPDATE predictions SET resolved = ?, actual_move = ?, is_correct = ?, signed_alpha = ? WHERE id = ?
                 """, batch_updates)
                 logging.info(f"✅ Пакетное обновление завершено: {len(batch_updates)} записей.")
@@ -871,8 +892,9 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                 calibrate_multiplier(avg_asset_err, state, asset=asset)
                 
                 # Автоматический сброс при низком WinRate
-                cursor.execute("SELECT total_resolved, correct_count FROM asset_stats WHERE target_asset = ?", (asset,))
-                stats = cursor.fetchone()
+                async with conn.execute("SELECT total_resolved, correct_count FROM asset_stats WHERE target_asset = ?", (asset,)) as cursor_stats:
+                    stats = await cursor_stats.fetchone()
+                    
                 if stats and stats['total_resolved'] >= config.MIN_SAMPLE_SIZE_FOR_RESET:
                     wr = (stats['correct_count'] / stats['total_resolved']) * 100
                     if wr < config.MIN_WINRATE_BEFORE_RESET:
@@ -882,18 +904,18 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
             # 2. Калибровка глобального множителя (один раз за цикл на основе всей выборки)
             if all_errors:
                 calibrate_multiplier(sum(all_errors) / len(all_errors), state) # Передаем state
-            conn.commit()
+            await conn.commit()
 
     await state.save_to_db() # Сохраняем состояние через state manager
     logging.info(f"System settings saved. New IMPACT_MULTIPLIER: {state.multiplier:.2f}") # Используем state.multiplier
 
-def _execute_vacuum():
-    """Вспомогательная функция для выполнения VACUUM в отдельном потоке."""
+async def _execute_vacuum():
+    """Асинхронное выполнение VACUUM."""
     try:
-        with get_db_connection() as conn:
-            conn.execute("PRAGMA journal_mode=DELETE") # Отключаем WAL для VACUUM
-            conn.execute("VACUUM")
-            conn.execute("PRAGMA journal_mode=WAL") # Возвращаем WAL
+        async with get_db_connection() as conn:
+            await conn.execute("PRAGMA journal_mode=DELETE") # Отключаем WAL для VACUUM
+            await conn.execute("VACUUM")
+            await conn.execute("PRAGMA journal_mode=WAL") # Возвращаем WAL
             logging.info("📦 База данных сжата (VACUUM завершен)")
     except Exception as e:
         logging.error(f"VACUUM error: {e}")
@@ -905,8 +927,7 @@ async def cleanup_db(state: GTSStateManager):
     """
     async with state.db_lock:
         try:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
+            async with get_db_connection() as conn:
                 
                 # Получаем список каноничных ключей из конфига, которые НЕЛЬЗЯ удалять
                 tracked_keys = []
@@ -916,28 +937,25 @@ async def cleanup_db(state: GTSStateManager):
                 placeholders = ', '.join(['?'] * len(tracked_keys))
 
                 # Удаляем старые события и прогнозы
-                cursor.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
-                cursor.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
-                cursor.execute("DELETE FROM embeddings WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.EMBEDDING_RETENTION_DAYS,))
+                await conn.execute("DELETE FROM events WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+                await conn.execute("DELETE FROM predictions WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.RETENTION_DAYS,))
+                await conn.execute("DELETE FROM embeddings WHERE timestamp < datetime('now', '-' || ? || ' days')", (config.EMBEDDING_RETENTION_DAYS,))
                 
                 # 1. Удаляем ключи с критически низким весом
-                cursor.execute("DELETE FROM weights WHERE weight <= ?", (config.MIN_WEIGHT_THRESHOLD,))
+                await conn.execute("DELETE FROM weights WHERE weight <= ?", (config.MIN_WEIGHT_THRESHOLD,))
                 
                 # 2. Удаляем "забытые" ключи, которых нет в последних прогнозах и нет в TRACKED_KEYWORDS
-                cursor.execute(f"""
+                async with conn.execute(f"""
                     DELETE FROM weights 
                     WHERE event_key NOT IN (SELECT DISTINCT event_key FROM predictions)
                     AND event_key NOT IN ({placeholders})
-                """, tracked_keys)
+                """, tracked_keys) as cursor:
+                    deleted_weights = cursor.rowcount
                 
-                deleted_weights = cursor.rowcount
-                
-                conn.commit()  # Завершаем транзакцию после удаления
+                await conn.commit()
             
-            # VACUUM должен выполняться вне транзакции. 
-            # Используем run_in_executor, чтобы не блокировать событийный цикл.
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(sync_executor, _execute_vacuum)
+            await _execute_vacuum()
+
 
             # Полная синхронизация RAM с БД после очистки (восстановление обученных весов)
             await state.init_from_db()
@@ -957,9 +975,14 @@ def clean_title(title: str) -> str:
     # Удаляем префиксы "Breaking:", "Update:"
     cleaned = re.sub(r'(?i)^(breaking|update|exclusive|just in):\s*', '', cleaned)
     # Список стоп-слов, которые часто меняются в заголовках об одном событии
-    stop_words = {'reports', 'hit', 'triggers', 'massive', 'says', 'amid', 'following', 'after', 'due', 'warns', 'shows', 'proposes', 'plans', 'set', 'could', 'would', 'may', 'will', 'предложил', 'предлагает', 'может', 'планирует', 'хочет', 'объявил'}
+    stop_words = {
+        'reports', 'hit', 'triggers', 'massive', 'says', 'amid', 'following', 'after', 'due', 'warns', 'shows', 'proposes', 'plans', 'set', 'could', 'would', 'may', 'will', 'предложил', 'предлагает', 'может', 'планирует', 'хочет', 'объявил', 'ago', 'min', 'hours',
+        'calendar', 'corporate', 'event', 'fiscal', 'announces', 'dividend', 'shareholder'
+    }
     # Удаляем пунктуацию
     cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
+    # Удаляем одиночные цифры (часто это время или кол-во чего-то)
+    cleaned = re.sub(r'\b\d+\b', '', cleaned)
     # Очищаем от стоп-слов и нормализуем пробелы
     words = [w for w in cleaned.lower().split() if w not in stop_words]
     return " ".join(words)
@@ -1016,195 +1039,276 @@ async def process_social_entry(entry: Any, market_data: Dict[str, Any]):
 
 async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: asyncio.AbstractEventLoop, market_data: Dict[str, Any]):
     """Обрабатывает одну RSS ленту."""
-    is_market_active = not market_data.get('is_stale', True)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    raw_data = None
-    for attempt in range(2): # 2 попытки на случай временного сбоя
-        try:
-            proxy = config.HTTP_PROXY if config.USE_PROXY else None
-            async with session.get(
-                url, 
-                headers=headers, 
-                timeout=20, 
-                proxy=proxy
-            ) as response:
-                if response.status == 200:
-                    raw_data = await response.read()
-                    break
-                elif response.status == 429:
-                    logging.warning(f"Rate limited by Google News for {url}")
-                    await asyncio.sleep(5)
-                else:
-                    logging.debug(f"Feed {url} returned status {response.status}")
-        except Exception as e:
-            if attempt == 1:
-                error_str = str(e)
-                if "getaddrinfo" in error_str:
-                    logging.error(f"🌐 DNS/Connection Error for {url}: Check internet or DNS settings.")
-                else:
-                    logging.error(f"Feed error {url}: {e}")
-                return
-            await asyncio.sleep(2)
+    try:
+        is_market_active = not market_data.get('is_stale', True)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
 
-    if not raw_data:
-        return
-
-    feed = await loop.run_in_executor(sync_executor, lambda: feedparser.parse(raw_data))
-
-    # Адаптивное окно возраста новости:
-    # Если рынок активен — окно узкое, если закрыт — используем лимит для неактивного времени.
-    max_age_h = config.MAX_NEWS_AGE_HOURS if is_market_active else config.MAX_NEWS_AGE_HOURS_INACTIVE
-    
-    # 1. Фильтруем всю ленту от старых записей ПЕРЕД обработкой
-    fresh_entries = []
-    current_utc_ts = datetime.now(timezone.utc).timestamp()
-    for entry in feed.entries:
-        # Проверяем и дату публикации, и дату обновления (иногда есть только одно из них)
-        pub_struct = entry.get('published_parsed') or entry.get('updated_parsed')
-        if pub_struct:
-            # Используем calendar.timegm для корректного преобразования UTC struct_time
-            pub_timestamp = calendar.timegm(pub_struct)
-            age_h = (current_utc_ts - pub_timestamp) / 3600
-
-            # Лимит 1 час для соцсетей (Reddit, Twitter/Nitter, StockTwits)
-            is_social = any(s in entry.link.lower() or s in url.lower() for s in ["reddit.com", "nitter", "twitter.com", "x.com", "stocktwits.com"])
-            effective_max_age = 1.0 if is_social else max_age_h
-
-            if age_h <= effective_max_age:
-                fresh_entries.append(entry)
-            else:
-                # Переводим в DEBUG, чтобы не спамить в консоль
-                logging.debug(f"Skipping old news: '{entry.title}' (Age: {age_h:.1f}h, Max: {effective_max_age}h)")
-        # Если даты публикации нет, мы её не добавляем (более строгий подход к качеству данных)
-
-    # 2. Сортируем по времени (самые свежие — первые) и берем в пределах лимита
-    fresh_entries.sort(
-        key=lambda x: calendar.timegm(x.get('published_parsed') or x.get('updated_parsed') or time.gmtime(0)), 
-        reverse=True
-    )
-    max_entries_to_process = config.RSS_MAX_ENTRIES if is_market_active else config.RSS_MAX_ENTRIES_INACTIVE
-    
-    processed_count = 0
-    for entry in fresh_entries:
-        state.metrics.metrics["news_received"] += 1
-        original_title = entry.title
-
-        # Извлекаем название источника для фильтрации (из метаданных или заголовка)
-        src_name = entry.get('source', {}).get('title', '').lower()
-        if not src_name and ' - ' in entry.title:
-            src_name = entry.title.split(' - ')[-1].lower()
-
-        # Если включен режим фильтрации (ONLY_SPECIFIC_SOURCES)
-        if config.ONLY_SPECIFIC_SOURCES:
-            # Проверяем, есть ли разрешенный домен в ссылке или в названии источника
-            link_match = any(re.search(r'(?:^|[./])' + re.escape(domain) + r'(?:[./]|$)', entry.link.lower()) for domain in config.SPECIFIC_SOURCES_LIST)
-            
-            # src_match: Точное совпадение имени источника с элементом списка или его частями (без частичных вхождений)
-            src_match = False
-            if src_name:
-                normalized_feed_src_for_word_match = src_name.lower()
-                for allowed_domain in config.SPECIFIC_SOURCES_LIST:
-                    domain_parts = allowed_domain.lower().split('.')
-                    root_domain = domain_parts[0]
-                    
-                    # Используем границы слов \b, чтобы "x" не матчило "fox"
-                    # Также обрабатываем специфические маппинги для крупных СМИ
-                    if re.search(r'\b' + re.escape(root_domain) + r'\b', normalized_feed_src_for_word_match) or \
-                       (root_domain == "wsj" and "wall street journal" in normalized_feed_src_for_word_match) or \
-                       (root_domain == "x" and "twitter" in normalized_feed_src_for_word_match) or \
-                       (root_domain == "ft" and "financial times" in normalized_feed_src_for_word_match):
-                        src_match = True
+        raw_data = None
+        for attempt in range(2): # 2 попытки на случай временного сбоя
+            try:
+                proxy = config.HTTP_PROXY if config.USE_PROXY else None
+                async with session.get(
+                    url, 
+                    headers=headers, 
+                    timeout=20, 
+                    proxy=proxy
+                ) as response:
+                    if response.status == 200:
+                        raw_data = await response.read()
                         break
-            
-            # Если это ссылка от агрегатора (Google/Yahoo), требуем, чтобы именно ИСТОЧНИК (src_match) был в белом списке
-            if "google.com" in entry.link.lower() or "yahoo.com" in entry.link.lower():
-                if not src_match:
-                    logging.debug(f"Filter: Source '{src_name}' not in whitelist for {entry.link}")
+                    elif response.status == 429:
+                        logging.warning(f"Rate limited by Google News for {url}")
+                        await asyncio.sleep(5)
+                    else:
+                        logging.debug(f"Feed {url} returned status {response.status}")
+            except Exception as e:
+                if attempt == 1:
+                    error_str = str(e)
+                    is_social = any(s in url for s in ["nitter", "reddit", "stocktwits"])
+                    log_func = logging.warning if is_social else logging.error
+                    
+                    if "getaddrinfo" in error_str:
+                        log_func(f"🌐 DNS/Connection Error for {url}: Source might be down or unreachable.")
+                    else:
+                        log_func(f"Feed error {url}: {e}")
+                    return
+                await asyncio.sleep(2)
+
+        if not raw_data:
+            return
+
+        feed = await loop.run_in_executor(sync_executor, lambda: feedparser.parse(raw_data))
+
+        # Адаптивное окно возраста новости:
+        # Если рынок активен — окно узкое, если закрыт — используем лимит для неактивного времени.
+        max_age_h = config.MAX_NEWS_AGE_HOURS if is_market_active else config.MAX_NEWS_AGE_HOURS_INACTIVE
+        
+        # 1. Фильтруем всю ленту от старых записей ПЕРЕД обработкой
+        fresh_entries = []
+        current_utc_ts = datetime.now(timezone.utc).timestamp()
+        for entry in feed.entries:
+            # Проверяем и дату публикации, и дату обновления (иногда есть только одно из них)
+            pub_struct = entry.get('published_parsed') or entry.get('updated_parsed')
+            if pub_struct:
+                # Используем calendar.timegm для корректного преобразования UTC struct_time
+                pub_timestamp = calendar.timegm(pub_struct)
+                age_h = (current_utc_ts - pub_timestamp) / 3600
+
+                # Лимит 1 час для соцсетей (Reddit, Twitter/Nitter, StockTwits)
+                is_social = any(s in entry.link.lower() or s in url.lower() for s in ["reddit.com", "nitter", "twitter.com", "x.com", "stocktwits.com"])
+                effective_max_age = 1.0 if is_social else max_age_h
+
+                if age_h <= effective_max_age:
+                    fresh_entries.append(entry)
+                else:
+                    # Переводим в DEBUG, чтобы не спамить в консоль
+                    logging.debug(f"Skipping old news: '{entry.title}' (Age: {age_h:.1f}h, Max: {effective_max_age}h)")
+            # Если даты публикации нет, мы её не добавляем (более строгий подход к качеству данных)
+
+        # 2. Сортируем по времени (самые свежие — первые) и берем в пределах лимита
+        fresh_entries.sort(
+            key=lambda x: calendar.timegm(x.get('published_parsed') or x.get('updated_parsed') or time.gmtime(0)), 
+            reverse=True
+        )
+        max_entries_to_process = config.RSS_MAX_ENTRIES if is_market_active else config.RSS_MAX_ENTRIES_INACTIVE
+        
+        processed_count = 0
+        for entry in fresh_entries:
+            state.metrics.metrics["news_received"] += 1
+            original_title = entry.title
+
+            # Извлекаем название источника для фильтрации (из метаданных или заголовка)
+            src_name = entry.get('source', {}).get('title', '').lower()
+            if not src_name and ' - ' in entry.title:
+                src_name = entry.title.split(' - ')[-1].lower()
+
+            # Если включен режим фильтрации (ONLY_SPECIFIC_SOURCES)
+            if config.ONLY_SPECIFIC_SOURCES:
+                # Проверяем, есть ли разрешенный домен в ссылке или в названии источника
+                link_match = any(re.search(r'(?:^|[./])' + re.escape(domain) + r'(?:[./]|$)', entry.link.lower()) for domain in config.SPECIFIC_SOURCES_LIST)
+                
+                # src_match: Точное совпадение имени источника с элементом списка или его частями (без частичных вхождений)
+                src_match = False
+                if src_name:
+                    normalized_feed_src_for_word_match = src_name.lower()
+                    for allowed_domain in config.SPECIFIC_SOURCES_LIST:
+                        domain_parts = allowed_domain.lower().split('.')
+                        root_domain = domain_parts[0]
+                        
+                        # Используем границы слов \b, чтобы "x" не матчило "fox"
+                        # Также обрабатываем специфические маппинги для крупных СМИ
+                        if re.search(r'\b' + re.escape(root_domain) + r'\b', normalized_feed_src_for_word_match) or \
+                           (root_domain == "wsj" and "wall street journal" in normalized_feed_src_for_word_match) or \
+                           (root_domain == "x" and "twitter" in normalized_feed_src_for_word_match) or \
+                           (root_domain == "ft" and "financial times" in normalized_feed_src_for_word_match):
+                            src_match = True
+                            break
+                
+                # Если это ссылка от агрегатора (Google/Yahoo), требуем, чтобы именно ИСТОЧНИК (src_match) был в белом списке
+                if "google.com" in entry.link.lower() or "yahoo.com" in entry.link.lower():
+                    if not src_match:
+                        logging.debug(f"Filter: Source '{src_name}' not in whitelist for {entry.link}")
+                        state.metrics["news_source_filtered"] += 1
+                        continue
+                elif not link_match:
+                    logging.info(f"🛡️ Filter Blocked: {entry.link} (Add this domain to SPECIFIC_SOURCES_LIST)")
                     state.metrics["news_source_filtered"] += 1
                     continue
-            elif not link_match:
-                logging.info(f"🛡️ Filter Blocked: {entry.link} (Add this domain to SPECIFIC_SOURCES_LIST)")
-                state.metrics["news_source_filtered"] += 1
-                continue
 
-        # 1. Быстрая проверка на дубликаты (URL и Fuzzy)
-        use_semantic = config.USE_EMBEDDINGS and (config.GEMINI_API_KEY or config.OPENROUTER_API_KEY)
-        fuzzy_threshold = config.DUPLICATE_TITLE_THRESHOLD if use_semantic else config.FALLBACK_DUPLICATE_THRESHOLD
+            # 1. Быстрая проверка на дубликаты (URL и Fuzzy)
+            use_semantic = config.USE_EMBEDDINGS and (config.GEMINI_API_KEY or config.OPENROUTER_API_KEY)
+            fuzzy_threshold = config.DUPLICATE_TITLE_THRESHOLD if use_semantic else config.FALLBACK_DUPLICATE_THRESHOLD
 
-        async with state.cache.cache_lock:
-            if state.cache.is_url_processed(entry.link):
-                state.metrics.metrics["news_duplicate_url"] += 1
-                continue
+            new_clean = clean_title(original_title)
+            async with state.cache.cache_lock:
+                if state.cache.is_url_processed(entry.link):
+                    state.metrics.metrics["news_duplicate_url"] += 1
+                    continue
 
-            # Проверка по заголовкам из кэша (быстрая)
-            if is_fuzzy_duplicate(entry.title, list(state.cache.titles.keys()), fuzzy_threshold):
+                # 1. Быстрая проверка Set-based Hashing (Exact match по очищенному заголовку)
+                if new_clean in state.cache.clean_titles:
+                    state.metrics.metrics["news_duplicate_hash"] += 1
+                    continue
+
+                # Теперь передаем в функцию список УЖЕ ОЧИЩЕННЫХ залогов (clean_titles)
+                if is_fuzzy_duplicate(original_title, state.cache.clean_titles, fuzzy_threshold):
+                    state.metrics.metrics["news_duplicate_fuzzy"] += 1
+                    state.cache.add_url(entry.link, original_title)
+                    continue
+                
+                # Добавляем очищенную версию в быстрый кэш
+                state.cache.clean_titles.add(new_clean)
+
+            # Проверка в БД (перед тяжелым AI запросом эмбеддинга для экономии API)
+            db_titles = await state.get_db_titles(hours=config.SEMANTIC_DEDUPLICATION_WINDOW)
+            if is_fuzzy_duplicate(original_title, db_titles, fuzzy_threshold):
                 state.metrics.metrics["news_duplicate_fuzzy"] += 1
-                state.cache.add_url(entry.link, entry.title)
                 continue
 
-        # Проверка в БД (перед тяжелым AI запросом эмбеддинга для экономии API)
-        db_titles = await state.get_db_titles(hours=config.SEMANTIC_DEDUPLICATION_WINDOW)
-        if is_fuzzy_duplicate(original_title, db_titles, fuzzy_threshold):
-            state.metrics.metrics["news_duplicate_fuzzy"] += 1
-            continue
-
-        # 2. Получение эмбеддинга (БЕЗ блокировки, так как это сетевой запрос)
-        new_embedding = None
-        if use_semantic:
-            new_embedding = await get_embedding(entry.title, model_rotator, state, session=session)
-            
-            # 3. Семантическая проверка (is_semantic_duplicate сам управляет своей блокировкой)
-            if new_embedding and await is_semantic_duplicate(entry.title, new_embedding, state):
-                state.metrics.metrics["news_duplicate_semantic"] += 1
-                async with state.cache.cache_lock:
-                    state.add_url(entry.link, entry.title, embedding=new_embedding)
-                continue
-
-        # 4. Финальное добавление в кэш (если новость прошла все фильтры)
-        async with state.cache_lock:
-            # Считаем только реально новые новости, прошедшие фильтры дубликатов
-            processed_count += 1
-            if processed_count > max_entries_to_process:
-                logging.debug(f"Reached max_entries_to_process ({max_entries_to_process}) for feed {url}")
-                break
+            # 2. Получение эмбеддинга (БЕЗ блокировки, так как это сетевой запрос)
+            new_embedding = None
+            if use_semantic:
+                new_embedding = await get_embedding(entry.title, model_rotator, state, session=session)
                 
-            state.add_url(entry.link, entry.title, embedding=new_embedding)
+                # 3. Семантическая проверка (is_semantic_duplicate сам управляет своей блокировкой)
+                if new_embedding and await is_semantic_duplicate(entry.title, new_embedding, state):
+                    state.metrics.metrics["news_duplicate_semantic"] += 1
+                    async with state.cache.cache_lock:
+                        state.add_url(entry.link, entry.title, embedding=new_embedding)
+                    continue
 
-        # Ставим в очередь для AI анализа
-        # Реализация вытесняющей очереди (Sliding Window)
-        # Если очередь полна, удаляем старейший элемент перед вставкой нового
-        try:
-            news_queue.put_nowait((entry, market_data))
-        except asyncio.QueueFull:
+            # 4. Финальное добавление в кэш (если новость прошла все фильтры)
+            async with state.cache_lock:
+                # Считаем только реально новые новости, прошедшие фильтры дубликатов
+                processed_count += 1
+                if processed_count > max_entries_to_process:
+                    logging.debug(f"Reached max_entries_to_process ({max_entries_to_process}) for feed {url}")
+                    break
+                    
+                state.add_url(entry.link, entry.title, embedding=new_embedding)
+
+            # Ставим в очередь для AI анализа
+            # Реализация вытесняющей очереди (Sliding Window)
+            # Если очередь полна, удаляем старейший элемент перед вставкой нового
             try:
-                # Извлекаем и сразу помечаем как "завершенный" (отброшенный) элемент
-                news_queue.get_nowait()
-                news_queue.task_done() 
-                
-                # Теперь место гарантированно есть (с учетом GIL и асинхронности)
                 news_queue.put_nowait((entry, market_data))
-                logging.warning("⚠️ Очередь переполнена: старая новость вытеснена для сохранения свежести данных.")
-            except (asyncio.QueueEmpty, asyncio.QueueFull):
-                # В случае экстремальной гонки данных просто пропускаем текущую новость
-                pass
+            except asyncio.QueueFull:
+                try:
+                    # Извлекаем и сразу помечаем как "завершенный" (отброшенный) элемент
+                    news_queue.get_nowait()
+                    news_queue.task_done() 
+                    
+                    # Теперь место гарантированно есть (с учетом GIL и асинхронности)
+                    news_queue.put_nowait((entry, market_data))
+                    logging.warning("⚠️ Очередь переполнена: старая новость вытеснена для сохранения свежести данных.")
+                except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    pass
+    except Exception as e:
+        logging.error(f"Unhandled error in feed {url}: {e}")
 
 async def news_worker(worker_id: int, session: aiohttp.ClientSession, state: GTSStateManager, rotator: ModelRotator):
     """Воркер для обработки новостей из очереди."""
     logging.info(f"Worker {worker_id} started.")
     while True:
-        entry, market_data = await news_queue.get()
+        batch = []
+        # Пытаемся собрать пакет новостей
         try:
-            await process_queued_news(entry, market_data, session, state, rotator)
+            # Ждем первую новость
+            item = await news_queue.get()
+            batch.append(item)
+            logging.info(f"📦 Worker {worker_id}: Начат сбор пакета (1/{config.AI_BATCH_SIZE})")
+            
+            # Накопление пакета: ждем до лимита времени или пока не наберется AI_BATCH_SIZE
+            batch_start_time = time.time()
+            while len(batch) < config.AI_BATCH_SIZE:
+                elapsed = time.time() - batch_start_time
+                wait_time = config.AI_BATCH_WAIT_SECONDS - elapsed
+                
+                if wait_time <= 0:
+                    logging.info(f"⏱ Worker {worker_id}: Лимит времени ожидания исчерпан ({len(batch)}/{config.AI_BATCH_SIZE})")
+                    break
+                    
+                try:
+                    # Пытаемся забрать следующую новость из очереди с учетом оставшегося времени
+                    next_item = await asyncio.wait_for(news_queue.get(), timeout=wait_time)
+                    batch.append(next_item)
+                    logging.info(f"➕ Worker {worker_id}: Добавлена новость ({len(batch)}/{config.AI_BATCH_SIZE})")
+                except asyncio.TimeoutError:
+                    logging.info(f"⏱ Worker {worker_id}: Ожидание новых сообщений истекло ({len(batch)}/{config.AI_BATCH_SIZE})")
+                    break
+            
+            if len(batch) >= config.AI_BATCH_SIZE:
+                logging.info(f"🚀 Worker {worker_id}: Пакет полностью укомплектован ({len(batch)}/{config.AI_BATCH_SIZE})")
+            
+            # Обрабатываем пакет
+            prepared_batch = []
+            for entry, m_data in batch:
+                # Извлекаем максимально подробный текст новости
+                body_text = entry.get("summary", "")
+                # Проверяем наличие расширенного контента (content:encoded)
+                if hasattr(entry, 'content') and entry.content:
+                    content_val = entry.content[0].value
+                    if len(content_val) > len(body_text):
+                        body_text = content_val
+                
+                # Очистка от HTML-тегов и лишних пробелов для экономии контекста
+                clean_body = re.sub(r'<[^>]+>', '', body_text).strip()
+                
+                prepared_batch.append({
+                    "text": f"{entry.title}\n{clean_body}"[:4000], # Ограничиваем разумным пределом
+                    "pub_time": entry.get('published') or entry.get('updated') or "Unknown",
+                    "entry": entry,
+                    "market_data": m_data
+                })
+            
+            logging.info(f"Worker {worker_id}: Отправка пакета из {len(prepared_batch)} новостей на анализ ИИ ({rotator.get_active()['name']})")
+            results = await ai_analyze_batch(prepared_batch, rotator, state, session)
+            
+            # Обрабатываем результаты. Если ИИ вернул меньше элементов, чем в батче,
+            # мы логируем ошибку, но news_queue.task_done() выполнится для всех,
+            # поэтому в будущем стоит реализовать возврат необработанных задач обратно в очередь.
+            for i, analysis_result in enumerate(results):
+                if i < len(prepared_batch):
+                    await process_single_analysis_result(
+                        prepared_batch[i]['entry'], 
+                        prepared_batch[i]['market_data'], 
+                        analysis_result, 
+                        session, 
+                        state
+                    )
+                else:
+                    logging.warning(f"AI returned more results ({len(results)}) than batch size ({len(prepared_batch)})")
+            
         except Exception as e:
-            logging.error(f"Worker {worker_id} error: {e}")
+            logging.error(f"Worker {worker_id} batch error: {e}")
         finally:
-            news_queue.task_done()
+            for _ in range(len(batch)):
+                news_queue.task_done()
 
-async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.ClientSession, state: GTSStateManager, rotator: ModelRotator):
-    """AI анализ и скоринг новости из очереди."""
+async def process_single_analysis_result(entry: Any, market_data: Dict, analysis_result: Tuple, session: aiohttp.ClientSession, state: GTSStateManager):
+    """Обработка результата анализа одной новости из пакета."""
     is_market_active = not market_data.get('is_stale', True)
     fng_val = market_data.get("fng_val", 50)
     
@@ -1236,10 +1340,7 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
     source_label = source_display or source_title
 
     try:
-        text_for_ai = entry.title + " " + entry.get("summary", "")
-        analysis = await ai_analyze_refined(text_for_ai, rotator, state, pub_time, session, source_title=source_title)
-        if analysis[0] is None: return
-        score, event_type, entities, slug, is_black_swan, model_name, confidence, ai_summary, title_ru = analysis
+        score, event_type, entities, slug, is_black_swan, model_name, confidence, ai_summary, title_ru = analysis_result
 
         # Сброс флага Black Swan, если score новости недостаточно велик (защита от галлюцинаций ИИ)
         if is_black_swan and abs(score) < config.BLACK_SWAN_SCORE_THRESHOLD:
@@ -1253,10 +1354,21 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
             logging.info(f"Skipping news '{entry.title}': Confidence {confidence:.2f} is below threshold {config.CONFIDENCE_THRESHOLD}")
             return
 
+        raw_score = score  # Сохраняем оригинальный балл от ИИ (-10..10)
+        narrative_multiplier = 1.0
+
+        if abs(raw_score) < 0.1:
+            logging.info(f"🔇 Trivial news ignored: {entry.title}")
+            return
+
         # Slug Logic (Duplicates & Narrative Tracking)
         normalized_slug = slug.strip().lower() if slug else None
         async with state.cache.cache_lock:
             if normalized_slug:
+                # Инкрементируем счетчик при каждом появлении
+                state.narrative_counts[normalized_slug] += 1
+                current_hits = state.narrative_counts[normalized_slug]
+
                 if normalized_slug in state.cache.slugs:
                     delta_sec = time.time() - state.cache.slugs[normalized_slug]
                     
@@ -1268,13 +1380,10 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
                     
                     # Narrative Boost logic (if enabled)
                     if delta_sec < config.SLUG_DUPLICATE_HOURS * 3600:
-                        state.cache.narrative_counts[normalized_slug] += 1
-                        boost = state.cache.narrative_counts[normalized_slug] * config.NARRATIVE_BOOST_PER_HIT
+                        boost = (current_hits - 1) * config.NARRATIVE_BOOST_PER_HIT
                         narrative_multiplier = min(config.NARRATIVE_MAX_MULTIPLIER, 1.0 + boost)
-                        logging.info(f"📈 Narrative Boost for {normalized_slug}: x{narrative_multiplier:.2f} (Hit #{state.narrative_counts[normalized_slug]})")
-                    else:
-                        # Если прошло слишком много времени, нарратив "остыл", начинаем заново
-                        state.narrative_counts[normalized_slug] = 1
+                        if narrative_multiplier > 1.0:
+                            logging.info(f"📈 Narrative Boost for {normalized_slug}: x{narrative_multiplier:.2f} (Hit #{current_hits})")
                 
                 state.slugs[normalized_slug] = time.time()
                 state.slugs.move_to_end(normalized_slug)
@@ -1308,9 +1417,15 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
                 dynamic_adj = 1.15
         
         trust_factor = base_trust * dynamic_adj
+
+        # ПРИМЕНЯЕМ ПОСТ-КАЛИБРОВКУ AI SCORE (MSF)
+        model_sens = state.model_sensitivities.get(model_name, 1.0)
         
-        # Применяем коэффициент доверия источника и уверенность модели
-        score *= (trust_factor * confidence)
+        # Safety Clip: если ИИ выдал уверенность > 1 (например 9 или 90)
+        confidence = min(1.0, confidence / 10.0 if confidence > 1.0 else confidence)
+
+        # Итоговый скор теперь учитывает индивидуальную амплитуду модели
+        score *= (trust_factor * confidence * model_sens)
         
         # ПРИМЕНЯЕМ NARRATIVE BOOST
         score *= narrative_multiplier
@@ -1350,14 +1465,15 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
         if config.NARRATIVE_AUTO_DISCOVERY and normalized_slug:
             if state.narrative_counts[normalized_slug] >= config.MIN_NARRATIVE_STREAK:
                 async with state.db_lock:
-                    with get_db_connection() as conn:
+                    async with get_db_connection() as conn:
                         for asset in target_assets:
                             weight_key = (normalized_slug.upper(), asset.lower())
                             if weight_key not in state.weights:
                                 state.weights[weight_key] = 1.0
-                                conn.execute("INSERT OR IGNORE INTO weights (event_key, target_asset, weight) VALUES (?, ?, 1.0)",
+                                await conn.execute("INSERT OR IGNORE INTO weights (event_key, target_asset, weight) VALUES (?, ?, 1.0)",
                                            (weight_key[0], weight_key[1]))
                                 logging.info(f"🆕 DISCOVERED NARRATIVE: {weight_key[0]} now tracked for {asset}")
+                        await conn.commit()
 
         # Обновляем баллы для каждого целевого актива
         for asset_name in target_assets:
@@ -1365,7 +1481,12 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
 
         # Фильтр значимости: для соцсетей (Reddit, X, StockTwits) повышаем порог в 2.5 раза
         is_social = any(s in source_lookup for s in ["reddit.com", "x.com", "twitter.com", "stocktwits.com"])
-        effective_threshold = config.NEUTRAL_SCORE_THRESHOLD * 2.5 if is_social else config.NEUTRAL_SCORE_THRESHOLD
+        effective_threshold = config.NEUTRAL_SCORE_THRESHOLD * 1.5 if is_social else config.NEUTRAL_SCORE_THRESHOLD
+
+        # Дополнительная защита: социальные новости с низкой уверенностью обнуляются
+        if is_social and confidence < 0.80:
+            logging.info(f"🔇 Social Noise Filter: Muting low-confidence Reddit/X post: {slug}")
+            return
 
         if abs(score) < effective_threshold:
             state.metrics.metrics["news_low_score"] += 1
@@ -1383,7 +1504,9 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
                 top_score = current_a_score
                 top_asset = asset_name
 
-        ref_score = top_score
+        # Сигналы (Market/Risk) всегда базируются на глобальном индексе стресса (Global Risk Score),
+        # в то время как расчет вероятности влияния (Impact) идет по самому волатильному активу.
+        global_score = state.scores.get((event_key, "global"), 0.0)
         
         # Динамический расчет волатильности для сигналов
         price_history = market_data.get('price_history')
@@ -1396,24 +1519,26 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
             if pd.isna(top_vol) or top_vol < 0.01: top_vol = 1.0
             
         top_multiplier = state.asset_multipliers.get(top_asset_low, state.multiplier)
-        prob = predict_impact(ref_score, top_multiplier, top_vol)
+        prob = predict_impact(top_score, top_multiplier, top_vol)
         
-        market = market_signals(ref_score)
-        sig_type = generate_signal(prob, ref_score)
+        # Сила сигнала в сигмах (Z-score) для обучения и внутренней логики
+        top_z = min(abs(top_score) * top_multiplier, 10.0)
+
+        market = market_signals(global_score)
+        sig_type = generate_signal(prob, global_score)
 
         # Проверяем анти-спам ДО записи в базу, чтобы не плодить дубли
-        can_send_alert = should_send(event_key, score, ref_score, state, is_black_swan) 
+        can_send_alert = should_send(event_key, score, global_score, state, is_black_swan) 
 
         async with state.db_lock: # Используем лок из state manager
             try:
-                with get_db_connection() as conn:
-                    cursor = conn.cursor()
+                async with get_db_connection() as conn:
                     # Сохраняем событие (link UNIQUE защитит от полных дублей)
-                    cursor.execute("""
+                    async with conn.execute("""
                         INSERT INTO events (title, link, score, event, nasdaq, sp500, oil, soxs, gold, btc, vix, fear_greed, slug, is_black_swan, summary, title_ru, timestamp)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["sp500"], market["oil"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val, slug, 1 if is_black_swan else 0, ai_summary, title_ru, pub_db_time))
-                    event_id = cursor.lastrowid
+                    """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["sp500"], market["oil"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val, slug, 1 if is_black_swan else 0, ai_summary, title_ru, pub_db_time)) as cursor:
+                        event_id = cursor.lastrowid
                     
                     for asset_name in target_assets:
                         a_low = asset_name.lower()
@@ -1424,28 +1549,31 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
                             if pd.isna(a_vol) or a_vol < 0.01: a_vol = 1.0
                         
                         a_mult = state.asset_multipliers.get(a_low, state.multiplier)
-                        a_score = state.scores.get((event_key, a_low), 0.0)
-                        a_prob = predict_impact(a_score, a_mult, a_vol)
 
-                        cursor.execute("""
+                        # Для обучения сохраняем прогнозируемую силу конкретной новости в сигмах.
+                        # Используем чистый score новости и вес, чтобы recalculate_learning.py работал корректно.
+                        a_weight = state.learning.get_weight(event_key, a_low)
+                        a_pred_z = min(abs(score * a_weight) * a_mult, 10.0)
+
+                        await conn.execute("""
                             INSERT INTO predictions (event_id, event_key, score, predicted_impact, target_asset, resolved, event_type, is_black_swan, confidence, source_domain, model_name, timestamp)
                             VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
-                        """, (event_id, event_key, a_score, a_prob, a_low, event_type, 1 if is_black_swan else 0, confidence, source_title, model_name, pub_db_time))
-                    conn.commit()
+                        """, (event_id, event_key, raw_score, a_pred_z, a_low, event_type, 1 if is_black_swan else 0, confidence, source_title, model_name, pub_db_time))
+                    await conn.commit()
 
                 if config.ENABLE_HOURLY_REPORT:
                     # Добавляем новость в список для часового отчета (только один раз для события)
                     state.add_news_for_summary({
                         "event_key": event_key,
                         "score": score,
-                        "impact": prob, 
+                        "impact": top_z, 
                         "title": title_ru or entry.title,
                         "summary": ai_summary,
                         "link": entry.link,
                         "source": source_label
                     })
 
-            except sqlite3.IntegrityError:
+            except aiosqlite.IntegrityError:
                 logging.info(f"Новость уже обработана другой лентой (URL duplicate): {entry.title}") # Используем return вместо continue
                 return
 
@@ -1460,7 +1588,7 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
             # 1. Сначала всегда добавляем глобальный рынок (Market) первым и без процентов
             if any(a.lower() == "global" for a in target_assets):
                 g_chg = market_data.get("global_change", 0.0)
-                forecast_details.append(f"🌍 MARKET: {sig_type} (Stress: {g_chg:+.2f}%)")
+                forecast_details.append(f"🌍 MARKET: {sig_type} (Stress Index: {global_score:+.2f})")
 
             # 2. Добавляем остальные активы
             for asset in target_assets:
@@ -1494,7 +1622,7 @@ async def process_queued_news(entry: Any, market_data: Dict, session: aiohttp.Cl
                 f"📢 <b>Source:</b> {html.escape(source_label.upper())}\n"
                 f"{divergence_tag}"
                 f"{narrative_tag}"
-                f"<b>Score ({top_asset.upper()}):</b> {top_score:.2f} (News: {score:+.2f}) | <b>Impact:</b> {prob:+.2f}%\n"
+                f"<b>Score:</b> {global_score:+.2f} (News: {score:+.2f}) | <b>Impact:</b> {prob:+.2f}%\n"
                 f"-------------------\n"
                 f"{forecast_str}\n"
                 f"-------------------\n"
@@ -1515,16 +1643,15 @@ async def send_hourly_summary(session: aiohttp.ClientSession, state: GTSStateMan
     if not news_to_report:
         try:
             async with state.db_lock:
-                with get_db_connection() as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("""
+                async with get_db_connection() as conn:
+                    async with conn.execute("""
                         SELECT event_key, score, predicted_impact as impact, title_ru as title, summary, link, source_domain as source
                         FROM predictions p
                         JOIN events e ON p.event_id = e.id
                         WHERE p.timestamp >= datetime('now', '-1 hour')
                         GROUP BY e.link ORDER BY e.timestamp DESC
-                    """)
-                    news_to_report = [dict(row) for row in cursor.fetchall()]
+                    """) as cursor:
+                        news_to_report = [dict(row) for row in await cursor.fetchall()]
         except Exception as e:
             logging.error(f"Error recovering hourly summary: {e}")
             return
@@ -1539,15 +1666,14 @@ async def send_hourly_summary(session: aiohttp.ClientSession, state: GTSStateMan
 
     # Анализ точности моделей за последние 6 часов (чтобы захватить недавно разрешенные прогнозы)
     try:
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+        async with get_db_connection() as conn:
+            async with conn.execute("""
                 SELECT model_name, COUNT(*) as total, SUM(is_correct) as correct
                 FROM predictions 
                 WHERE resolved >= 1 AND timestamp >= datetime('now', '-6 hours')
                 GROUP BY model_name
-            """)
-            rows = cursor.fetchall()
+            """) as cursor:
+                rows = await cursor.fetchall()
             
             if rows:
                 summary_msg_parts.append("\n<b>🏆 MODEL ACCURACY (Last 6h):</b>")
@@ -1568,7 +1694,7 @@ async def send_hourly_summary(session: aiohttp.ClientSession, state: GTSStateMan
         logging.error(f"Error calculating model stats for summary: {e}")
 
     for news_item in news_to_report:
-        summary_msg_parts.append(f"\n🧠 <b>EVENT:</b> {html.escape(news_item['event_key'])} | <b>Score:</b> {news_item['score']:.2f} | <b>Impact:</b> {news_item['impact']:.2f}%")
+        summary_msg_parts.append(f"\n🧠 <b>EVENT:</b> {html.escape(news_item['event_key'])} | <b>Score:</b> {news_item['score']:.2f} | <b>Impact:</b> {news_item['impact']:.2f}σ")
         summary_msg_parts.append(f"📢 <b>Source:</b> {html.escape(news_item.get('source', 'Unknown').upper())}")
         summary_msg_parts.append(f"📰 <a href='{html.escape(news_item['link'])}'>{html.escape(news_item['title'])}</a>")
         if news_item['summary']:
@@ -1594,6 +1720,22 @@ async def get_healthcheck() -> Dict[str, Any]:
         "last_market_sync": datetime.fromtimestamp(state.market.last_market_data_time).strftime('%H:%M:%S') if state.market.last_market_data_time else "Never"
     }
 
+async def check_ollama_status(session: aiohttp.ClientSession) -> bool:
+    """Проверяет доступность локального сервера Ollama."""
+    if not config.USE_LOCAL_OLLAMA and not config.OLLAMA_FALLBACK:
+        return True
+
+    logging.info(f"🔍 Проверка доступности Ollama: {config.OLLAMA_BASE_URL}")
+    try:
+        async with session.get(config.OLLAMA_BASE_URL, timeout=5) as resp:
+            if resp.status == 200:
+                logging.info("✅ Ollama доступна и работает.")
+                return True
+            logging.error(f"⚠️ Ollama ответила статусом {resp.status}")
+    except Exception as e:
+        logging.error(f"❌ Ошибка подключения к Ollama: {e}")
+    return False
+
 async def main():
     last_learning_run = 0
     last_cleanup_run = 0
@@ -1603,8 +1745,25 @@ async def main():
     async with aiohttp.ClientSession() as persistent_session:
         workers = []
         try:
+            # Инициализация БД (теперь асинхронная)
+            await init_db()
+
+            # Проверка Ollama, если она выбрана как основная модель
+            if config.USE_LOCAL_OLLAMA or config.OLLAMA_FALLBACK:
+                if not await check_ollama_status(persistent_session):
+                    logging.critical("Критическая ошибка: Ollama не обнаружена. Завершение работы.")
+                    return
+
             # Инициализация состояния из БД в асинхронном контексте
             await state.init_from_db()
+            
+            # Инициализация общего AI клиента
+            if config.GEMINI_API_KEY:
+                state.ai_client = genai.Client(api_key=config.GEMINI_API_KEY)
+                
+            # Запуск фонового репортера статистики
+            asyncio.create_task(metrics_reporter_task(state))
+
             logging.info(f"🚀 Поставщик рыночных данных: {config.MARKET_DATA_PROVIDER.upper()}")
             
             # Запуск воркеров на основе конфигурации (1 для Free Gemini, 2+ для платных тарифов)
@@ -1621,7 +1780,7 @@ async def main():
             last_summary_run = time.time() # Инициализируем время последнего отчета
 
             while True:
-                eligible_count = count_eligible_predictions()
+                eligible_count = await count_eligible_predictions()
                 time_to_next = max(0, config.LEARNING_INTERVAL - (time.time() - last_learning_run))
                 minutes_left = int(time_to_next // 60)
                 
@@ -1639,20 +1798,21 @@ async def main():
                 if not is_market_active:
                     logging.info("🌙 Night mode: Using slower decay factor to preserve sentiment.")
 
-                # Мониторинг резких движений цен (Нефть)
+                # Универсальный мониторинг резких движений цен
                 if is_market_active:
-                    oil_move = current_market_data.get("oil_change", 0.0)
-                    if abs(oil_move) >= config.OIL_SHARP_MOVE_THRESHOLD:
-                        now = time.time()
-                        if now - state.last_price_alert.get("oil", 0) > config.COOLDOWN:
-                            direction = "🚀 РОСТ" if oil_move > 0 else "🔻 ПАДЕНИЕ"
-                            alert_msg = (
-                                f"⚠️ <b>РЕЗКОЕ ДВИЖЕНИЕ ЦЕНЫ: OIL</b>\n"
-                                f"Направление: {direction} <b>{oil_move:+.2f}%</b>\n"
-                                f"Окно мониторинга: ~{config.MARKET_LOOKBACK_HOURS}ч"
-                            )
-                            await send_telegram(persistent_session, alert_msg)
-                            state.last_price_alert["oil"] = now
+                    for asset, threshold in config.SHARP_MOVE_THRESHOLDS.items():
+                        move = current_market_data.get(f"{asset}_change", 0.0)
+                        if abs(move) >= threshold:
+                            now = time.time()
+                            if now - state.last_price_alert.get(asset, 0) > config.COOLDOWN:
+                                direction = "🚀 РОСТ" if move > 0 else "🔻 ПАДЕНИЕ"
+                                alert_msg = (
+                                    f"⚠️ <b>РЕЗКОЕ ДВИЖЕНИЕ ЦЕНЫ: {asset.upper()}</b>\n"
+                                    f"Направление: {direction} <b>{move:+.2f}%</b>\n"
+                                    f"Окно мониторинга: ~{config.MARKET_LOOKBACK_HOURS}ч"
+                                )
+                                await send_telegram(persistent_session, alert_msg)
+                                state.last_price_alert[asset] = now
 
                 for key in list(state.scores.keys()):
                     await state.apply_decay(key, is_market_active)
@@ -1693,7 +1853,6 @@ async def main():
                     await send_hourly_summary(persistent_session, state)
                     last_summary_run = current_time
 
-                state.log_metrics(news_queue.qsize())
                 await asyncio.sleep(config.CHECK_INTERVAL)
         except asyncio.CancelledError:
             logging.info("Основной цикл остановлен (CancelledError).")

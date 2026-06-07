@@ -24,7 +24,7 @@ class MetricsManager:
 
         logging.info("--- [GTS METRICS REPORT] ---")
         logging.info(f"📊 News: {self.metrics['news_sent_telegram']} sent / {self.metrics['news_received']} received")
-        logging.info(f"🛡️ Filters: Source={self.metrics['news_source_filtered']}, URL={self.metrics['news_duplicate_url']}, Fuzzy={self.metrics['news_duplicate_fuzzy']}, Semantic={self.metrics['news_duplicate_semantic']}, Slug={self.metrics['news_duplicate_slug']}, LowScore={self.metrics['news_low_score']}")
+        logging.info(f"🛡️ Filters: Source={self.metrics['news_source_filtered']}, URL={self.metrics['news_duplicate_url']}, Hash={self.metrics['news_duplicate_hash']}, Fuzzy={self.metrics['news_duplicate_fuzzy']}, Semantic={self.metrics['news_duplicate_semantic']}, Slug={self.metrics['news_duplicate_slug']}, LowScore={self.metrics['news_low_score']}")
         logging.info(f"🧠 AI: Avg Time {avg_ai:.2f}s, Requests {self.metrics['ai_requests']}")
         logging.info(f"📈 Market: Provider={market_status}, LastSync={last_sync}, AvgTime={avg_market:.2f}s")
         logging.info(f"🩺 Health: Queue={q_size}, RAM_Scores={scores_count}, Uptime={round((time.time() - self.start_time)/3600, 2)}h")
@@ -52,6 +52,7 @@ class CacheManager:
     def __init__(self):
         self.urls = OrderedDict()
         self.titles = OrderedDict()
+        self.clean_titles = set() # Быстрый O(1) поиск для полных дублей
         self.embeddings = OrderedDict()
         self.slugs = OrderedDict()
         self.narrative_counts = defaultdict(int)
@@ -66,6 +67,8 @@ class CacheManager:
     def add_url(self, url: str, title: str, embedding: Optional[List[float]] = None):
         self.urls[url] = True
         self.titles[title] = True
+        # Очистка заголовка происходит в engine.py, но мы добавим его сюда
+        # для предотвращения O(N) перебора в будущем
         if embedding:
             self.embeddings[title] = (embedding, time.time())
         self._prune_caches()
@@ -75,8 +78,10 @@ class CacheManager:
         while len(self.urls) > 2000: self.urls.popitem(last=False)
         while len(self.titles) > 1000: self.titles.popitem(last=False)
         while len(self.embeddings) > 1000: self.embeddings.popitem(last=False)
+        if len(self.clean_titles) > 1000: self.clean_titles.clear() # Простая очистка сета
         
         cutoff = now - (config.SLUG_DUPLICATE_HOURS * 3600)
+        # Очистка старых слагов и их счетчиков нарративов
         expired_slugs = [k for k, ts in self.slugs.items() if ts < cutoff]
         for k in expired_slugs:
             self.slugs.pop(k, None)
@@ -87,6 +92,7 @@ class LearningManager:
         self.weights = {}
         self.asset_map = {}
         self.source_performance = {}
+        self.model_sensitivities = {}
         self.weight_lock = asyncio.Lock()
 
     async def load_config_weights(self):
@@ -101,6 +107,9 @@ class LearningManager:
                 self.asset_map[canonical_key] = target_assets
                 for asset in target_assets:
                     self.weights[(canonical_key, asset)] = weight
+
+    def lookup_source_performance(self, source_domain: str) -> Optional[Dict[str, float]]:
+        return self.source_performance.get(source_domain.lower())
 
     def get_weight(self, event_key: str, asset: str) -> float:
         if (event_key, asset) in self.weights: return self.weights[(event_key, asset)]
@@ -124,10 +133,12 @@ class ScoreManager:
             now = time.time()
             self._apply_decay_internal(composite_key, is_market_active, now)
             
+            # Применяем корреляцию актива: переводим Risk-Score ИИ в Bullish-Intensity актива
+            correlation = config.ASSET_CORRELATION_MAP.get(asset.lower(), -1)
             weight = self.learning.get_weight(event_key, asset)
             self.scores[composite_key] = max(-config.MAX_SCORE_THRESHOLD, 
                                             min(config.MAX_SCORE_THRESHOLD, 
-                                                self.scores[composite_key] + (score * weight)))
+                                                self.scores[composite_key] + (score * weight * correlation)))
 
     def _apply_decay_internal(self, composite_key: tuple, is_market_active: bool, now: float):
         if composite_key not in self.scores or self.scores[composite_key] == 0:
@@ -167,10 +178,12 @@ class GTSStateManager:
         self.learning = LearningManager()
         self.scores = ScoreManager(self.learning)
         
+        self.ai_client = None  # Reusable Gemini client
         self.db_lock = asyncio.Lock()
         self.gemini_limiter = asyncio.Semaphore(config.GEMINI_CONCURRENCY)
         self.openrouter_limiter = asyncio.Semaphore(config.OPENROUTER_CONCURRENCY)
         self.deepseek_limiter = asyncio.Semaphore(config.DEEPSEEK_CONCURRENCY)
+        self.ollama_limiter = asyncio.Semaphore(1) # Ollama обычно обрабатывает 1 запрос за раз
         self.hourly_summary_news = []
         self.last_price_alert = {}
         self.learning_rate = config.LEARNING_RATE
@@ -227,8 +240,16 @@ class GTSStateManager:
         return self.scores.asset_multipliers
 
     @property
+    def model_sensitivities(self):
+        return self.learning.model_sensitivities
+
+    @property
     def cache_lock(self):
         return self.cache.cache_lock
+
+    @property
+    def score_lock(self):
+        return self.scores.score_lock
 
     @property
     def asset_map(self):
@@ -267,6 +288,15 @@ class GTSStateManager:
     def add_url(self, url: str, title: str, embedding: Optional[List[float]] = None):
         self.cache.add_url(url, title, embedding)
 
+    async def save_embedding(self, title: str, vector: List[float]):
+        async with self.db_lock:
+            async with get_db_connection() as conn:
+                await conn.execute(
+                    "INSERT OR REPLACE INTO embeddings (title, vector) VALUES (?, ?)",
+                    (title, json.dumps(vector))
+                )
+                await conn.commit()
+
     def add_news_for_summary(self, news_data: Dict):
         self.hourly_summary_news.append(news_data)
 
@@ -275,34 +305,140 @@ class GTSStateManager:
 
     async def get_db_titles(self, hours: int = 3) -> List[str]:
         async with self.db_lock:
-            with get_db_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute(f"SELECT title FROM events WHERE timestamp > datetime('now', '-{hours} hours') ORDER BY timestamp DESC LIMIT 100")
-                return [row['title'] for row in cursor.fetchall()]
+            async with get_db_connection() as conn:
+                async with conn.execute(f"SELECT title FROM events WHERE timestamp > datetime('now', '-{hours} hours') ORDER BY timestamp DESC LIMIT 100") as cursor:
+                    return [row['title'] for row in await cursor.fetchall()]
 
     async def init_from_db(self):
-        with get_db_connection() as conn:
-            cursor = conn.cursor()
+        async with get_db_connection() as conn:
             # Загрузка настроек
-            cursor.execute("SELECT value FROM settings WHERE key = 'impact_multiplier'")
-            row = cursor.fetchone()
+            async with conn.execute("SELECT value FROM settings WHERE key = 'impact_multiplier'") as cursor:
+                row = await cursor.fetchone()
             if row: self.scores.multiplier = row[0]
+
+            # Загрузка множителей активов из статистики
+            async with conn.execute("SELECT target_asset, multiplier FROM asset_stats") as cursor:
+                rows = await cursor.fetchall()
+            for row in rows:
+                self.scores.asset_multipliers[row['target_asset'].lower()] = row['multiplier']
+
+            # Загрузка чувствительности моделей (MSF)
+            async with conn.execute("SELECT model_name, sensitivity FROM model_stats") as cursor:
+                rows = await cursor.fetchall()
+            for row in rows:
+                self.learning.model_sensitivities[row['model_name']] = row['sensitivity']
+
+            # Предзагрузка очищенных заголовков для O(1) дедупликации
+            async with conn.execute("SELECT title FROM events ORDER BY timestamp DESC LIMIT 1000") as cursor:
+                rows = await cursor.fetchall()
+            for row in rows:
+                from engine import clean_title
+                self.cache.clean_titles.add(clean_title(row['title']))
 
             await self.learning.load_config_weights()
             # Загрузка весов из БД
-            cursor.execute("SELECT event_key, target_asset, weight FROM weights")
-            for key, asset, val in cursor.fetchall():
+            async with conn.execute("SELECT event_key, target_asset, weight FROM weights") as cursor:
+                rows = await cursor.fetchall()
+            for key, asset, val in rows:
                 self.learning.weights[(key, asset)] = val
             
-            # Загрузка истории баллов (упрощено для краткости)
-            cursor.execute("SELECT event_key, target_asset, score, timestamp FROM predictions WHERE timestamp > datetime('now', '-7 day')")
-            # ... логика восстановления баллов ...
+            # Загрузка динамического доверия к источникам
+            async with conn.execute("SELECT source_domain, total_resolved, correct_count, sum_alpha FROM source_stats") as cursor:
+                rows = await cursor.fetchall()
+            for row in rows:
+                total = row['total_resolved']
+                if total > 0:
+                    self.learning.source_performance[row['source_domain']] = {
+                        "wr": (row['correct_count'] or 0) / total,
+                        "avg_alpha": (row['sum_alpha'] or 0.0) / total
+                    }
+            
+            # Загрузка эмбеддингов для семантической дедупликации
+            emb_lookback = config.RAM_EMBEDDING_LOOKBACK_DAYS
+            async with conn.execute("""
+                SELECT title, vector, timestamp 
+                FROM embeddings 
+                WHERE timestamp > datetime('now', '-' || ? || ' days')
+                ORDER BY timestamp ASC
+            """, (emb_lookback,)) as cursor:
+                rows = await cursor.fetchall()
+            for row in rows:
+                try:
+                    vec = json.loads(row['vector'])
+                    ts_str = row['timestamp']
+                    try:
+                        p_dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                        p_ts = p_dt.timestamp()
+                    except (ValueError, TypeError):
+                        p_ts = time.time()
+                    self.cache.embeddings[row['title']] = (vec, p_ts)
+                except Exception:
+                    continue
+            
+            # Загрузка истории баллов для восстановления RAM-контекста (сюжеты и затухание)
+            lookback = config.RAM_SCORE_LOOKBACK_DAYS
+            async with conn.execute("""
+                SELECT event_key, target_asset, score, timestamp 
+                FROM predictions 
+                WHERE timestamp > datetime('now', '-' || ? || ' days')
+                ORDER BY timestamp ASC
+            """, (lookback,)) as cursor:
+                rows = await cursor.fetchall()
+
+            now = time.time()
+            for row in rows:
+                ekey, asset = row['event_key'], row['target_asset']
+                p_score, ts_str = row['score'], row['timestamp']
+                
+                try:
+                    p_dt = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                    p_ts = p_dt.timestamp()
+                except (ValueError, TypeError):
+                    continue
+                
+                ckey = (ekey, asset)
+                # Симулируем затухание до момента этой исторической новости
+                self.scores._apply_decay_internal(ckey, True, p_ts)
+                
+                correlation = config.ASSET_CORRELATION_MAP.get(asset.lower(), -1)
+                weight = self.learning.get_weight(ekey, asset)
+                self.scores[ckey] = max(-config.MAX_SCORE_THRESHOLD, 
+                                        min(config.MAX_SCORE_THRESHOLD, 
+                                            self.scores.get(ckey, 0.0) + (p_score * weight * correlation)))
+                self.scores.last_update[ckey] = p_ts
+                
+                # Восстановление контекста антиспама (последний балл сюжета)
+                self.scores.last_sent[ekey] = p_ts
+                if asset == 'global':
+                    self.scores.last_sent_score[ekey] = self.scores.get(ckey, 0.0)
+
+            # Финальное затухание всех восстановленных баллов до текущего времени
+            for ckey in list(self.scores.keys()):
+                self.scores._apply_decay_internal(ckey, True, now)
+
             logging.info("✅ Состояние успешно инициализировано из БД")
 
     async def save_to_db(self):
         async with self.db_lock:
-            with get_db_connection() as conn:
-                # Сохранение весов и множителей
+            async with get_db_connection() as conn:
+                # 1. Сохранение глобального множителя в настройки
+                await conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (self.multiplier,))
+                
+                # 2. Сохранение множителей по активам в таблицу статистики
+                for asset, mult in self.asset_multipliers.items():
+                    await conn.execute("""
+                        UPDATE asset_stats SET multiplier = ? WHERE target_asset = ?
+                    """, (mult, asset))
+
+                # 3. Сохранение чувствительности моделей
+                for m_name, sens in self.model_sensitivities.items():
+                    await conn.execute("""
+                        INSERT INTO model_stats (model_name, sensitivity) 
+                        VALUES (?, ?)
+                        ON CONFLICT(model_name) DO UPDATE SET sensitivity = EXCLUDED.sensitivity
+                    """, (m_name, sens))
+
+                # 3. Сохранение весов событий
                 for (key, asset), val in self.learning.weights.items():
-                    conn.execute("INSERT OR REPLACE INTO weights (event_key, target_asset, weight) VALUES (?, ?, ?)", (key, asset, val))
-                conn.commit()
+                    await conn.execute("INSERT OR REPLACE INTO weights (event_key, target_asset, weight) VALUES (?, ?, ?)", (key, asset, val))
+                await conn.commit()

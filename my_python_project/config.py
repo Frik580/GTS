@@ -13,6 +13,12 @@ MARKET_DATA_API_KEY = os.getenv("MARKET_DATA_API_KEY") # Ключ от TwelveDat
 # Провайдер данных: "twelvedata" или "yfinance" (фоллбек)
 MARKET_DATA_PROVIDER = os.getenv("MARKET_DATA_PROVIDER", "yfinance")
 
+# Local Model Settings (Ollama)
+USE_LOCAL_OLLAMA = os.getenv("USE_LOCAL_OLLAMA", "False").lower() == "true"
+OLLAMA_FALLBACK = os.getenv("OLLAMA_FALLBACK", "False").lower() == "true"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+
 # Network Settings
 HTTP_PROXY = os.getenv("HTTP_PROXY") # Например: "http://user:pass@ip:port"
 USE_PROXY = True if HTTP_PROXY else False
@@ -202,8 +208,6 @@ SPECIFIC_SOURCES_LIST = [
     "techpowerup.com",
 
     # FAST_SIGNAL
-    "x.com",
-    "twitter.com",
     "reddit.com",
     "stocktwits.com",
     "wccftech.com",
@@ -220,9 +224,9 @@ SPECIFIC_SOURCES_LIST = [
 ]
 
 # Настройки для поиска в соцсетях
-SOCIAL_SEARCH_ENABLED = False # Временно отключаем, так как RSS от соцсетей может быть шумным и требует доработки фильтров
+SOCIAL_SEARCH_ENABLED = True # Временно отключаем, так как RSS от соцсетей может быть шумным и требует доработки фильтров
 # Список надежных Nitter-инстансов (для Twitter RSS без API ключа)
-NITTER_INSTANCES = ["nitter.net", "nitter.it", "nitter.privacydev.net"]
+NITTER_INSTANCES = ["nitter.net", "nitter.it","nitter.poast.org", "nitter.privacydev.net", "nitter.no-logs.com", "nitter.projectsegfau.lt"]
 
 # Логика формирования целевых запросов Google News
 RSS_FEEDS = []
@@ -244,18 +248,15 @@ if ONLY_SPECIFIC_SOURCES:
             _chunk_query = "+(" + "+OR+".join([f"site:{d}" for d in chunk]) + ")"
             RSS_FEEDS.append(f"{GOOGLE_BASE_URL}{keyword_q}{_chunk_query}+when:6h")
 
-    # Добавляем поиск по соцсетям, если включено
-    if SOCIAL_SEARCH_ENABLED:
-        for k in TRACKED_KEYWORDS.keys():
-            keyword_q = k.replace(' ', '+')
-            # Reddit Search RSS
-            RSS_FEEDS.append(f"https://www.reddit.com/search.rss?q={keyword_q}&sort=new&t=hour")
-            # Twitter via Nitter RSS (берем первый инстанс для примера)
-            RSS_FEEDS.append(f"https://{NITTER_INSTANCES[0]}/search/rss?f=tweets&q={keyword_q}")
-            # StockTwits не имеет RSS, он будет обрабатываться отдельным методом в engine.py
-
 else:
     RSS_FEEDS = [f"{GOOGLE_BASE_URL}{k.replace(' ', '+')}+when:6h" for k in TRACKED_KEYWORDS.keys()]
+
+# Добавляем поиск по соцсетям, если включено (теперь вне зависимости от ONLY_SPECIFIC_SOURCES)
+if SOCIAL_SEARCH_ENABLED:
+    for k in TRACKED_KEYWORDS.keys():
+        keyword_q = k.replace(' ', '+')
+        # Reddit Search RSS
+        RSS_FEEDS.append(f"https://www.reddit.com/search.rss?q={keyword_q}&sort=new&t=hour")
 
 RSS_FEEDS += YAHOO_FINANCE_FEEDS
 RSS_MAX_ENTRIES = 15 # Увеличено до 15, чтобы находить доверенные источники внутри агрегаторов
@@ -301,6 +302,9 @@ NARRATIVE_MAX_MULTIPLIER = 2.0 # Максимальное усиление (2x)
 # AI Delays
 AI_DELAY_JSON = 3 # Немного сокращаем ожидание для повышения пропускной способности
 AI_DELAY_NO_JSON = 10 # Задержка для тяжелых/медленных моделей
+AI_BATCH_SIZE = 10 # Уменьшаем размер пачки для повышения стабильности бесплатных моделей
+AI_BATCH_WAIT_SECONDS = 60 # Время ожидания для накопления пакета новостей
+ONLY_PRIORITY_GEMINI = True # Если True, используются только модели Gemini из family_priority
 
 # Concurrency Settings
 GEMINI_CONCURRENCY = 1 # Бесплатный тариф требует последовательных запросов
@@ -318,8 +322,8 @@ MAX_SCORE_THRESHOLD = 25.0
 DECAY_REFERENCE_SECONDS = 180 # Базовый интервал времени для расчета затухания
 
 BLACK_SWAN_SCORE_THRESHOLD = 7.0 # Порог индивидуального скора новости для подтверждения статуса Black Swan
-LEARNING_RATE = 0.001 # Уменьшаем шаг обучения, чтобы веса не "прыгали" от одной ошибки
-ASYMMETRIC_LR_FACTOR = 2.0 # Ускорение коррекции при ошибке в направлении (is_correct = False)
+LEARNING_RATE = 0.005 # Повышаем шаг обучения для более быстрой адаптации к смене режима
+ASYMMETRIC_LR_FACTOR = 3.0 # Более агрессивная коррекция при ошибке в направлении (is_correct = False)
 
 # Multiplier Reset Logic
 MIN_WINRATE_BEFORE_RESET = 40.0 # Порог WinRate (%), ниже которого множитель актива сбрасывается
@@ -329,9 +333,9 @@ IMPACT_MULTIPLIER = 0.3 # Базовая чувствительность к Z-s
 LEARNING_THRESHOLD = 0.4 # Повышаем порог: учимся только на движениях > 0.4 сигмы
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
 MIN_WEIGHT_THRESHOLD = 0.8 # Чистим базу от слабых связей активнее
-NEUTRAL_SCORE_THRESHOLD = 2.0 # Повышаем порог, чтобы игнорировать "слабые" перепечатки
+NEUTRAL_SCORE_THRESHOLD = 1.5 # Снижаем порог, чтобы захватывать больше умеренно значимых сигналов
 MAX_ENTITY_PARTS = 3 # Увеличено до 3, чтобы лучше обрабатывать сложные Slug от ИИ
-DUPLICATE_TITLE_THRESHOLD = 0.65 # Снижен порог для более агрессивной дедупликации
+DUPLICATE_TITLE_THRESHOLD = 0.78 # Повышен порог для исключения коллизий шаблонных фраз
 FALLBACK_DUPLICATE_THRESHOLD = 0.55 # Повышаем чувствительность для не-семантического поиска
 SEMANTIC_DEDUPLICATION_WINDOW = 12 # Увеличено до 12ч для борьбы с перепечатками в разных часовых поясах
 SEMANTIC_DUPLICATE_THRESHOLD = 0.81 # Снижен порог для склейки семантически схожих новостей с разными акцентами
@@ -377,7 +381,25 @@ SIGNAL_THRESHOLD_MED = 2.5   # Повышено для VIX и Oil для фил�
 SIGNAL_THRESHOLD_LOW = 1.5   # For Safe-havens (Gold)
 SIGNAL_THRESHOLD_BTC = 4.0   # For Crypto (Volatility buffer)
 BTC_MIN_VOLATILITY_FOR_ALERT = 1.0 # Минимальное изменение цены BTC (%) для отправки уведомления
-OIL_SHARP_MOVE_THRESHOLD = 2.0 # Порог для оповещения о резком движении нефти (%)
+SHARP_MOVE_THRESHOLDS = {
+    "oil": 2.0,
+    "btc": 5.0,
+    "nasdaq": 1.5
+}
+
+# Матрица корреляций активов относительно стандартного Risk-Off score от ИИ.
+# -1: Актив падает при Risk-Off (Score > 0) -> например, NASDAQ.
+#  1: Актив растет при Risk-Off (Score > 0) -> например, VIX, Gold, SOXS.
+ASSET_CORRELATION_MAP = {
+    "nasdaq": -1,
+    "sp500": -1,
+    "oil": 1,
+    "vix": 1,
+    "gold": 1,
+    "btc": -1,
+    "soxs": 1,
+    "global": 1  # Global Regime (Stress) растет при Risk-Off
+}
 
 # Конфигурация бенчмарков для расчета Alpha (Abnormal Return)
 ASSET_BENCHMARK_CONFIG = {

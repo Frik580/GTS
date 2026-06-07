@@ -147,14 +147,13 @@ async def run_global_research():
                 
                 suggestions = json.loads(clean_json)
 
-                with get_db_connection() as conn:
-                    cursor = conn.cursor()
+                async with get_db_connection() as conn:
                     for s in suggestions:
-                        cursor.execute("""
+                        await conn.execute("""
                             INSERT INTO ai_global_suggestions (keyword, asset, impact_direction, reasoning)
                             VALUES (?, ?, ?, ?)
                         """, (s['keyword'], s['asset'], s['impact_direction'], s['reasoning']))
-                    conn.commit()
+                    await conn.commit()
                 
                 logging.info(f"✅ Research finished. Found {len(suggestions)} new suggestions.")
                 return

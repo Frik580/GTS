@@ -1,3 +1,4 @@
+import asyncio
 import pandas as pd
 import config
 from db import get_db_connection, init_db
@@ -69,29 +70,33 @@ def calculate_hbm_index_value():
 
     return current_hbm_index, daily_change_percent
 
-def inspect_gts():
+async def inspect_gts():
     # Настраиваем Pandas, чтобы он не скрывал колонки и показывал текст полностью
     pd.set_option('display.max_columns', None)  # Показывать все колонки
     pd.set_option('display.expand_frame_repr', False)  # Не переносить таблицу на новую строку
     pd.set_option('display.max_colwidth', 50)  # Показывать текст в колонках полностью без обрезки
 
     # Инициализируем БД, чтобы автоматически добавить недостающие колонки (is_correct)
-    init_db()
+    await init_db()
 
-    with get_db_connection() as conn:
+    async with get_db_connection() as conn:
         print("--- ТЕКУЩИЕ ВЕСА (ПОСЛЕ ОБУЧЕНИЯ) ---")
-        weights = pd.read_sql("SELECT event_key, target_asset, weight FROM weights ORDER BY weight DESC", conn)
+        async with conn.execute("SELECT event_key, target_asset, weight FROM weights ORDER BY weight DESC") as cursor:
+            weights = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
         print(weights if not weights.empty else "Таблица весов пуста (используются дефолтные)")
         
         print("\n--- ГЛОБАЛЬНЫЕ ПРЕДЛОЖЕНИЯ ИИ (AI GLOBAL SUGGESTIONS) ---")
-        suggestions = pd.read_sql("SELECT keyword, asset, impact_direction, reasoning, timestamp FROM ai_global_suggestions ORDER BY timestamp DESC LIMIT 10", conn)
+        async with conn.execute("SELECT keyword, asset, impact_direction, reasoning, timestamp FROM ai_global_suggestions ORDER BY timestamp DESC LIMIT 10") as cursor:
+            suggestions = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
+            
         if not suggestions.empty:
             print(suggestions)
         else:
             print("Предложений пока нет. Дождитесь завершения цикла RESEARCH_INTERVAL.")
 
         print("\n--- ПОСЛЕДНИЕ 5 СОБЫТИЙ ---")
-        events = pd.read_sql("SELECT title, score, nasdaq, sp500, oil, vix, soxs, gold, btc, timestamp FROM events ORDER BY timestamp DESC LIMIT 5", conn)
+        async with conn.execute("SELECT title, score, nasdaq, sp500, oil, vix, soxs, gold, btc, timestamp FROM events ORDER BY timestamp DESC LIMIT 5") as cursor:
+            events = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
         print(events)
         
         print("\n--- АНАЛИЗ ОТКЛОНЕНИЙ (PREDICTED VS ACTUAL) ---")
@@ -104,21 +109,23 @@ def inspect_gts():
             WHERE resolved = 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm'
             ORDER BY timestamp DESC LIMIT 10
         """
-        accuracy_df = pd.read_sql(accuracy_query, conn)
+        async with conn.execute(accuracy_query) as cursor:
+            accuracy_df = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
+
         if not accuracy_df.empty:
             print(accuracy_df)
 
         print("\n--- СТАТИСТИКА ПО АКТИВАМ И ТРЕНДЫ ---")
         # Загружаем все значимые разрешенные прогнозы для анализа *недавних* трендов
         # Исключаем шум из статистики, чтобы он не занижал WinRate и не искажал среднюю ошибку
-        all_res_query = f"""
+        async with conn.execute(f"""
             SELECT target_asset, is_correct, actual_move, predicted_impact, timestamp, resolved
-            FROM predictions WHERE resolved >= 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm'
-        """
-        df_all = pd.read_sql(all_res_query, conn)
+            FROM predictions WHERE resolved >= 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm' AND actual_move > 0
+        """) as cursor:
+            df_all = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
 
         # Загружаем накопленную статистику по активам из новой таблицы asset_stats
-        asset_stats_df = pd.read_sql("""
+        async with conn.execute("""
             SELECT target_asset, 
                    COALESCE(total_resolved, 0) as total_resolved, 
                    COALESCE(correct_count, 0) as correct_count, 
@@ -126,7 +133,8 @@ def inspect_gts():
                    COALESCE(multiplier, 0.0) as multiplier
             FROM asset_stats
             WHERE LOWER(target_asset) != 'hbm'
-        """, conn)
+        """) as cursor:
+            asset_stats_df = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
         
         if not df_all.empty:
             df_all['error'] = abs(df_all['actual_move'] - df_all['predicted_impact'])
@@ -186,7 +194,7 @@ def inspect_gts():
                     "WinRate%": round(total_wr, 1),
                     "Multiplier": round(asset_total_stats['multiplier'].iloc[0], 2) if not asset_total_stats.empty else "---",
                     "WR_Trend": wr_trend_str,
-                    "AvgError": f"{total_err:.2f} ({'🔻' if total_err < 10 else '🔥'})",
+                    "AvgError": f"{total_err:.2f} ({'✅' if total_err < 1.0 else '⚠️' if total_err < 3.0 else '🔥'})",
                     "Err_Trend": err_trend_str,
                     "Status/Comment": comment
                 })
@@ -195,20 +203,23 @@ def inspect_gts():
             print(stats_df.sort_values("WinRate%", ascending=False).to_string(index=False))
 
         print("\n--- СТАТИСТИКА ПРОГНОЗОВ ---")
-        total = pd.read_sql("SELECT COUNT(*) as total FROM predictions", conn).iloc[0]['total']
-        pending = pd.read_sql("SELECT COUNT(*) as count FROM predictions WHERE resolved = 0", conn).iloc[0]['count']
+        async with conn.execute("SELECT COUNT(*) as total FROM predictions") as cursor:
+            total = (await cursor.fetchone())['total']
+        async with conn.execute("SELECT COUNT(*) as count FROM predictions WHERE resolved = 0") as cursor:
+            pending = (await cursor.fetchone())['count']
         
         # Считаем общее количество обработанных записей (Фазы 1 и 2)
-        all_resolved = pd.read_sql("SELECT COUNT(*) as count FROM predictions WHERE resolved >= 1", conn).iloc[0]['count']
+        async with conn.execute("SELECT COUNT(*) as count FROM predictions WHERE resolved >= 1") as cursor:
+            all_resolved = (await cursor.fetchone())['count']
 
         # Загружаем все значимые resolved прогнозы для детального анализа трендов
-        query = f"SELECT is_correct, actual_move FROM predictions WHERE resolved >= 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm' ORDER BY timestamp ASC"
-        df_sig = pd.read_sql(query, conn)
+        query = f"SELECT is_correct, actual_move FROM predictions WHERE resolved >= 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm' AND is_correct >= 0 ORDER BY timestamp ASC"
+        async with conn.execute(query) as cursor:
+            df_sig = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
 
-        cursor = conn.cursor()
-        cursor.execute("SELECT value FROM settings WHERE key = 'impact_multiplier'")
-        curr_mult = cursor.fetchone()
-        multiplier_val = curr_mult[0] if curr_mult else config.IMPACT_MULTIPLIER
+        async with conn.execute("SELECT value FROM settings WHERE key = 'impact_multiplier'") as cursor:
+            curr_mult = await cursor.fetchone()
+            multiplier_val = curr_mult[0] if curr_mult else config.IMPACT_MULTIPLIER
 
         print(f"Всего прогнозов в базе: {total}")
         print(f"Ожидают разрешения (pending): {pending}")
@@ -216,12 +227,13 @@ def inspect_gts():
 
         if not df_sig.empty:
             # Используем накопленную статистику для общего Win Rate
-            overall_stats = pd.read_sql("""
+            async with conn.execute("""
                 SELECT COALESCE(SUM(total_resolved), 0) as total_resolved_overall, 
                        COALESCE(SUM(correct_count), 0) as correct_count_overall
                 FROM asset_stats
                 WHERE LOWER(target_asset) != 'hbm'
-            """, conn).iloc[0]
+            """) as cursor:
+                overall_stats = await cursor.fetchone()
 
             trained_count_overall = overall_stats['total_resolved_overall']
             correct_count_overall = overall_stats['correct_count_overall']
@@ -269,9 +281,10 @@ def inspect_gts():
                 ROUND(sum_error / total_resolved, 2) as AvgErr
             FROM source_stats
             WHERE total_resolved > 0
-            ORDER BY "InfoRatio" DESC, "AvgAlpha" DESC
+            ORDER BY "WinRate%" DESC
         """
-        source_df = pd.read_sql(source_stats_query, conn)
+        async with conn.execute(source_stats_query) as cursor:
+            source_df = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
         if not source_df.empty:
             print(source_df.to_string(index=False))
         else:
@@ -280,19 +293,22 @@ def inspect_gts():
         print("\n--- ЭФФЕКТИВНОСТЬ МОДЕЛЕЙ (AI PERFORMANCE) ---")
         model_stats_query = """
             SELECT 
-                model_name as Model,
+                p.model_name as Model,
+                ROUND(ms.sensitivity, 3) as "MSF(Sens)",
                 COUNT(*) as Total,
                 SUM(is_correct) as Correct,
                 ROUND(AVG(confidence), 2) as AvgConf,
                 ROUND((CAST(SUM(is_correct) AS REAL) / COUNT(*)) * 100, 1) as "WinRate%"
-            FROM predictions
+            FROM predictions p
+            LEFT JOIN model_stats ms ON p.model_name = ms.model_name
             WHERE resolved >= 1
-            GROUP BY model_name
+            GROUP BY p.model_name
             ORDER BY "WinRate%" DESC
         """
-        model_df = pd.read_sql(model_stats_query, conn)
+        async with conn.execute(model_stats_query) as cursor:
+            model_df = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
         if not model_df.empty:
             print(model_df.to_string(index=False))
 
 if __name__ == "__main__":
-    inspect_gts()
+    asyncio.run(inspect_gts())

@@ -1,21 +1,31 @@
+import asyncio
 import streamlit as st
 import pandas as pd
 from db import get_db_connection
 
 st.set_page_config(layout="wide", page_title="GTS 3.0 Terminal")
 
-@st.cache_data(ttl=30)
-def load_data():
-    # Используем context manager для автоматического закрытия соединения
-    with get_db_connection() as conn:
-        df = pd.read_sql("""
+async def fetch_dashboard_data():
+    async with get_db_connection() as conn:
+        async with conn.execute("""
             SELECT e.title, e.score as news_score, e.event as type, e.is_black_swan, e.timestamp, 
                    p.target_asset, p.resolved, p.is_correct
             FROM events e
             LEFT JOIN predictions p ON e.id = p.event_id
             ORDER BY e.timestamp DESC LIMIT 50
-        """, conn)
-        return df
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return pd.DataFrame([dict(r) for r in rows])
+
+async def fetch_last_fng():
+    async with get_db_connection() as conn:
+        async with conn.execute("SELECT fear_greed FROM events WHERE fear_greed IS NOT NULL ORDER BY timestamp DESC LIMIT 1") as cursor:
+            row = await cursor.fetchone()
+            return row["fear_greed"] if row else 50
+
+@st.cache_data(ttl=30)
+def load_data():
+    return asyncio.run(fetch_dashboard_data())
 
 st.title("📊 GTS 3.0 LIVE Terminal")
 
@@ -26,10 +36,7 @@ df = load_data()
 # вычисляем текущий режим
 if not df.empty:
     avg_score = df["news_score"].head(10).mean()
-    # Пытаемся достать Fear & Greed из базы, если колонка есть в events
-    with get_db_connection() as conn:
-        fng_df = pd.read_sql("SELECT fear_greed FROM events WHERE fear_greed IS NOT NULL ORDER BY timestamp DESC LIMIT 1", conn)
-        last_fng = fng_df["fear_greed"].iloc[0] if not fng_df.empty else 50
+    last_fng = asyncio.run(fetch_last_fng())
 else:
     avg_score = 0
     last_fng = 50

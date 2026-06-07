@@ -1,21 +1,20 @@
-import sqlite3
-from contextlib import contextmanager
+import aiosqlite
+from contextlib import asynccontextmanager
 import config
 
-@contextmanager
-def get_db_connection():
-    conn = sqlite3.connect(config.DB_PATH, check_same_thread=False, timeout=30)
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")  # Оптимизация записи и чтения
-        conn.row_factory = sqlite3.Row  # Позволяет обращаться к полям по именам
-        yield conn
-    finally:
-        conn.close()
+@asynccontextmanager
+async def get_db_connection():
+    async with aiosqlite.connect(config.DB_PATH, timeout=30) as conn:
+        try:
+            await conn.execute("PRAGMA journal_mode=WAL")  # Оптимизация записи и чтения
+            conn.row_factory = aiosqlite.Row  # Позволяет обращаться к полям по именам
+            yield conn
+        finally:
+            pass # aiosqlite закрывает соединение автоматически в context manager
 
-def init_db():
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
+async def init_db():
+    async with get_db_connection() as conn:
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT,
@@ -37,7 +36,7 @@ def init_db():
         )
         """)
 
-        cursor.execute("""
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS predictions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             event_id INTEGER,
@@ -58,7 +57,7 @@ def init_db():
         )
         """)
 
-        cursor.execute("""
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS embeddings (
             title TEXT PRIMARY KEY,
             vector TEXT,
@@ -66,7 +65,7 @@ def init_db():
         )
         """)
 
-        cursor.execute("""
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS weights (
             event_key TEXT,
             target_asset TEXT,
@@ -75,7 +74,16 @@ def init_db():
         )
         """)
 
-        cursor.execute("""
+        # Таблица для калибровки чувствительности каждой модели
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS model_stats (
+            model_name TEXT PRIMARY KEY,
+            sensitivity REAL DEFAULT 1.0,
+            total_resolved INTEGER DEFAULT 0
+        )
+        """)
+
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS ai_global_suggestions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             keyword TEXT,
@@ -87,7 +95,7 @@ def init_db():
         """)
 
         # Таблица для долгосрочной статистики источников (накопительная)
-        cursor.execute("""
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS source_stats (
             source_domain TEXT PRIMARY KEY,
             total_resolved INTEGER DEFAULT 0,
@@ -100,7 +108,7 @@ def init_db():
         """)
 
         # Таблица для долгосрочной статистики по активам (накопительная)
-        cursor.execute(f"""
+        await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS asset_stats (
             target_asset TEXT PRIMARY KEY,
             total_resolved INTEGER DEFAULT 0,
@@ -150,42 +158,42 @@ def init_db():
         }
 
         # Миграция для таблицы weights (добавление target_asset)
-        cursor.execute("PRAGMA table_info(weights)")
-        if "target_asset" not in [info[1] for info in cursor.fetchall()]:
-            cursor.execute("ALTER TABLE weights ADD COLUMN target_asset TEXT DEFAULT 'global'")
+        async with conn.execute("PRAGMA table_info(weights)") as cursor:
+            if "target_asset" not in [info[1] for info in await cursor.fetchall()]:
+                await conn.execute("ALTER TABLE weights ADD COLUMN target_asset TEXT DEFAULT 'global'")
 
         for table_name, columns in required_columns.items():
-            cursor.execute(f"PRAGMA table_info({table_name})")
-            existing_columns = [info[1] for info in cursor.fetchall()]
+            async with conn.execute(f"PRAGMA table_info({table_name})") as cursor:
+                existing_columns = [info[1] for info in await cursor.fetchall()]
             
             for column_name, column_type in columns.items():
                 if column_name not in existing_columns:
                     try:
-                        cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
-                    except sqlite3.OperationalError:
+                        await conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+                    except Exception:
                         # Безопасный пропуск, если колонка была добавлена другим процессом
                         pass
         
         # Создаем таблицу для системных настроек, если её нет
-        cursor.execute("""
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value REAL
         )
         """)
         # Устанавливаем начальное значение множителя из конфига, если таблицы не было
-        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (config.IMPACT_MULTIPLIER,))
+        await conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (config.IMPACT_MULTIPLIER,))
 
         # Очистка существующих пустых значений в активах (миграция данных)
-        cursor.execute("UPDATE predictions SET target_asset = 'global' WHERE target_asset IS NULL OR target_asset = ''")
+        await conn.execute("UPDATE predictions SET target_asset = 'global' WHERE target_asset IS NULL OR target_asset = ''")
 
         # Создание индексов (перенесено в конец, чтобы гарантировать наличие колонок после миграций)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_link ON events(link)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_resolved ON predictions(resolved)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_key ON predictions(event_key)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_timestamp ON predictions(timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_id ON predictions(event_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_timestamp ON embeddings(timestamp)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_slug ON events(slug)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_link ON events(link)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_resolved ON predictions(resolved)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_key ON predictions(event_key)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_timestamp ON predictions(timestamp)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_id ON predictions(event_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_timestamp ON embeddings(timestamp)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_slug ON events(slug)")
 
-        conn.commit()
+        await conn.commit()

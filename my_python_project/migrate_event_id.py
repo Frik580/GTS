@@ -1,22 +1,20 @@
-import sqlite3
+import asyncio
 import logging
 from db import get_db_connection
 
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
-def backfill_event_ids():
+async def backfill_event_ids():
     logging.info("🚀 Начало миграции event_id для старых прогнозов...")
     
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        
+    async with get_db_connection() as conn:
         # 1. Получаем прогнозы без event_id
-        cursor.execute("""
+        async with conn.execute("""
             SELECT id, timestamp, event_type, event_key 
             FROM predictions 
             WHERE event_id IS NULL
-        """)
-        preds = cursor.fetchall()
+        """) as cursor:
+            preds = await cursor.fetchall()
         
         if not preds:
             logging.info("✅ Все записи уже имеют event_id или база пуста.")
@@ -33,11 +31,11 @@ def backfill_event_ids():
             
             # Ищем кандидатов в таблице events
             # Совпадение по точному времени и типу события
-            cursor.execute("""
+            async with conn.execute("""
                 SELECT id, slug, title FROM events 
                 WHERE timestamp = ? AND event = ?
-            """, (p_ts, p_type))
-            candidates = cursor.fetchall()
+            """, (p_ts, p_type)) as cursor:
+                candidates = await cursor.fetchall()
             
             match_id = None
             
@@ -65,12 +63,12 @@ def backfill_event_ids():
                     ambiguous_count += 1
             
             if match_id:
-                cursor.execute("UPDATE predictions SET event_id = ? WHERE id = ?", (match_id, p_id))
+                await conn.execute("UPDATE predictions SET event_id = ? WHERE id = ?", (match_id, p_id))
                 updated_count += 1
             else:
                 failed_count += 1
 
-        conn.commit()
+        await conn.commit()
         
         logging.info("\n--- РЕЗУЛЬТАТЫ МИГРАЦИИ ---")
         logging.info(f"✅ Успешно обновлено: {updated_count}")
@@ -78,8 +76,9 @@ def backfill_event_ids():
         logging.info(f"❌ Не удалось сопоставить: {failed_count}")
         
         # Проверка результата
-        cursor.execute("SELECT COUNT(*) FROM predictions WHERE event_id IS NULL")
-        remaining = cursor.fetchone()[0]
+        async with conn.execute("SELECT COUNT(*) FROM predictions WHERE event_id IS NULL") as cursor:
+            row = await cursor.fetchone()
+            remaining = row[0]
         if remaining == 0:
             logging.info("✨ Миграция полностью завершена. Теперь learning cycle будет видеть все записи.")
         else:
@@ -87,6 +86,6 @@ def backfill_event_ids():
 
 if __name__ == "__main__":
     try:
-        backfill_event_ids()
+        asyncio.run(backfill_event_ids())
     except Exception as e:
         logging.error(f"Ошибка миграции: {e}")
