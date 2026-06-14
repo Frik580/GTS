@@ -8,12 +8,12 @@ class GeminiDiscovery:
     def get_models(client) -> List[Dict]:
         pool = []
         family_priority = {
-            'gemini-3.1-flash': 1,
-            'gemini-3-flash': 2,
-            'gemini-3-flash-live': 3,
-            'gemini-2.5-flash': 4,
-            'gemini-2.5-flash-lite': 5,
-            'gemini-3.5-flash': 6
+            'gemini-3.5-flash': 1,
+            'gemini-3.1-flash': 2,
+            # 'gemini-3-flash': 2,
+            # 'gemini-3-flash-live': 3,
+            # 'gemini-2.5-flash': 4,
+            # 'gemini-2.5-flash-lite': 5
         }
         try:
             all_models = list(client.models.list())
@@ -50,7 +50,7 @@ class OpenRouterRegistry:
             {"name": "nvidia/nemotron-3-ultra-550b-a55b:free", "supports_json": True, "provider": "openrouter", "priority": 20},
             {"name": "openai/gpt-oss-120b:free", "supports_json": True, "provider": "openrouter", "priority": 20},
             {"name": "openai/gpt-oss-20b:free", "supports_json": True, "provider": "openrouter", "priority": 20},
-            # {"name": "openrouter/free", "supports_json": False, "provider": "openrouter", "priority": 20}
+            {"name": "openrouter/free", "supports_json": False, "provider": "openrouter", "priority": 20}
         ]
 
 class DeepSeekRegistry:
@@ -103,7 +103,9 @@ class ModelRotator:
     def get_active(self) -> Dict:
         return self.pool[self._idx]
 
-    async def rotate(self) -> Dict:
+    async def rotate(self, state=None) -> Dict:
         async with self._lock:
             self._idx = (self._idx + 1) % len(self.pool)
+            if state:
+                await state.save_to_db()
             return self.get_active()

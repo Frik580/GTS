@@ -24,7 +24,7 @@ class MetricsManager:
 
         logging.info("--- [GTS METRICS REPORT] ---")
         logging.info(f"📊 News: {self.metrics['news_sent_telegram']} sent / {self.metrics['news_received']} received")
-        logging.info(f"🛡️ Filters: Source={self.metrics['news_source_filtered']}, URL={self.metrics['news_duplicate_url']}, Hash={self.metrics['news_duplicate_hash']}, Fuzzy={self.metrics['news_duplicate_fuzzy']}, Semantic={self.metrics['news_duplicate_semantic']}, Slug={self.metrics['news_duplicate_slug']}, LowScore={self.metrics['news_low_score']}")
+        logging.info(f"🛡️ Filters: Src={self.metrics['news_source_filtered']}, URL={self.metrics['news_duplicate_url']}, Hash={self.metrics['news_duplicate_hash']}, Fzy={self.metrics['news_duplicate_fuzzy']}, Sem={self.metrics['news_duplicate_semantic']}, Slug={self.metrics['news_duplicate_slug']}, LowSc={self.metrics['news_low_score']}, LowConf={self.metrics['news_low_confidence']}, Triv={self.metrics['news_trivial']}, SocMute={self.metrics['news_social_muted']}, BTCIgnore={self.metrics['news_btc_ignored']}, Cool={self.metrics['news_cooldown_filtered']}, DB_Dup={self.metrics['news_db_duplicate']}")
         logging.info(f"🧠 AI: Avg Time {avg_ai:.2f}s, Requests {self.metrics['ai_requests']}")
         logging.info(f"📈 Market: Provider={market_status}, LastSync={last_sync}, AvgTime={avg_market:.2f}s")
         logging.info(f"🩺 Health: Queue={q_size}, RAM_Scores={scores_count}, Uptime={round((time.time() - self.start_time)/3600, 2)}h")
@@ -52,7 +52,7 @@ class CacheManager:
     def __init__(self):
         self.urls = OrderedDict()
         self.titles = OrderedDict()
-        self.clean_titles = set() # Быстрый O(1) поиск для полных дублей
+        self.clean_titles = OrderedDict() # Быстрый поиск со скользящим окном
         self.embeddings = OrderedDict()
         self.slugs = OrderedDict()
         self.narrative_counts = defaultdict(int)
@@ -67,6 +67,7 @@ class CacheManager:
     def add_url(self, url: str, title: str, embedding: Optional[List[float]] = None):
         self.urls[url] = True
         self.titles[title] = True
+        # clean_titles заполняется в engine.py, здесь обеспечиваем лимиты
         # Очистка заголовка происходит в engine.py, но мы добавим его сюда
         # для предотвращения O(N) перебора в будущем
         if embedding:
@@ -78,7 +79,7 @@ class CacheManager:
         while len(self.urls) > 2000: self.urls.popitem(last=False)
         while len(self.titles) > 1000: self.titles.popitem(last=False)
         while len(self.embeddings) > 1000: self.embeddings.popitem(last=False)
-        if len(self.clean_titles) > 1000: self.clean_titles.clear() # Простая очистка сета
+        while len(self.clean_titles) > 2000: self.clean_titles.popitem(last=False)
         
         cutoff = now - (config.SLUG_DUPLICATE_HOURS * 3600)
         # Очистка старых слагов и их счетчиков нарративов
@@ -93,6 +94,8 @@ class LearningManager:
         self.asset_map = {}
         self.source_performance = {}
         self.model_sensitivities = {}
+        self.dirty_weights = set()  # Ключи: (event_key, asset)
+        self.dirty_model_sensitivities = set() # Ключи: model_name
         self.weight_lock = asyncio.Lock()
 
     async def load_config_weights(self):
@@ -124,6 +127,8 @@ class ScoreManager:
         self.last_sent_score = {}
         self.multiplier = config.IMPACT_MULTIPLIER
         self.asset_multipliers = {}
+        self.dirty_multiplier = False
+        self.dirty_asset_multipliers = set()
         self.learning = learning_mgr
         self.score_lock = asyncio.Lock()
 
@@ -222,14 +227,6 @@ class GTSStateManager:
     @property
     def weights(self):
         return self.learning.weights
-
-    @property
-    def weights_dict(self):
-        return self.learning.weights
-
-    @weights_dict.setter
-    def weights_dict(self, value):
-        self.learning.weights = value
 
     @multiplier.setter
     def multiplier(self, value):
@@ -331,9 +328,9 @@ class GTSStateManager:
             # Предзагрузка очищенных заголовков для O(1) дедупликации
             async with conn.execute("SELECT title FROM events ORDER BY timestamp DESC LIMIT 1000") as cursor:
                 rows = await cursor.fetchall()
+            from engine import clean_title
             for row in rows:
-                from engine import clean_title
-                self.cache.clean_titles.add(clean_title(row['title']))
+                self.cache.clean_titles[clean_title(row['title'])] = True
 
             await self.learning.load_config_weights()
             # Загрузка весов из БД
@@ -418,27 +415,48 @@ class GTSStateManager:
 
             logging.info("✅ Состояние успешно инициализировано из БД")
 
-    async def save_to_db(self):
+    async def save_to_db(self) -> int:
+        saved_count = 0
         async with self.db_lock:
             async with get_db_connection() as conn:
-                # 1. Сохранение глобального множителя в настройки
-                await conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (self.multiplier,))
+                # 1. Глобальный множитель
+                if self.scores.dirty_multiplier:
+                    await conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (self.multiplier,))
+                    self.scores.dirty_multiplier = False
+                    saved_count += 1
                 
-                # 2. Сохранение множителей по активам в таблицу статистики
-                for asset, mult in self.asset_multipliers.items():
-                    await conn.execute("""
-                        UPDATE asset_stats SET multiplier = ? WHERE target_asset = ?
-                    """, (mult, asset))
+                # 2. Множители активов
+                if self.scores.dirty_asset_multipliers:
+                    for asset in list(self.scores.dirty_asset_multipliers):
+                        mult = self.asset_multipliers.get(asset)
+                        if mult is not None:
+                            await conn.execute("UPDATE asset_stats SET multiplier = ? WHERE target_asset = ?", (mult, asset))
+                            saved_count += 1
+                    self.scores.dirty_asset_multipliers.clear()
 
-                # 3. Сохранение чувствительности моделей
-                for m_name, sens in self.model_sensitivities.items():
-                    await conn.execute("""
-                        INSERT INTO model_stats (model_name, sensitivity) 
-                        VALUES (?, ?)
-                        ON CONFLICT(model_name) DO UPDATE SET sensitivity = EXCLUDED.sensitivity
-                    """, (m_name, sens))
+                # 3. Чувствительность моделей (MSF)
+                if self.learning.dirty_model_sensitivities:
+                    for m_name in list(self.learning.dirty_model_sensitivities):
+                        sens = self.model_sensitivities.get(m_name)
+                        if sens is not None:
+                            await conn.execute("""
+                                INSERT INTO model_stats (model_name, sensitivity) 
+                                VALUES (?, ?)
+                                ON CONFLICT(model_name) DO UPDATE SET sensitivity = EXCLUDED.sensitivity
+                            """, (m_name, sens))
+                            saved_count += 1
+                    self.learning.dirty_model_sensitivities.clear()
 
-                # 3. Сохранение весов событий
-                for (key, asset), val in self.learning.weights.items():
-                    await conn.execute("INSERT OR REPLACE INTO weights (event_key, target_asset, weight) VALUES (?, ?, ?)", (key, asset, val))
+                # 4. Веса событий (Самая тяжелая часть)
+                async with self.learning.weight_lock:
+                    if self.learning.dirty_weights:
+                        for composite_key in list(self.learning.dirty_weights):
+                            val = self.learning.weights.get(composite_key)
+                            if val is not None:
+                                await conn.execute("INSERT OR REPLACE INTO weights (event_key, target_asset, weight) VALUES (?, ?, ?)", 
+                                                   (composite_key[0], composite_key[1], val))
+                                saved_count += 1
+                        self.learning.dirty_weights.clear()
+                
                 await conn.commit()
+        return saved_count

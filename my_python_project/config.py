@@ -94,6 +94,7 @@ ENTITY_CANONICAL_MAP = {
     "ФРС": "FED", "ФРС_США": "FED", "БЕЖЕВАЯ_КНИГА": "FED",
     "ECB": "ECB", "EUROPEAN_CENTRAL_BANK": "ECB", "LAGARDE": "ECB",
     "BOJ": "BOJ", "BANK_OF_JAPAN": "BOJ", "YEN": "BOJ",
+    "IRAN": "IRAN", "IRANIAN": "IRAN", "TEHRAN": "IRAN",
     
     "BITCOIN": "BTC", "BTC": "BTC",
     "GOLD": "GOLD", "XAU": "GOLD",
@@ -184,7 +185,7 @@ YAHOO_FINANCE_FEEDS = [
 ]
 
 # Настройки фильтрации источников
-ONLY_SPECIFIC_SOURCES = True # Теперь только доверенные источники (Reuters, Bloomberg и т.д.)
+ONLY_SPECIFIC_SOURCES = False # Теперь только доверенные источники (Reuters, Bloomberg и т.д.)
 SPECIFIC_SOURCES_LIST = [
     "reuters.com",
     "bloomberg.com",
@@ -224,7 +225,7 @@ SPECIFIC_SOURCES_LIST = [
 ]
 
 # Настройки для поиска в соцсетях
-SOCIAL_SEARCH_ENABLED = True # Временно отключаем, так как RSS от соцсетей может быть шумным и требует доработки фильтров
+SOCIAL_SEARCH_ENABLED = False # Временно отключаем, так как RSS от соцсетей может быть шумным и требует доработки фильтров
 # Список надежных Nitter-инстансов (для Twitter RSS без API ключа)
 NITTER_INSTANCES = ["nitter.net", "nitter.it","nitter.poast.org", "nitter.privacydev.net", "nitter.no-logs.com", "nitter.projectsegfau.lt"]
 
@@ -263,7 +264,7 @@ RSS_MAX_ENTRIES = 15 # Увеличено до 15, чтобы находить �
 RSS_MAX_ENTRIES_INACTIVE = 30 # Увеличено до 30 для более глубокого охвата за ночь
 
 # Time Intervals (in seconds)
-CHECK_INTERVAL = 300 # 5 минут — оптимальный баланс между скоростью и риском блокировки IP
+CHECK_INTERVAL = 420 # Увеличено до 7 минут, чтобы снизить риск Rate Limit (429)
 COOLDOWN = 900 # Увеличиваем до 15 минут, чтобы не спамить повторами одного события
 LEARNING_INTERVAL = 1800 # 30 минут — оптимально для накопления выборки цен
 MARKET_LOOKBACK_HOURS = 2 # Увеличиваем до 2 часов: macro-alpha требует времени для проявления
@@ -302,7 +303,7 @@ NARRATIVE_MAX_MULTIPLIER = 2.0 # Максимальное усиление (2x)
 # AI Delays
 AI_DELAY_JSON = 3 # Немного сокращаем ожидание для повышения пропускной способности
 AI_DELAY_NO_JSON = 10 # Задержка для тяжелых/медленных моделей
-AI_BATCH_SIZE = 10 # Уменьшаем размер пачки для повышения стабильности бесплатных моделей
+AI_BATCH_SIZE = 15 # Увеличено для повышения пропускной способности (оптимально для Flash-моделей)
 AI_BATCH_WAIT_SECONDS = 60 # Время ожидания для накопления пакета новостей
 ONLY_PRIORITY_GEMINI = True # Если True, используются только модели Gemini из family_priority
 
@@ -330,15 +331,15 @@ MIN_WINRATE_BEFORE_RESET = 40.0 # Порог WinRate (%), ниже которо�
 MIN_SAMPLE_SIZE_FOR_RESET = 15 # Увеличим выборку для более точного сброса
 
 IMPACT_MULTIPLIER = 0.3 # Базовая чувствительность к Z-score (Sigmas)
-LEARNING_THRESHOLD = 0.4 # Повышаем порог: учимся только на движениях > 0.4 сигмы
+LEARNING_THRESHOLD = 0.7 # Минимальная уверенность ИИ для обучения на событии
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
 MIN_WEIGHT_THRESHOLD = 0.8 # Чистим базу от слабых связей активнее
-NEUTRAL_SCORE_THRESHOLD = 1.5 # Снижаем порог, чтобы захватывать больше умеренно значимых сигналов
+NEUTRAL_SCORE_THRESHOLD = 2.5 # Порог для классификации новости как нейтральной (не влияющей на рынок)
 MAX_ENTITY_PARTS = 3 # Увеличено до 3, чтобы лучше обрабатывать сложные Slug от ИИ
-DUPLICATE_TITLE_THRESHOLD = 0.78 # Повышен порог для исключения коллизий шаблонных фраз
-FALLBACK_DUPLICATE_THRESHOLD = 0.55 # Повышаем чувствительность для не-семантического поиска
-SEMANTIC_DEDUPLICATION_WINDOW = 12 # Увеличено до 12ч для борьбы с перепечатками в разных часовых поясах
-SEMANTIC_DUPLICATE_THRESHOLD = 0.81 # Снижен порог для склейки семантически схожих новостей с разными акцентами
+DUPLICATE_TITLE_THRESHOLD = 0.72 # Снижаем порог для лучшего захвата перефразированных заголовков
+FALLBACK_DUPLICATE_THRESHOLD = 0.50 # Повышаем чувствительность для не-семантического поиска
+SEMANTIC_DEDUPLICATION_WINDOW = 720 # Увеличено до 30 дней (720ч) для борьбы с ре-индексацией старых новостей
+SEMANTIC_DUPLICATE_THRESHOLD = 0.74 # Более агрессивная склейка (0.79 было слишком строго для разных языков/стилей)
 USE_EMBEDDINGS = True # Включить/выключить семантическую дедупликацию через векторы
 EMBEDDING_MODEL = "models/gemini-embedding-2" # Основная модель эмбеддингов (Gemini)
 OPENROUTER_EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2:free" # Высокопроизводительная альтернатива для OpenRouter
@@ -372,6 +373,9 @@ SOURCE_TRUST_LEVELS = {
     # Social
     "x.com": 0.25,
     "reddit.com": 0.3,
+    "msn.com": 0.0,
+    "aol.com": 0.0,
+    "newsonair.gov.in": 0.0,
 }
 DEFAULT_TRUST_SCORE = 0.65  # Немного снижаем базу для фильтрации случайных источников
 

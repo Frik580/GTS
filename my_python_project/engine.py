@@ -1,3 +1,5 @@
+import os
+import sys
 import feedparser
 import logging
 from logging.handlers import RotatingFileHandler
@@ -65,6 +67,20 @@ async def metrics_reporter_task(state: GTSStateManager):
         except Exception as e:
             logging.error(f"Error in metrics reporter: {e}")
         await asyncio.sleep(60) # Выводим отчет ровно раз в минуту
+
+async def auto_save_task(state: GTSStateManager):
+    """Фоновая задача для периодического сохранения состояния в БД."""
+    logging.info("💾 Фоновая задача автосохранения запущена (интервал: 30с)")
+    while True:
+        await asyncio.sleep(30)
+        try:
+            start_ts = time.time()
+            saved_count = await state.save_to_db()
+            duration = time.time() - start_ts
+            if saved_count > 0:
+                logging.info(f"💾 Автосохранение: зафиксировано {saved_count} изменений состояния за {duration:.3f}с")
+        except Exception as e:
+            logging.error(f"Ошибка при фоновом сохранении состояния: {e}")
 
 def shutdown_cleanup():
     """Выполняет очистку ресурсов при завершении работы."""
@@ -142,9 +158,14 @@ def make_event_key(entities: List[str], slug: Optional[str] = None) -> str:
         normalized_slug = re.sub(r'[^A-Z0-9_]', '', raw_normalized)
         
         slug_parts = [p for p in normalized_slug.split("_") if p]
-        # Нормализация: убираем 'S' в конце для объединения STRIKES/STRIKE
-        norm_parts = [p[:-1] if p.endswith('S') and len(p) > 3 else p for p in slug_parts[:config.MAX_ENTITY_PARTS]]
-        return "_".join(norm_parts)
+        
+        # NEW: Прогоняем каждую часть слага через карту канонизации
+        mapped_parts = []
+        for p in slug_parts:
+            p_clean = p[:-1] if p.endswith('S') and len(p) > 3 else p
+            mapped_parts.append(config.ENTITY_CANONICAL_MAP.get(p_clean, p_clean))
+            
+        return "_".join(mapped_parts[:config.MAX_ENTITY_PARTS])
 
     if not valid_entities:
         return "global"
@@ -253,20 +274,36 @@ def generate_signal(prob: float, intensity: float) -> str:
 async def send_telegram(session: aiohttp.ClientSession, msg: str, max_length: int = 4000):
     """Отправляет сообщение в Telegram асинхронно."""
     try:
-        # Разделяем сообщение на части, если оно слишком длинное
-        msg_parts = [msg[i:i + max_length] for i in range(0, len(msg), max_length)]
-        
+        # Более безопасное разделение: пытаемся не разрывать HTML-теги
+        if len(msg) <= max_length:
+            msg_parts = [msg]
+        else:
+            msg_parts = []
+            while msg:
+                if len(msg) <= max_length:
+                    msg_parts.append(msg)
+                    break
+                
+                # Ищем подходящее место для разреза (например, по новой строке)
+                split_idx = msg.rfind('\n', 0, max_length)
+                if split_idx == -1:
+                    split_idx = max_length
+                
+                msg_parts.append(msg[:split_idx])
+                msg = msg[split_idx:].lstrip()
+
         for part in msg_parts:
+            if not part.strip(): continue
             async with session.post(
-                    f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage",
-                    data={"chat_id": config.CHAT_ID, "text": part, "parse_mode": "HTML"},
-                    timeout=10
+                f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage",
+                data={"chat_id": config.CHAT_ID, "text": part, "parse_mode": "HTML"},
+                timeout=10
             ) as response:
                 if response.status != 200:
                     logging.error(f"Telegram API error: {response.status} - {await response.text()}")
                 else:
                     logging.info(f"TELEGRAM ASYNC: {response.status}")
-            await asyncio.sleep(0.5) # Небольшая пауза между частями, чтобы не превысить лимит Telegram
+            await asyncio.sleep(0.5)
 
     except Exception as e:
         logging.error(f"Error sending telegram: {e}")
@@ -323,8 +360,9 @@ async def update_weights(event_key: str, asset: str, error: float, state: GTSSta
 
         composite_key = (event_key, asset)
         # Основной ключ получает 100% корректировки
-        old_w = state.learning.weights.get(composite_key, 1.0)
-        state.learning.weights[composite_key] = max(0.5, min(5.0, old_w + adjustment))
+        old_w = state.weights.get(composite_key, 1.0)
+        state.weights[composite_key] = max(0.5, min(5.0, old_w + adjustment))
+        state.learning.dirty_weights.add(composite_key)
         logging.info(f"📈 Weight for {event_key} ({asset}): {state.weights[composite_key]:.2f}")
 
         # Атомарное обучение: обновляем части ключа (например, US и IRAN по отдельности)
@@ -336,6 +374,7 @@ async def update_weights(event_key: str, asset: str, error: float, state: GTSSta
                 if len(part) > 2 and p_key in state.weights:
                     part_old_w = state.weights.get(p_key, 1.0)
                     state.weights[p_key] = max(0.5, min(5.0, part_old_w + (adjustment * 0.5)))
+                    state.learning.dirty_weights.add(p_key)
 
 def calibrate_multiplier(avg_error: float, state: GTSStateManager, asset: Optional[str] = None):
     """Корректирует множитель влияния (глобальный или для конкретного актива)."""
@@ -345,12 +384,14 @@ def calibrate_multiplier(avg_error: float, state: GTSStateManager, asset: Option
         # Адаптация чувствительности к сигме
         new_mult = max(0.01, min(2.0, old_mult + (state.learning_rate * avg_error)))
         state.asset_multipliers[asset_low] = new_mult
+        state.scores.dirty_asset_multipliers.add(asset_low)
         if abs(new_mult - old_mult) > 0.0001:
             logging.info(f"⚙️ Multiplier ({asset_low}): {old_mult:.2f} -> {new_mult:.2f} (avg_err: {avg_error:+.2f})")
     else:
         old_mult = state.multiplier
         # Глобальная калибровка чувствительности к сигме
         state.multiplier = max(0.01, min(2.0, old_mult + (state.learning_rate * avg_error)))
+        state.scores.dirty_multiplier = True
         if abs(state.multiplier - old_mult) > 0.0001:
             logging.info(f"⚙️ Multiplier (GLOBAL): {old_mult:.2f} -> {state.multiplier:.2f}")
 
@@ -521,6 +562,9 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
                         past_price = float(ticker_data.iloc[-(bars_lookback + 1)])
                         if past_price != 0:
                             market_data[data_key] = ((current_price - past_price) / past_price) * 100
+                            # Проверка на гэп (разрыв во времени более 12 часов, например, после выходных)
+                            market_data[f"{data_key}_is_gap"] = (ticker_data.index[-1] - ticker_data.index[-(bars_lookback + 1)]).total_seconds() > 12 * 3600
+                            market_data[f"{data_key}_prev_price"] = past_price
                 else:
                     logging.warning(f"Ticker {ticker_symbol} missing in downloaded data")
             except Exception as e:
@@ -543,20 +587,21 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
 
     return market_data
 
-async def count_eligible_predictions() -> int:
+async def count_eligible_predictions(state: GTSStateManager) -> int:
     """Возвращает количество новостей, готовых к обучению."""
-    async with get_db_connection() as conn:
-        async with conn.execute("""
-            SELECT 
-                SUM(CASE WHEN resolved = 0 THEN 1 ELSE 0 END) as phase1,
-                SUM(CASE WHEN resolved = 1 THEN 1 ELSE 0 END) as phase2
-            FROM predictions 
-            WHERE resolved < 2 AND timestamp < datetime('now', '-' || ? || ' hours')
-        """, (config.MARKET_LOOKBACK_HOURS,)) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return (row[0] or 0) + (row[1] or 0)
-            return 0
+    async with state.db_lock:
+        async with get_db_connection() as conn:
+            async with conn.execute("""
+                SELECT 
+                    SUM(CASE WHEN resolved = 0 THEN 1 ELSE 0 END) as phase1,
+                    SUM(CASE WHEN resolved = 1 THEN 1 ELSE 0 END) as phase2
+                FROM predictions 
+                WHERE resolved < 2 AND timestamp < datetime('now', '-' || ? || ' hours')
+            """, (config.MARKET_LOOKBACK_HOURS,)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    return (row[0] or 0) + (row[1] or 0)
+                return 0
 
 async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager, raw_market_data: Optional[Dict] = None):
     if not raw_market_data:
@@ -605,28 +650,38 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
             return b_move_raw * bench_cfg.get("factor", 1.0)
         except: return 0.0
 
-    async with state.db_lock:
-        async with get_db_connection() as conn:
-            # JOIN с таблицей events гарантирует, что прогноз привязан к реальному событию из ленты
-            async with conn.execute("""
-                SELECT p.*, e.link as source_link 
-                FROM predictions p
-                JOIN events e ON p.event_id = e.id
-                WHERE p.resolved < 2 
-                ORDER BY p.timestamp ASC LIMIT 1000
-            """) as cursor:
-                rows = await cursor.fetchall()
-            logging.info(f"🧠 Начало цикла обучения. Найдено кандидатов для обработки: {len(rows)}")
+    # 1. ВЫБОРКА (Без блокировки)
+    # 1. СБОР ДАННЫХ (Без блокировки)
+    async with get_db_connection() as conn:
+        async with conn.execute("""
+            SELECT p.*, e.link as source_link 
+            FROM predictions p
+            JOIN events e ON p.event_id = e.id
+            WHERE p.resolved < 2 
+            ORDER BY p.timestamp ASC LIMIT 1000
+        """) as cursor:
+            rows = await cursor.fetchall()
 
-            updates_by_key = defaultdict(list) # Для агрегации обновлений весов
-            all_errors = [] # Для калибровки глобального множителя
-            errors_by_asset = defaultdict(list) # Для калибровки множителей активов
-            stale_map = raw_market_data.get('stale_map', {})
-            
-            batch_updates = []
-            processed_source_links = set() # Чтобы не обновлять источник дважды за одну новость
+    if not rows:
+        return
 
-            for row in rows:
+    logging.info(f"🧠 Начало цикла обучения. Найдено кандидатов: {len(rows)}")
+
+    updates_by_key = defaultdict(list)
+    all_errors = []
+    errors_by_asset = defaultdict(list)
+    batch_updates = []
+    # Накопители для агрегированной статистики
+    
+    # Накопители для статистики (чтобы не писать в БД внутри цикла)
+    source_updates = defaultdict(lambda: {"total": 0, "correct": 0, "err": 0.0, "conf": 0.0, "alpha": 0.0, "alpha_sq": 0.0})
+    asset_stats_updates = defaultdict(lambda: {"total": 0, "correct": 0, "err": 0.0})
+    model_accumulators = defaultdict(lambda: {"total": 0})
+    processed_source_links = set()
+
+    # 2. РАСЧЕТЫ В RAM
+    # 2. ОБРАБОТКА В RAM (Тяжелые вычисления здесь не блокируют другие процессы)
+    for row in rows:
                 event_key = row['event_key']
                 event_type = row['event_type'] if row['event_type'] else 'neutral'
                 is_black_swan = row['is_black_swan'] if 'is_black_swan' in row.keys() else 0
@@ -816,16 +871,9 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                 # КАЛИБРОВКА MSF: Подстраиваем чувствительность модели
                 model_sens = state.model_sensitivities.get(row['model_name'], 1.0)
                 state.model_sensitivities[row['model_name']] = max(0.1, min(5.0, model_sens + (state.learning_rate * error * 0.5)))
+                state.learning.dirty_model_sensitivities.add(row['model_name'])
+                model_accumulators[row['model_name']]["total"] += 1
                 
-                # Обновляем счетчик resolved для модели в базе
-                await conn.execute("""
-                    INSERT INTO model_stats (model_name, total_resolved, sensitivity) 
-                    VALUES (?, 1, ?) 
-                    ON CONFLICT(model_name) DO UPDATE SET 
-                        total_resolved = total_resolved + 1,
-                        sensitivity = EXCLUDED.sensitivity
-                """, (row['model_name'], state.model_sensitivities.get(row['model_name'], 1.0)))
-
                 if new_resolved_status == 1:
                     # Фаза 1: Быстрая калибровка множителя и фильтрация RAM-баллов
                     all_errors.append(error)
@@ -838,60 +886,87 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                     # Накопление статистики по источникам (только при первом переходе в 'resolved')
                     if row['resolved'] == 0:
                         source_link = row['source_link']
-                        if source_link not in processed_source_links:
-                            source_domain = row['source_domain'] if row['source_domain'] else "unknown"
-                            if source_domain:
-                                # Учитываем корреляцию: для источника важно, угадал ли он направление конкретного актива
-                                directional_alpha = (raw_change * correlation) if score > 0 else -(raw_change * correlation)
-                                # Учитываем ложные срабатывания (is_correct=0) как больший вклад в ошибку
-                                await conn.execute("""
-                                    INSERT INTO source_stats (source_domain, total_resolved, correct_count, sum_error, sum_confidence, sum_alpha, sum_alpha_sq)
-                                    VALUES (?, 1, ?, ?, ?, ?, ?)
-                                    ON CONFLICT(source_domain) DO UPDATE SET
-                                        total_resolved = total_resolved + 1,
-                                        correct_count = correct_count + EXCLUDED.correct_count,
-                                        sum_error = sum_error + EXCLUDED.sum_error,
-                                        sum_confidence = sum_confidence + EXCLUDED.sum_confidence,
-                                        sum_alpha = sum_alpha + EXCLUDED.sum_alpha,
-                                        sum_alpha_sq = sum_alpha_sq + EXCLUDED.sum_alpha_sq
-                                """, (source_domain.lower(), is_correct, abs(error), row['confidence'], directional_alpha, directional_alpha**2))
-                                processed_source_links.add(source_link)
+                        source_domain = (row['source_domain'] or "unknown").lower()
+                        if source_link not in processed_source_links and source_domain:
+                            directional_alpha = (raw_change * correlation) if score > 0 else -(raw_change * correlation)
+                            s = source_updates[source_domain]
+                            s["total"] += 1
+                            s["correct"] += is_correct
+                            s["err"] += abs(error)
+                            s["conf"] += row['confidence']
+                            s["alpha"] += directional_alpha
+                            s["alpha_sq"] += directional_alpha**2
+                            processed_source_links.add(source_link)
 
-                        # NEW: Update asset_stats
-                        if target: # Ensure target_asset is not empty
-                            await conn.execute("""
-                                INSERT INTO asset_stats (target_asset, total_resolved, correct_count, sum_error)
-                                VALUES (?, 1, ?, ?)
-                                ON CONFLICT(target_asset) DO UPDATE SET
-                                    total_resolved = total_resolved + 1,
-                                    correct_count = correct_count + EXCLUDED.correct_count,
-                                    sum_error = sum_error + EXCLUDED.sum_error
-                            """, (target, is_correct, abs(error)))
+                        if target:
+                            a = asset_stats_updates[target.lower()]
+                            a["total"] += 1
+                            a["correct"] += is_correct
+                            a["err"] += abs(error)
 
                 else:
                     # Фаза 2: Уточнение веса конкретного события (Long-term)
                     updates_by_key[(event_key, target)].append((error, is_correct))
-
                 batch_updates.append((new_resolved_status, actual, is_correct, raw_change, row['id']))
 
-            if batch_updates:
+    # 3. ЗАПИСЬ (Короткая блокировка)
+    # 3. ПРИМЕНЕНИЕ РЕЗУЛЬТАТОВ (Минимальная блокировка)
+    if batch_updates:
+        async with state.db_lock:
+            async with get_db_connection() as conn:
                 await conn.executemany("""
                     UPDATE predictions SET resolved = ?, actual_move = ?, is_correct = ?, signed_alpha = ? WHERE id = ?
                 """, batch_updates)
-                logging.info(f"✅ Пакетное обновление завершено: {len(batch_updates)} записей.")
-
-            # 1. Агрегированное обновление весов (защита от "двойного" обучения на пачке новостей)
-            for (e_key, asset), data_list in updates_by_key.items():
-                avg_err = sum(d[0] for d in data_list) / len(data_list)
-                mostly_correct = sum(1 for d in data_list if d[1]) / len(data_list) > 0.5
-                await update_weights(e_key, asset, avg_err, state, is_correct=mostly_correct)
-
-            # 2. Калибровка множителей по активам
-            for asset, errors in errors_by_asset.items():
-                avg_asset_err = sum(errors) / len(errors)
-                calibrate_multiplier(avg_asset_err, state, asset=asset)
                 
-                # Автоматический сброс при низком WinRate
+                for domain, s in source_updates.items():
+                    await conn.execute("""
+                        INSERT INTO source_stats (source_domain, total_resolved, correct_count, sum_error, sum_confidence, sum_alpha, sum_alpha_sq)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(source_domain) DO UPDATE SET
+                            total_resolved = total_resolved + EXCLUDED.total_resolved,
+                            correct_count = correct_count + EXCLUDED.correct_count,
+                            sum_error = sum_error + EXCLUDED.sum_error,
+                            sum_confidence = sum_confidence + EXCLUDED.sum_confidence,
+                            sum_alpha = sum_alpha + EXCLUDED.sum_alpha,
+                            sum_alpha_sq = sum_alpha_sq + EXCLUDED.sum_alpha_sq
+                    """, (domain, s["total"], s["correct"], s["err"], s["conf"], s["alpha"], s["alpha_sq"]))
+
+                for asset, a in asset_stats_updates.items():
+                    await conn.execute("""
+                        INSERT INTO asset_stats (target_asset, total_resolved, correct_count, sum_error)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(target_asset) DO UPDATE SET
+                            total_resolved = total_resolved + EXCLUDED.total_resolved,
+                            correct_count = correct_count + EXCLUDED.correct_count,
+                            sum_error = sum_error + EXCLUDED.sum_error
+                    """, (asset, a["total"], a["correct"], a["err"]))
+
+                # Обновление статистики моделей (MSF)
+                for m_name, m_stats in model_accumulators.items():
+                    await conn.execute("""
+                        INSERT INTO model_stats (model_name, total_resolved, sensitivity)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(model_name) DO UPDATE SET
+                            total_resolved = total_resolved + EXCLUDED.total_resolved,
+                            sensitivity = EXCLUDED.sensitivity
+                    """, (m_name, m_stats["total"], state.model_sensitivities.get(m_name, 1.0)))
+
+                await conn.commit()
+        logging.info(f"✅ Пакетное обучение сохранено: {len(batch_updates)} записей.")
+
+        # 1. Агрегированное обновление весов (защита от "двойного" обучения на пачке новостей)
+        for (e_key, asset), data_list in updates_by_key.items():
+            avg_err = sum(d[0] for d in data_list) / len(data_list)
+            mostly_correct = sum(1 for d in data_list if d[1]) / len(data_list) > 0.5
+            await update_weights(e_key, asset, avg_err, state, is_correct=mostly_correct)
+
+        # 2. Калибровка множителей по активам
+        for asset, errors in errors_by_asset.items():
+            avg_asset_err = sum(errors) / len(errors)
+            calibrate_multiplier(avg_asset_err, state, asset=asset)
+                
+            # Автоматический сброс при низком WinRate (нужно новое соединение)
+            async with get_db_connection() as conn:
                 async with conn.execute("SELECT total_resolved, correct_count FROM asset_stats WHERE target_asset = ?", (asset,)) as cursor_stats:
                     stats = await cursor_stats.fetchone()
                     
@@ -901,21 +976,21 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                         state.asset_multipliers[asset] = config.IMPACT_MULTIPLIER
                         logging.warning(f"📉 WinRate актива {asset.upper()} ({wr:.1f}%) ниже порога. Множитель сброшен до {config.IMPACT_MULTIPLIER}")
 
-            # 2. Калибровка глобального множителя (один раз за цикл на основе всей выборки)
-            if all_errors:
-                calibrate_multiplier(sum(all_errors) / len(all_errors), state) # Передаем state
-            await conn.commit()
+        # 2. Калибровка глобального множителя (один раз за цикл на основе всей выборки)
+        if all_errors:
+            calibrate_multiplier(sum(all_errors) / len(all_errors), state) # Передаем state
 
-    await state.save_to_db() # Сохраняем состояние через state manager
+    # 4. СОХРАНЕНИЕ (Вне основного лока во избежание Deadlock)
+    await state.save_to_db()
     logging.info(f"System settings saved. New IMPACT_MULTIPLIER: {state.multiplier:.2f}") # Используем state.multiplier
 
 async def _execute_vacuum():
     """Асинхронное выполнение VACUUM."""
     try:
-        async with get_db_connection() as conn:
-            await conn.execute("PRAGMA journal_mode=DELETE") # Отключаем WAL для VACUUM
+        # В режиме WAL переключаться в DELETE не нужно. 
+        # Просто запускаем VACUUM с таймаутом ожидания освобождения базы другими процессами.
+        async with aiosqlite.connect(config.DB_PATH, isolation_level=None, timeout=60) as conn:
             await conn.execute("VACUUM")
-            await conn.execute("PRAGMA journal_mode=WAL") # Возвращаем WAL
             logging.info("📦 База данных сжата (VACUUM завершен)")
     except Exception as e:
         logging.error(f"VACUUM error: {e}")
@@ -977,14 +1052,15 @@ def clean_title(title: str) -> str:
     # Список стоп-слов, которые часто меняются в заголовках об одном событии
     stop_words = {
         'reports', 'hit', 'triggers', 'massive', 'says', 'amid', 'following', 'after', 'due', 'warns', 'shows', 'proposes', 'plans', 'set', 'could', 'would', 'may', 'will', 'предложил', 'предлагает', 'может', 'планирует', 'хочет', 'объявил', 'ago', 'min', 'hours',
-        'calendar', 'corporate', 'event', 'fiscal', 'announces', 'dividend', 'shareholder'
+        'calendar', 'corporate', 'event', 'fiscal', 'announces', 'dividend', 'shareholder',
+        'opinion', 'analysis', 'outlook', 'why', 'experts', 'expect', 'possible', 'likely', 'outlook', 'view', 'could', 'should'
     }
     # Удаляем пунктуацию
     cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
     # Удаляем одиночные цифры (часто это время или кол-во чего-то)
     cleaned = re.sub(r'\b\d+\b', '', cleaned)
     # Очищаем от стоп-слов и нормализуем пробелы
-    words = [w for w in cleaned.lower().split() if w not in stop_words]
+    words = sorted([w for w in cleaned.lower().split() if w not in stop_words])
     return " ".join(words)
 
 def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: float) -> bool:
@@ -1059,7 +1135,8 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                         raw_data = await response.read()
                         break
                     elif response.status == 429:
-                        logging.warning(f"Rate limited by Google News for {url}")
+                        domain = urlparse(url).netloc
+                        logging.warning(f"⚠️ Rate limited by {domain} for {url}. Waiting 10s...")
                         await asyncio.sleep(5)
                     else:
                         logging.debug(f"Feed {url} returned status {response.status}")
@@ -1080,6 +1157,9 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             return
 
         feed = await loop.run_in_executor(sync_executor, lambda: feedparser.parse(raw_data))
+
+        if not feed.entries:
+            logging.info(f"Empty feed: {url}")
 
         # Адаптивное окно возраста новости:
         # Если рынок активен — окно узкое, если закрыт — используем лимит для неактивного времени.
@@ -1105,6 +1185,8 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                 else:
                     # Переводим в DEBUG, чтобы не спамить в консоль
                     logging.debug(f"Skipping old news: '{entry.title}' (Age: {age_h:.1f}h, Max: {effective_max_age}h)")
+            else:
+                logging.debug(f"⚠️ No date found for: {entry.title}. Skipping to avoid stale content.")
             # Если даты публикации нет, мы её не добавляем (более строгий подход к качеству данных)
 
         # 2. Сортируем по времени (самые свежие — первые) и берем в пределах лимита
@@ -1168,18 +1250,18 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                     continue
 
                 # 1. Быстрая проверка Set-based Hashing (Exact match по очищенному заголовку)
-                if new_clean in state.cache.clean_titles:
+                if new_clean in state.cache.clean_titles: # OrderedDict поддерживает 'in' за O(1)
                     state.metrics.metrics["news_duplicate_hash"] += 1
                     continue
 
                 # Теперь передаем в функцию список УЖЕ ОЧИЩЕННЫХ залогов (clean_titles)
-                if is_fuzzy_duplicate(original_title, state.cache.clean_titles, fuzzy_threshold):
+                if is_fuzzy_duplicate(original_title, list(state.cache.clean_titles.keys()), fuzzy_threshold):
                     state.metrics.metrics["news_duplicate_fuzzy"] += 1
                     state.cache.add_url(entry.link, original_title)
                     continue
                 
                 # Добавляем очищенную версию в быстрый кэш
-                state.cache.clean_titles.add(new_clean)
+                state.cache.clean_titles[new_clean] = True
 
             # Проверка в БД (перед тяжелым AI запросом эмбеддинга для экономии API)
             db_titles = await state.get_db_titles(hours=config.SEMANTIC_DEDUPLICATION_WINDOW)
@@ -1344,13 +1426,17 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
 
         # Сброс флага Black Swan, если score новости недостаточно велик (защита от галлюцинаций ИИ)
         if is_black_swan and abs(score) < config.BLACK_SWAN_SCORE_THRESHOLD:
-            logging.info(f"🦢 Понижение статуса Black Swan для {slug}: индивидуальный score {score:.2f} < {config.BLACK_SWAN_SCORE_THRESHOLD}")
+            msg_downgrade = f"🦢 [{html.escape(model_name)}] Понижение статуса Black Swan для <b>{html.escape(slug or '')}</b>: |score| {abs(score):.2f} &lt; {config.BLACK_SWAN_SCORE_THRESHOLD}"
+            logging.info(msg_downgrade)
+            summary_text = f"\n\n📝 <b>Summary:</b> {html.escape(ai_summary)}" if ai_summary else ""
+            # await send_telegram(session, f"🛡️ <b>Sanity Check:</b> {msg_downgrade}{summary_text}\n\n<i>Новость классифицирована как обычное событие.</i>")
             is_black_swan = False
 
         narrative_multiplier = 1.0
 
         # Фильтр по уровню уверенности
         if confidence < config.CONFIDENCE_THRESHOLD:
+            state.metrics["news_low_confidence"] += 1
             logging.info(f"Skipping news '{entry.title}': Confidence {confidence:.2f} is below threshold {config.CONFIDENCE_THRESHOLD}")
             return
 
@@ -1359,6 +1445,7 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
 
         if abs(raw_score) < 0.1:
             logging.info(f"🔇 Trivial news ignored: {entry.title}")
+            state.metrics["news_trivial"] += 1
             return
 
         # Slug Logic (Duplicates & Narrative Tracking)
@@ -1374,7 +1461,8 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
                     
                     # Spam prevention: if news arrives too fast, it's a duplicate
                     if delta_sec < config.SLUG_SPAM_WINDOW:
-                        logging.info(f"🐌 Slug spam prevention: {normalized_slug}")
+                        remaining = int(config.SLUG_SPAM_WINDOW - delta_sec)
+                        logging.info(f"🐌 Slug spam prevention: {normalized_slug} (last seen {int(delta_sec)}s ago, window active for another {remaining}s)")
                         state.metrics.metrics["news_duplicate_slug"] += 1
                         return
                     
@@ -1470,6 +1558,7 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
                             weight_key = (normalized_slug.upper(), asset.lower())
                             if weight_key not in state.weights:
                                 state.weights[weight_key] = 1.0
+                                state.learning.dirty_weights.add(weight_key)
                                 await conn.execute("INSERT OR IGNORE INTO weights (event_key, target_asset, weight) VALUES (?, ?, 1.0)",
                                            (weight_key[0], weight_key[1]))
                                 logging.info(f"🆕 DISCOVERED NARRATIVE: {weight_key[0]} now tracked for {asset}")
@@ -1485,11 +1574,12 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
 
         # Дополнительная защита: социальные новости с низкой уверенностью обнуляются
         if is_social and confidence < 0.80:
+            state.metrics["news_social_muted"] += 1
             logging.info(f"🔇 Social Noise Filter: Muting low-confidence Reddit/X post: {slug}")
             return
 
         if abs(score) < effective_threshold:
-            state.metrics.metrics["news_low_score"] += 1
+            state.metrics["news_low_score"] += 1
             if is_social:
                 logging.debug(f"Social Filter: Skipping {source_title} for {event_key} (Score {score:.2f} < {effective_threshold})")
             return # Используем return вместо continue, так как это функция
@@ -1530,35 +1620,39 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
         # Проверяем анти-спам ДО записи в базу, чтобы не плодить дубли
         can_send_alert = should_send(event_key, score, global_score, state, is_black_swan) 
 
-        async with state.db_lock: # Используем лок из state manager
-            try:
+        # 3. ПОДГОТОВКА ДАННЫХ ДЛЯ ЗАПИСИ (Вне лока)
+        pred_data = []
+        for asset_name in target_assets:
+            a_low = asset_name.lower()
+            a_ticker = config.ASSET_TICKER_MAP.get(a_low)
+            a_vol = 1.0
+            if price_history is not None and a_ticker and a_ticker in price_history.columns:
+                a_vol = price_history[a_ticker].pct_change().tail(config.VOLATILITY_WINDOW).std() * 100
+                if pd.isna(a_vol) or a_vol < 0.01: a_vol = 1.0
+            
+            a_mult = state.asset_multipliers.get(a_low, state.multiplier)
+            a_weight = state.learning.get_weight(event_key, a_low)
+            a_pred_z = min(abs(score * a_weight) * a_mult, 10.0)
+            
+            pred_data.append((raw_score, a_pred_z, a_low, event_type, 1 if is_black_swan else 0, confidence, source_title, model_name, pub_db_time))
+
+        # 4. СОХРАНЕНИЕ (Минимальная блокировка)
+        try:
+            async with state.db_lock:
                 async with get_db_connection() as conn:
-                    # Сохраняем событие (link UNIQUE защитит от полных дублей)
+                    # Сохраняем событие
                     async with conn.execute("""
                         INSERT INTO events (title, link, score, event, nasdaq, sp500, oil, soxs, gold, btc, vix, fear_greed, slug, is_black_swan, summary, title_ru, timestamp)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (entry.title, entry.link, score, event_type, market["nasdaq"], market["sp500"], market["oil"], market["soxs"], market["gold"], market["btc"], market["vix"], fng_val, slug, 1 if is_black_swan else 0, ai_summary, title_ru, pub_db_time)) as cursor:
                         event_id = cursor.lastrowid
                     
-                    for asset_name in target_assets:
-                        a_low = asset_name.lower()
-                        a_ticker = config.ASSET_TICKER_MAP.get(a_low)
-                        a_vol = 1.0
-                        if price_history is not None and a_ticker and a_ticker in price_history.columns:
-                            a_vol = price_history[a_ticker].pct_change().tail(config.VOLATILITY_WINDOW).std() * 100
-                            if pd.isna(a_vol) or a_vol < 0.01: a_vol = 1.0
-                        
-                        a_mult = state.asset_multipliers.get(a_low, state.multiplier)
-
-                        # Для обучения сохраняем прогнозируемую силу конкретной новости в сигмах.
-                        # Используем чистый score новости и вес, чтобы recalculate_learning.py работал корректно.
-                        a_weight = state.learning.get_weight(event_key, a_low)
-                        a_pred_z = min(abs(score * a_weight) * a_mult, 10.0)
-
-                        await conn.execute("""
-                            INSERT INTO predictions (event_id, event_key, score, predicted_impact, target_asset, resolved, event_type, is_black_swan, confidence, source_domain, model_name, timestamp)
-                            VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
-                        """, (event_id, event_key, raw_score, a_pred_z, a_low, event_type, 1 if is_black_swan else 0, confidence, source_title, model_name, pub_db_time))
+                    # Пакетная вставка прогнозов
+                    full_pred_data = [(event_id, event_key) + d for d in pred_data]
+                    await conn.executemany("""
+                        INSERT INTO predictions (event_id, event_key, score, predicted_impact, target_asset, resolved, event_type, is_black_swan, confidence, source_domain, model_name, timestamp)
+                        VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                    """, full_pred_data)
                     await conn.commit()
 
                 if config.ENABLE_HOURLY_REPORT:
@@ -1572,14 +1666,15 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
                         "link": entry.link,
                         "source": source_label
                     })
-
-            except aiosqlite.IntegrityError:
-                logging.info(f"Новость уже обработана другой лентой (URL duplicate): {entry.title}") # Используем return вместо continue
-                return
+        except aiosqlite.IntegrityError:
+            logging.info(f"Новость уже обработана другой лентой (URL duplicate): {entry.title}")
+            state.metrics["news_db_duplicate"] += 1
+            return
 
         # Отправляем уведомление, если прошли все фильтры и кулдаун
         if can_send_alert:
             if event_key == "BTC" and abs(market_data.get("btc_change", 0)) < config.BTC_MIN_VOLATILITY_FOR_ALERT: # Используем market_data
+                state.metrics["news_btc_ignored"] += 1
                 return # Используем return вместо continue
             
             # Собираем прогнозы и текущие изменения по целевым активам
@@ -1627,10 +1722,12 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
                 f"{forecast_str}\n"
                 f"-------------------\n"
                 f"{summary_part}"
-                f"📰 <a href='{html.escape(entry.link)}'>{html.escape(title_ru or entry.title)}</a>"
+                f"📰 <a href=\"{html.escape(entry.link, quote=True)}\">{html.escape(title_ru or entry.title)}</a>"
             )
             state.metrics.metrics["news_sent_telegram"] += 1
             await send_telegram(session, msg)
+        else:
+            state.metrics["news_cooldown_filtered"] += 1
     except Exception as e: # Добавлена обработка ошибок для воркера
         logging.error(f"Error processing news in queue: {e}")
 
@@ -1696,9 +1793,9 @@ async def send_hourly_summary(session: aiohttp.ClientSession, state: GTSStateMan
     for news_item in news_to_report:
         summary_msg_parts.append(f"\n🧠 <b>EVENT:</b> {html.escape(news_item['event_key'])} | <b>Score:</b> {news_item['score']:.2f} | <b>Impact:</b> {news_item['impact']:.2f}σ")
         summary_msg_parts.append(f"📢 <b>Source:</b> {html.escape(news_item.get('source', 'Unknown').upper())}")
-        summary_msg_parts.append(f"📰 <a href='{html.escape(news_item['link'])}'>{html.escape(news_item['title'])}</a>")
+        summary_msg_parts.append(f"📰 <a href=\"{html.escape(news_item['link'], quote=True)}\">{html.escape(news_item['title']) or 'Link'}</a>")
         if news_item['summary']:
-            summary_msg_parts.append(f"📝 <b>Summary:</b> {html.escape(news_item['summary'])}")
+            summary_msg_parts.append(f"📝 <b>Summary:</b> {html.escape(str(news_item['summary']))}")
         summary_msg_parts.append(f"-------------------")
     
     final_summary_msg = "\n".join(summary_msg_parts)
@@ -1764,23 +1861,38 @@ async def main():
             # Запуск фонового репортера статистики
             asyncio.create_task(metrics_reporter_task(state))
 
+            # Запуск фонового автосохранения
+            asyncio.create_task(auto_save_task(state))
+
             logging.info(f"🚀 Поставщик рыночных данных: {config.MARKET_DATA_PROVIDER.upper()}")
             
             # Запуск воркеров на основе конфигурации (1 для Free Gemini, 2+ для платных тарифов)
             workers = [asyncio.create_task(news_worker(i, persistent_session, state, model_rotator)) for i in range(config.NUM_WORKERS)]
 
-            # Первичный запуск цикла обучения, чтобы обработать старые записи
-            logging.info("Первичный запуск цикла обучения...")
-            await learning_cycle(persistent_session, state)
+            # Первичный старт с защитой от зависания (Watchdog)
+            try:
+                logging.info("Начало инициализации (Обучение + Очистка). Лимит времени: 15 минут...")
+                
+                async def startup_init():
+                    await learning_cycle(persistent_session, state)
+                    await cleanup_db(state)
+
+                # Если за 900 секунд (15 мин) инициализация не пройдет, сработает TimeoutError
+                start_init_ts = time.time()
+                await asyncio.wait_for(startup_init(), timeout=900)
+                duration = time.time() - start_init_ts
+                logging.info(f"✅ Инициализация успешно завершена за {duration:.1f}с.")
+            except asyncio.TimeoutError:
+                logging.critical("🚨 КРИТИЧЕСКАЯ ОШИБКА: Инициализация зависла. Выполняется автоматический перезапуск...")
+                await persistent_session.close()
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+
             last_learning_run = time.time()
-            
-            logging.info("Первичная очистка базы данных...")
-            await cleanup_db(state)
             last_cleanup_run = time.time()
             last_summary_run = time.time() # Инициализируем время последнего отчета
 
             while True:
-                eligible_count = await count_eligible_predictions()
+                eligible_count = await count_eligible_predictions(state)
                 time_to_next = max(0, config.LEARNING_INTERVAL - (time.time() - last_learning_run))
                 minutes_left = int(time_to_next // 60)
                 
@@ -1793,6 +1905,8 @@ async def main():
                 else:
                     state.market_data_status = "FAILED"
 
+                logging.info(f"📊 Status: [До обучения: {minutes_left} мин | Готово новостей: {eligible_count}]")
+
                 is_market_active = not current_market_data.get('is_stale', True)
                 
                 if not is_market_active:
@@ -1803,13 +1917,18 @@ async def main():
                     for asset, threshold in config.SHARP_MOVE_THRESHOLDS.items():
                         move = current_market_data.get(f"{asset}_change", 0.0)
                         if abs(move) >= threshold:
+                            is_gap = current_market_data.get(f"{asset}_change_is_gap", False)
+                            prev_p = current_market_data.get(f"{asset}_change_prev_price", 0.0)
                             now = time.time()
                             if now - state.last_price_alert.get(asset, 0) > config.COOLDOWN:
                                 direction = "🚀 РОСТ" if move > 0 else "🔻 ПАДЕНИЕ"
+                                gap_header = "🏮 <b>ОТКРЫТИЕ РЫНКА / ГЭП</b>\n" if is_gap else ""
                                 alert_msg = (
+                                    f"{gap_header}"
                                     f"⚠️ <b>РЕЗКОЕ ДВИЖЕНИЕ ЦЕНЫ: {asset.upper()}</b>\n"
                                     f"Направление: {direction} <b>{move:+.2f}%</b>\n"
-                                    f"Окно мониторинга: ~{config.MARKET_LOOKBACK_HOURS}ч"
+                                    f"Цена до: {prev_p:.2f}\n"
+                                    f"Окно: {'После выходных' if is_gap else f'~{config.MARKET_LOOKBACK_HOURS}ч'}"
                                 )
                                 await send_telegram(persistent_session, alert_msg)
                                 state.last_price_alert[asset] = now
@@ -1827,10 +1946,13 @@ async def main():
                         scan_tasks.append(task)
                         await asyncio.sleep(0.5) # Пауза между запросами (анти-бан)
                     
-                    # Дожидаемся завершения всех задач сканирования ПРЕЖДЕ чем scan_session закроется
+                    # Дожидаемся завершения всех задач сканирования с общим таймаутом
                     if scan_tasks:
-                        await asyncio.gather(*scan_tasks)
-                        logging.info(f"✅ Цикл сканирования лент завершен ({len(scan_tasks)} feeds)")
+                        try:
+                            await asyncio.wait_for(asyncio.gather(*scan_tasks), timeout=300)
+                            logging.info(f"✅ Цикл сканирования лент завершен ({len(scan_tasks)} feeds)")
+                        except asyncio.TimeoutError:
+                            logging.warning("⚠️ Сканирование части лент прервано по таймауту.")
 
                 # Дополнительно опрашиваем StockTwits для ключевых тикеров
                 if config.SOCIAL_SEARCH_ENABLED:
@@ -1844,7 +1966,14 @@ async def main():
 
                 current_time = time.time()
                 if current_time - last_learning_run >= config.LEARNING_INTERVAL:
-                    await learning_cycle(persistent_session, state, raw_market_data=current_market_data)
+                    try:
+                        # Защищаем цикл обучения от зависания
+                        await asyncio.wait_for(
+                            learning_cycle(persistent_session, state, raw_market_data=current_market_data),
+                            timeout=600 # 10 минут на обучение
+                        )
+                    except asyncio.TimeoutError:
+                        logging.warning("⚠️ Цикл обучения занял слишком много времени и был прерван.")
                     last_learning_run = current_time
                 if current_time - last_cleanup_run >= config.CLEANUP_INTERVAL:
                     await cleanup_db(state)
@@ -1857,6 +1986,15 @@ async def main():
         except asyncio.CancelledError:
             logging.info("Основной цикл остановлен (CancelledError).")
         finally:
+            # Финальное сохранение состояния перед выходом
+            try:
+                start_ts = time.time()
+                saved_count = await state.save_to_db()
+                duration = time.time() - start_ts
+                logging.info(f"💾 Финальное состояние сохранено: {saved_count} записей за {duration:.3f}с")
+            except Exception as e:
+                logging.error(f"Ошибка финального сохранения: {e}")
+
             # Явная остановка фоновых воркеров
             for w in workers:
                 w.cancel()

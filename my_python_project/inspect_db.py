@@ -178,7 +178,10 @@ async def inspect_gts():
                 
                 # Формирование комментария
                 comment = ""
-                if total_wr > 70: comment = "💎 Отлично"
+                if total_cnt > 5 and total_wr == 0: 
+                    comment = "❌ ИНВЕРСИЯ (Всё мимо)"
+                elif total_wr > 70: 
+                    comment = "💎 Отлично"
                 elif total_wr < 45: comment = "⚠️ Слабо"
                 else: comment = "🆗 Стабильно"
                 
@@ -291,23 +294,45 @@ async def inspect_gts():
             print("Недостаточно данных для анализа источников.")
 
         print("\n--- ЭФФЕКТИВНОСТЬ МОДЕЛЕЙ (AI PERFORMANCE) ---")
-        model_stats_query = """
-            SELECT 
-                p.model_name as Model,
-                ROUND(ms.sensitivity, 3) as "MSF(Sens)",
-                COUNT(*) as Total,
-                SUM(is_correct) as Correct,
-                ROUND(AVG(confidence), 2) as AvgConf,
-                ROUND((CAST(SUM(is_correct) AS REAL) / COUNT(*)) * 100, 1) as "WinRate%"
+        # Загружаем детальные данные для расчета трендов
+        async with conn.execute("""
+            SELECT p.model_name, p.is_correct, p.confidence, p.timestamp, ms.sensitivity
             FROM predictions p
             LEFT JOIN model_stats ms ON p.model_name = ms.model_name
-            WHERE resolved >= 1
-            GROUP BY p.model_name
-            ORDER BY "WinRate%" DESC
-        """
-        async with conn.execute(model_stats_query) as cursor:
-            model_df = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
-        if not model_df.empty:
+            WHERE p.resolved >= 1
+        """) as cursor:
+            p_df = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
+
+        if not p_df.empty:
+            model_perf_data = []
+            for m_name, group in p_df.groupby("model_name"):
+                group = group.sort_values('timestamp')
+                total_cnt = len(group)
+                correct_cnt = int(group['is_correct'].sum())
+                total_wr = (correct_cnt / total_cnt) * 100
+                
+                # Расчет тренда (последние 15 прогнозов или 25% от выборки)
+                recent_window = max(5, int(total_cnt * 0.25))
+                recent_group = group.tail(recent_window)
+                wr_trend = "---"
+                
+                if len(recent_group) >= 3:
+                    recent_wr = (recent_group['is_correct'].sum() / len(recent_group)) * 100
+                    wr_trend = f"{(recent_wr - total_wr):+.1f}%"
+
+                sens = group['sensitivity'].iloc[0] if not pd.isna(group['sensitivity'].iloc[0]) else 1.0
+                
+                model_perf_data.append({
+                    "Model": m_name,
+                    "MSF(Sens)": round(sens, 3),
+                    "Total": total_cnt,
+                    "Correct": correct_cnt,
+                    "AvgConf": round(group['confidence'].mean(), 2),
+                    "WinRate%": round(total_wr, 1),
+                    "WR_Trend": wr_trend
+                })
+            
+            model_df = pd.DataFrame(model_perf_data).sort_values("WinRate%", ascending=False)
             print(model_df.to_string(index=False))
 
 if __name__ == "__main__":

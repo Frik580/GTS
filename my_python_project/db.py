@@ -6,7 +6,6 @@ import config
 async def get_db_connection():
     async with aiosqlite.connect(config.DB_PATH, timeout=30) as conn:
         try:
-            await conn.execute("PRAGMA journal_mode=WAL")  # Оптимизация записи и чтения
             conn.row_factory = aiosqlite.Row  # Позволяет обращаться к полям по именам
             yield conn
         finally:
@@ -14,6 +13,10 @@ async def get_db_connection():
 
 async def init_db():
     async with get_db_connection() as conn:
+        # Устанавливаем режим WAL один раз при инициализации
+        await conn.execute("PRAGMA journal_mode=WAL")
+        await conn.execute("PRAGMA synchronous=NORMAL")
+        await conn.execute("PRAGMA cache_size=-64000") # 64MB кэш
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

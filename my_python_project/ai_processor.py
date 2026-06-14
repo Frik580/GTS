@@ -33,24 +33,28 @@ class PromptBuilder:
         
         return f"""
         Current Time: {current_time_utc} UTC
-        You are a financial analyst. Analyze each of the {len(news_items)} news items below individually.
-        Analyze these financial news snippets:
+        You are a senior macro strategist and financial analyst. 
+        Your task is to perform a deep semantic analysis of the {len(news_items)} news items below.
+        Do not perform simple keyword matching. Analyze the underlying economic intent and market sentiment.
+
         {formatted_news}
 
         STRICT SCORING LOGIC:
         - LOCAL/TRIVIAL news (local accidents, humor, memes, small community issues) MUST be score 0.
+        - NO-ACTION/OPINION RULE: Articles that are pure editorials, "think pieces", broad market discussions, or "expert predictions" without a NEW factual event or data release MUST be score 0.
+        - HARD NEWS ONLY: Only events that represent a change in current state (e.g., "X happened", "Data Y was released", "Official Z stated") should get a non-zero score.
         - INDIVIDUAL stock news (earnings, major upgrades) for key tickers like NVDA, MSFT, etc., should be between -4 and 4.
-        Identify key entities. Prioritize these tags: {tags_hint}.
+        Identify key entities. Use these tags for categorization reference only: {tags_hint}.
         Return ONLY a JSON object with key "items" containing a list of objects:
 {{
         "items": [
         {{
-          "id": "match the provided ID (0, 1, etc)",
-          "primary_asset": "string",
+          "id": integer (match the provided ID 0, 1, etc),
+          "primary_asset": "string (MUST NOT be null. Use 'global' if no specific ticker is found)",
           "score": number,
           "event_type": "military" | "economic" | "diplomatic" | "neutral" | "tech",
           "entities": ["list"],
-          "slug": "string (max 3 words, English/Latin ONLY, e.g., 'AAPL_SURGE')",
+          "slug": "string (max 3 words, prioritize SUBJECT + CATEGORY, e.g., 'US_IRAN_CONFLICT')",
           "is_black_swan": boolean,
           "confidence": float (strictly 0.0 to 1.0),
           "summary": "RU text",
@@ -60,9 +64,14 @@ class PromptBuilder:
         STRICT RULE: You must return exactly {len(news_items)} populated objects in the "items" list. Do not return empty objects.
         STRICT LANGUAGE RULE: The "summary" and "title_ru" fields MUST be written strictly in the Russian language.
         IMPORTANT SCORING RULES:
-        - POSITIVE (1 to 10): Bad news for markets, revenue MISS, inflation rise, geopolitical tension (RISK-OFF).
-        - NEGATIVE (-10 to -1): Good news for markets, revenue BEAT, interest rate cuts, peace (RISK-ON).
-        - EXTREME CAUTION: Never exceed the -10 to 10 range. Most news are between -3 and 3.
+        - POSITIVE (1 to 10): RISK-OFF. Events that increase systemic uncertainty, debt risk, or geopolitical friction (e.g., war, inflation spikes, missed earnings).
+        - NEGATIVE (-10 to -1): RISK-ON. Events that drive economic growth, productivity, or liquidity (e.g., rate cuts, cooling inflation, peace).
+        - TECH PROGRESS RULE: Technological breakthroughs (AI advancements, new product launches, efficiency gains) are fundamentally RISK-ON (Negative Score), even if they are "radical" or "disruptive".
+        - SCORING SCALE: 0 = No impact; 1-2.4 = Minor noise; 2.5-4.9 = Significant market mover; 5.0-6.9 = Major trend shift; 7.0-10.0 = Black Swan.
+        - CONTEXT OVER WORDS: A "radical change" in AI technology is a productivity booster (Negative Score), while a "radical change" in central bank policy might be a risk (Positive Score).
+        - BLACK SWAN RULE: Set 'is_black_swan' to true ONLY for regime-changing catastrophes or massive systemic breakthroughs (e.g., OpenAI IPO, Fed pivot). If TRUE, the 'score' MUST be >= 7.0.
+        - EXTREME CAUTION: Never exceed the -10 to 10 range. Most significant news should fall between 2.5 and 4.0.
+        Analyze the INTENT and FACTUALITY. If the news is just a "reasoning" on a topic, score it 0.
         """
 
 class ResponseParser:
@@ -201,7 +210,10 @@ async def ai_analyze_batch(
     for attempt in range(3):
         model_name = rotator.get_active()["name"]
         try:
-            res_text, _ = await provider.call(prompt, session)
+            # Добавляем жесткий таймаут на ответ от любого провайдера ИИ
+            res_text, _ = await asyncio.wait_for(
+                provider.call(prompt, session), timeout=90
+            )
             data = ResponseParser.parse(res_text)
             if data:
                 results_map = ResponseParser.validate_and_extract_batch(data, model_name)
@@ -216,7 +228,7 @@ async def ai_analyze_batch(
                     actual_count = len(results_map) if results_map else 0
                     logging.warning(f"AI incomplete response ({actual_count}/{len(news_batch)}) from {model_name}. Rotating...")
 
-            await rotator.rotate()
+            await rotator.rotate(state)
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
@@ -228,7 +240,7 @@ async def ai_analyze_batch(
                 # Обрезаем слишком длинные сообщения об ошибках
                 clean_error = (err_str[:150] + "...") if len(err_str) > 150 else err_str
             logging.warning(f"AI attempt {attempt + 1}/3 failed ({model_name}): {clean_error}")
-            await rotator.rotate()
+            await rotator.rotate(state)
 
     return [await FallbackAnalyzer.run(item['text'], state.learning) for item in news_batch]
 
@@ -281,8 +293,12 @@ async def is_semantic_duplicate(title: str, embedding: List[float], state: Any) 
             if emb.shape != cached.shape:
                 continue
 
+            # Нормализация для кэшированного вектора, если он еще не нормализован
             c_norm = np.linalg.norm(cached)
-            sim = float(np.dot(emb, cached / c_norm)) if c_norm > 0 else 0.0
+            if c_norm > 0:
+                cached = cached / c_norm
+            
+            sim = float(np.dot(emb, cached))
             if sim > config.SEMANTIC_DUPLICATE_THRESHOLD:
                 logging.info(f"Semantic duplicate ({sim:.3f}): '{title}' ~ '{cached_title}'")
                 return True
