@@ -417,38 +417,40 @@ class GTSStateManager:
 
     async def save_to_db(self) -> int:
         saved_count = 0
-        async with self.db_lock:
-            async with get_db_connection() as conn:
-                # 1. Глобальный множитель
-                if self.scores.dirty_multiplier:
-                    await conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (self.multiplier,))
-                    self.scores.dirty_multiplier = False
-                    saved_count += 1
-                
-                # 2. Множители активов
-                if self.scores.dirty_asset_multipliers:
-                    for asset in list(self.scores.dirty_asset_multipliers):
-                        mult = self.asset_multipliers.get(asset)
-                        if mult is not None:
-                            await conn.execute("UPDATE asset_stats SET multiplier = ? WHERE target_asset = ?", (mult, asset))
-                            saved_count += 1
-                    self.scores.dirty_asset_multipliers.clear()
+        # Очередность захвата локов: сначала weight_lock, потом db_lock.
+        # Это предотвращает Deadlock с функцией update_weights.
+        async with self.learning.weight_lock:
+            async with self.db_lock:
+                async with get_db_connection() as conn:
+                    # 1. Глобальный множитель
+                    if self.scores.dirty_multiplier:
+                        await conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (self.multiplier,))
+                        self.scores.dirty_multiplier = False
+                        saved_count += 1
+                    
+                    # 2. Множители активов
+                    if self.scores.dirty_asset_multipliers:
+                        for asset in list(self.scores.dirty_asset_multipliers):
+                            mult = self.asset_multipliers.get(asset)
+                            if mult is not None:
+                                await conn.execute("UPDATE asset_stats SET multiplier = ? WHERE target_asset = ?", (mult, asset))
+                                saved_count += 1
+                        self.scores.dirty_asset_multipliers.clear()
 
-                # 3. Чувствительность моделей (MSF)
-                if self.learning.dirty_model_sensitivities:
-                    for m_name in list(self.learning.dirty_model_sensitivities):
-                        sens = self.model_sensitivities.get(m_name)
-                        if sens is not None:
-                            await conn.execute("""
-                                INSERT INTO model_stats (model_name, sensitivity) 
-                                VALUES (?, ?)
-                                ON CONFLICT(model_name) DO UPDATE SET sensitivity = EXCLUDED.sensitivity
-                            """, (m_name, sens))
-                            saved_count += 1
-                    self.learning.dirty_model_sensitivities.clear()
+                    # 3. Чувствительность моделей (MSF)
+                    if self.learning.dirty_model_sensitivities:
+                        for m_name in list(self.learning.dirty_model_sensitivities):
+                            sens = self.model_sensitivities.get(m_name)
+                            if sens is not None:
+                                await conn.execute("""
+                                    INSERT INTO model_stats (model_name, sensitivity) 
+                                    VALUES (?, ?)
+                                    ON CONFLICT(model_name) DO UPDATE SET sensitivity = EXCLUDED.sensitivity
+                                """, (m_name, sens))
+                                saved_count += 1
+                        self.learning.dirty_model_sensitivities.clear()
 
-                # 4. Веса событий (Самая тяжелая часть)
-                async with self.learning.weight_lock:
+                    # 4. Веса событий (Самая тяжелая часть)
                     if self.learning.dirty_weights:
                         for composite_key in list(self.learning.dirty_weights):
                             val = self.learning.weights.get(composite_key)
@@ -457,6 +459,6 @@ class GTSStateManager:
                                                    (composite_key[0], composite_key[1], val))
                                 saved_count += 1
                         self.learning.dirty_weights.clear()
-                
-                await conn.commit()
+                    
+                    await conn.commit()
         return saved_count

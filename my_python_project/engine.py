@@ -77,8 +77,7 @@ async def auto_save_task(state: GTSStateManager):
             start_ts = time.time()
             saved_count = await state.save_to_db()
             duration = time.time() - start_ts
-            if saved_count > 0:
-                logging.info(f"💾 Автосохранение: зафиксировано {saved_count} изменений состояния за {duration:.3f}с")
+            logging.info(f"💾 Автосохранение: завершено (изменений: {saved_count}) за {duration:.3f}с")
         except Exception as e:
             logging.error(f"Ошибка при фоновом сохранении состояния: {e}")
 
