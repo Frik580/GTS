@@ -20,7 +20,7 @@ async def test_deepseek():
     async with aiohttp.ClientSession() as session:
         res = await ai_analyze(test_text, rotator, state, session=session)
         
-    score, event_type, entities, slug, is_swan, model, conf, summary, title_ru = res
+    score, event_type, entities, slug, is_swan, model, conf, summary, title_ru, capex_sig, guidance_sig = res
     
     if score is not None:
         print(f"✅ Успех!")

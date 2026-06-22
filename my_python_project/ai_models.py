@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field, field_validator
-from typing import List, Tuple, Dict
+from pydantic import BaseModel, Field
+from typing import List, Tuple, Optional
 
 class NewsAnalysisResponse(BaseModel):
     """
@@ -15,6 +15,8 @@ class NewsAnalysisResponse(BaseModel):
     confidence: float = Field(..., ge=0.0, le=10.0) # Позволяем принять до 10, чтобы потом исправить
     summary: str
     title_ru: str
+    capex_signal: Optional[int] = Field(None, description="1: increase, 0: stable, -1: decrease")
+    guidance_signal: Optional[int] = Field(None, description="1: upgrade, 0: stable, -1: downgrade")
 
     def to_analysis_tuple(self, model_name: str) -> Tuple:
         """Преобразует модель в кортеж для дальнейшей обработки в engine.py."""
@@ -32,7 +34,9 @@ class NewsAnalysisResponse(BaseModel):
             model_name,
             safe_conf,
             self.summary,
-            self.title_ru
+            self.title_ru,
+            self.capex_signal,
+            self.guidance_signal
         )
 
 class BatchNewsResponse(BaseModel):

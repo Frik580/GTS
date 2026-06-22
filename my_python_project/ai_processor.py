@@ -58,7 +58,9 @@ class PromptBuilder:
           "is_black_swan": boolean,
           "confidence": float (strictly 0.0 to 1.0),
           "summary": "RU text",
-          "title_ru": "RU title"
+          "title_ru": "RU title",
+          "capex_signal": 1 | 0 | -1 | null,
+          "guidance_signal": 1 | 0 | -1 | null
         }}]
         }}
         STRICT RULE: You must return exactly {len(news_items)} populated objects in the "items" list. Do not return empty objects.
@@ -72,6 +74,10 @@ class PromptBuilder:
         - BLACK SWAN RULE: Set 'is_black_swan' to true ONLY for regime-changing catastrophes or massive systemic breakthroughs (e.g., OpenAI IPO, Fed pivot). If TRUE, the 'score' MUST be >= 7.0.
         - EXTREME CAUTION: Never exceed the -10 to 10 range. Most significant news should fall between 2.5 and 4.0.
         Analyze the INTENT and FACTUALITY. If the news is just a "reasoning" on a topic, score it 0.
+
+        SPECIAL SOXS SIGNALS:
+        - If MSFT, AMZN, or META mention AI CAPEX changes: set capex_signal (1: increase, -1: decrease).
+        - If NVDA or Broadcom (AVGO) change future guidance: set guidance_signal (1: upgrade, -1: downgrade).
         """
 
 class ResponseParser:
@@ -129,7 +135,7 @@ class FallbackAnalyzer:
     async def run(text: str, state_learning: Any) -> Tuple:
         text_hash = hashlib.md5(text.encode()).hexdigest()[:10]
         slug = f"fallback_{text_hash}"
-        return (0.0, "neutral", [], slug, False, "Fallback", 0.5, "", "")
+        return (0.0, "neutral", [], slug, False, "Fallback", 0.5, "", "", None, None)
 
 class AIProvider:
     def __init__(self, rotator: Any, state: Any):
@@ -256,7 +262,7 @@ async def get_embedding(text: str, rotator: Any, state: Any, session: aiohttp.Cl
             except Exception as e:
                 error_str = str(e)
                 if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-                    logging.warning("Gemini Embedding quota exhausted. Using OpenRouter fallback.")
+                    pass # Лимит Gemini исчерпан, молча переходим к фоллбеку
                 else:
                     logging.error(f"Gemini Embedding error: {e}")
 
@@ -269,7 +275,6 @@ async def get_embedding(text: str, rotator: Any, state: Any, session: aiohttp.Cl
                 async with session.post(url, headers=headers, json=payload, timeout=10) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        logging.info("OpenRouter Embedding received.")
                         return data['data'][0]['embedding']
                     logging.error(f"OpenRouter Embedding error status: {resp.status}")
             except Exception as e:

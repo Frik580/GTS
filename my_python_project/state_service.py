@@ -284,6 +284,8 @@ class GTSStateManager:
 
     def add_url(self, url: str, title: str, embedding: Optional[List[float]] = None):
         self.cache.add_url(url, title, embedding)
+        if embedding:
+            asyncio.create_task(self.save_embedding(title, embedding))
 
     async def save_embedding(self, title: str, vector: List[float]):
         async with self.db_lock:

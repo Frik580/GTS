@@ -77,9 +77,23 @@ async def auto_save_task(state: GTSStateManager):
             start_ts = time.time()
             saved_count = await state.save_to_db()
             duration = time.time() - start_ts
-            logging.info(f"💾 Автосохранение: завершено (изменений: {saved_count}) за {duration:.3f}с")
+            if saved_count > 0:
+                logging.info(f"💾 Автосохранение: завершено (изменений: {saved_count}) за {duration:.3f}с")
+            else:
+                logging.debug(f"💾 Автосохранение: завершено (нет изменений) за {duration:.3f}с")
         except Exception as e:
             logging.error(f"Ошибка при фоновом сохранении состояния: {e}")
+
+async def ai_analyze(text: str, rotator: ModelRotator, state: GTSStateManager, session: aiohttp.ClientSession) -> Tuple:
+    """Удобная обертка для анализа одной новости (используется в тестах)."""
+    prepared = [{
+        "text": text,
+        "pub_time": datetime.now().strftime('%Y-%m-%d %H:%M'),
+        "entry": {},
+        "market_data": {}
+    }]
+    results = await ai_analyze_batch(prepared, rotator, state, session)
+    return results[0] if results else await FallbackAnalyzer.run(text, state.learning)
 
 def shutdown_cleanup():
     """Выполняет очистку ресурсов при завершении работы."""
@@ -293,19 +307,39 @@ async def send_telegram(session: aiohttp.ClientSession, msg: str, max_length: in
 
         for part in msg_parts:
             if not part.strip(): continue
-            async with session.post(
-                f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage",
-                data={"chat_id": config.CHAT_ID, "text": part, "parse_mode": "HTML"},
-                timeout=10
-            ) as response:
-                if response.status != 200:
-                    logging.error(f"Telegram API error: {response.status} - {await response.text()}")
-                else:
-                    logging.info(f"TELEGRAM ASYNC: {response.status}")
+            
+            # Добавляем механизм повторных попыток для сетевых ошибок
+            for attempt in range(3):
+                try:
+                    proxy = getattr(config, "HTTP_PROXY", None)
+                    client_timeout = aiohttp.ClientTimeout(total=25, connect=10)
+                    payload = {"chat_id": config.CHAT_ID, "text": part, "parse_mode": "HTML"}
+                    
+                    async with session.post(f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage",
+                                            data=payload, timeout=client_timeout, proxy=proxy) as response:
+                        if response.status == 400:
+                            logging.warning("Telegram HTML parse error. Sending as plain text...")
+                            clean_part = re.sub(r'<[^>]+>', '', part)
+                            payload["text"] = clean_part
+                            del payload["parse_mode"]
+                            await session.post(f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage",
+                                               data=payload, timeout=client_timeout, proxy=proxy)
+                            break
+                        elif response.status != 200:
+                            logging.error(f"Telegram API error: {response.status}")
+                            break
+                        else:
+                            logging.info(f"TELEGRAM SUCCESS: {response.status}")
+                            break
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    if attempt == 2:
+                        logging.error(f"Failed to send telegram after 3 attempts: {e}")
+                    else:
+                        await asyncio.sleep(1 * (attempt + 1))
             await asyncio.sleep(0.5)
 
     except Exception as e:
-        logging.error(f"Error sending telegram: {e}")
+        logging.error(f"CRITICAL Telegram Error [{type(e).__name__}]: {e}")
 
 # =========================
 # ANTI-SPAM
@@ -425,6 +459,11 @@ async def fetch_async_prices(session: aiohttp.ClientSession, tickers: List[str])
             "BTC-USD": "BTC/USD", "^VIX": "VIX", "^MOVE": "MOVE", "DX-Y.NYB": "DXY"
         }
         symbols = ",".join([td_map.get(t, t) for t in tickers])
+        
+        # Добавляем SOXX для 200MA если нужно
+        if "SOXX" not in tickers:
+            tickers.append("SOXX")
+
         url = f"https://api.twelvedata.com/time_series?symbol={symbols}&interval=15min&outputsize=500&apikey={config.MARKET_DATA_API_KEY}"
         
         try:
@@ -450,10 +489,11 @@ async def fetch_async_prices(session: aiohttp.ClientSession, tickers: List[str])
     # --- FALLBACK TO YFINANCE (Non-Production) ---
     logging.debug("Запрос цен через yfinance (fallback/default)")
     loop = asyncio.get_event_loop()
-    df = await loop.run_in_executor(
-        sync_executor, 
-        lambda: yf.download(tickers, period="5d", interval="15m", progress=False)['Close']
-    )
+    # Для расчета MA200 нам нужно получить данные за год
+    def fetch_yf():
+        return yf.download(tickers, period="1y", interval="1d", progress=False)['Close']
+
+    df = await loop.run_in_executor(sync_executor, fetch_yf)
     return df, "yfinance"
 
 async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
@@ -536,6 +576,13 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
             logging.error(f"Error calculating Composite Global Regime: {e}")
 
         market_data['price_history'] = close_prices # Передаем историю цен для обучения
+
+        # Расчет 200-дневной средней для SOXX (Уровень 4)
+        if "SOXX" in close_prices.columns:
+            soxx_series = close_prices["SOXX"].dropna()
+            if len(soxx_series) >= 200:
+                ma200 = soxx_series.rolling(window=200).mean().iloc[-1]
+                market_data['soxx_below_ma200'] = soxx_series.iloc[-1] < ma200
 
         # Рассчитываем количество свечей (баров) исходя из 15-минутного интервала
         # 1 час = 4 свечи по 15 минут
@@ -1042,39 +1089,95 @@ async def cleanup_db(state: GTSStateManager):
 # MAIN LOOP
 # =========================
 
-def clean_title(title: str) -> str:
-    """Удаляет мусор из заголовка (названия источников, лишние знаки)."""
-    # Удаляем источники в конце: "Title - Reuters", "Title | CNBC", "Title : Source"
-    cleaned = re.sub(r'\s+[-|:]\s+.*$', '', title)
-    # Удаляем префиксы "Breaking:", "Update:"
-    cleaned = re.sub(r'(?i)^(breaking|update|exclusive|just in):\s*', '', cleaned)
-    # Список стоп-слов, которые часто меняются в заголовках об одном событии
-    stop_words = {
+# def clean_title(title: str) -> str:
+#     """Удаляет мусор из заголовка (названия источников, лишние знаки)."""
+#     # Удаляем источники в конце: "Title - Reuters", "Title | CNBC", "Title : Source"
+#     cleaned = re.sub(r'\s+[-|:]\s+.*$', '', title)
+#     # Удаляем префиксы "Breaking:", "Update:"
+#     cleaned = re.sub(r'(?i)^(breaking|update|exclusive|just in):\s*', '', cleaned)
+#     # Список стоп-слов, которые часто меняются в заголовках об одном событии
+#     stop_words = {
+#         'reports', 'hit', 'triggers', 'massive', 'says', 'amid', 'following', 'after', 'due', 'warns', 'shows', 'proposes', 'plans', 'set', 'could', 'would', 'may', 'will', 'предложил', 'предлагает', 'может', 'планирует', 'хочет', 'объявил', 'ago', 'min', 'hours',
+#         'calendar', 'corporate', 'event', 'fiscal', 'announces', 'dividend', 'shareholder',
+#         'opinion', 'analysis', 'outlook', 'why', 'experts', 'expect', 'possible', 'likely', 'outlook', 'view', 'could', 'should'
+#     }
+#     # Удаляем пунктуацию
+#     cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
+#     # Удаляем одиночные цифры (часто это время или кол-во чего-то)
+#     cleaned = re.sub(r'\b\d+\b', '', cleaned)
+#     # Очищаем от стоп-слов и нормализуем пробелы
+#     words = sorted([w for w in cleaned.lower().split() if w not in stop_words])
+#     return " ".join(words)
+
+# def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: float) -> bool:
+#     """Проверяет заголовок на схожесть с уже существующими в кэше."""
+#     if not new_title:
+#         return False
+    
+#     new_clean = clean_title(new_title)
+#     for title in existing_titles:
+#         # Сравниваем очищенные версии
+#         ratio = SequenceMatcher(None, new_clean, clean_title(title)).ratio()
+#         if ratio > threshold:
+#             logging.info(f"🚫 Fuzzy duplicate ({ratio:.2f}): '{new_title}' ≈ '{title}'")
+#             return True
+#     return False
+
+# 1. Компилируем регулярные выражения ОДИН РАЗ на уровне модуля
+RE_SOURCE_CLEAN = re.compile(r'\s+[-|:]\s+.*$')
+RE_PREFIX_CLEAN = re.compile(r'^(breaking|update|exclusive|just in):\s*', re.IGNORECASE)
+RE_PUNCT_CLEAN = re.compile(r'[^\w\s]')
+RE_NUM_CLEAN = re.compile(r'\b\d+\b')
+stop_words = {
         'reports', 'hit', 'triggers', 'massive', 'says', 'amid', 'following', 'after', 'due', 'warns', 'shows', 'proposes', 'plans', 'set', 'could', 'would', 'may', 'will', 'предложил', 'предлагает', 'может', 'планирует', 'хочет', 'объявил', 'ago', 'min', 'hours',
         'calendar', 'corporate', 'event', 'fiscal', 'announces', 'dividend', 'shareholder',
         'opinion', 'analysis', 'outlook', 'why', 'experts', 'expect', 'possible', 'likely', 'outlook', 'view', 'could', 'should'
     }
-    # Удаляем пунктуацию
-    cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
-    # Удаляем одиночные цифры (часто это время или кол-во чего-то)
-    cleaned = re.sub(r'\b\d+\b', '', cleaned)
-    # Очищаем от стоп-слов и нормализуем пробелы
+
+def clean_title(title: str) -> str:
+    cleaned = RE_SOURCE_CLEAN.sub('', title)
+    cleaned = RE_PREFIX_CLEAN.sub('', cleaned)
+    cleaned = RE_PUNCT_CLEAN.sub(' ', cleaned)
+    cleaned = RE_NUM_CLEAN.sub('', cleaned)
     words = sorted([w for w in cleaned.lower().split() if w not in stop_words])
     return " ".join(words)
 
 def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: float) -> bool:
-    """Проверяет заголовок на схожесть с уже существующими в кэше."""
-    if not new_title:
+    if not new_title: 
         return False
     
     new_clean = clean_title(new_title)
+    len_new = len(new_clean)
+    
+    # Пытаемся импортировать сверхбыстрый rapidfuzz
+    try:
+        from rapidfuzz.fuzz import ratio as rapid_ratio
+        has_rapidfuzz = True
+    except ImportError:
+        has_rapidfuzz = False
+
     for title in existing_titles:
-        # Сравниваем очищенные версии
-        ratio = SequenceMatcher(None, new_clean, clean_title(title)).ratio()
-        if ratio > threshold:
-            logging.info(f"🚫 Fuzzy duplicate ({ratio:.2f}): '{new_title}' ≈ '{title}'")
+        target_clean = clean_title(title)
+        len_target = len(target_clean)
+        
+        # 2. Быстрый фильтр длины (коэффициент Левенштейна зажать в лимиты)
+        # Если разница длин критична, difflib точно выдаст низкий коэффициент
+        if len_new > 0 and len_target > 0:
+            len_ratio = min(len_new, len_target) / max(len_new, len_target)
+            if len_ratio < threshold - 0.15:
+                continue # Скипаем дорогой запуск сравнения!
+        
+        if has_rapidfuzz:
+            r = rapid_ratio(new_clean, target_clean) / 100.0
+        else:
+            r = SequenceMatcher(None, new_clean, target_clean).ratio()
+            
+        if r > threshold:
+            logging.info(f"🚫 Fuzzy duplicate ({r:.2f}): '{new_title}' ≈ '{title}'")
             return True
     return False
+
+
 
 class SocialEntry(dict):
     """Вспомогательный класс для доступа к словарю через точку (как у объектов feedparser)."""
@@ -1123,12 +1226,10 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
         raw_data = None
         for attempt in range(2): # 2 попытки на случай временного сбоя
             try:
-                proxy = config.HTTP_PROXY if config.USE_PROXY else None
                 async with session.get(
                     url, 
                     headers=headers, 
-                    timeout=20, 
-                    proxy=proxy
+                    timeout=20
                 ) as response:
                     if response.status == 200:
                         raw_data = await response.read()
@@ -1421,13 +1522,13 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
     source_label = source_display or source_title
 
     try:
-        score, event_type, entities, slug, is_black_swan, model_name, confidence, ai_summary, title_ru = analysis_result
+        score, event_type, entities, slug, is_black_swan, model_name, confidence, ai_summary, title_ru, capex_sig, guidance_sig = analysis_result
 
         # Сброс флага Black Swan, если score новости недостаточно велик (защита от галлюцинаций ИИ)
         if is_black_swan and abs(score) < config.BLACK_SWAN_SCORE_THRESHOLD:
             msg_downgrade = f"🦢 [{html.escape(model_name)}] Понижение статуса Black Swan для <b>{html.escape(slug or '')}</b>: |score| {abs(score):.2f} &lt; {config.BLACK_SWAN_SCORE_THRESHOLD}"
             logging.info(msg_downgrade)
-            summary_text = f"\n\n📝 <b>Summary:</b> {html.escape(ai_summary)}" if ai_summary else ""
+            #summary_text = f"\n\n📝 <b>Summary:</b> {html.escape(ai_summary)}" if ai_summary else ""
             # await send_telegram(session, f"🛡️ <b>Sanity Check:</b> {msg_downgrade}{summary_text}\n\n<i>Новость классифицирована как обычное событие.</i>")
             is_black_swan = False
 
@@ -1616,6 +1717,50 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
         market = market_signals(global_score)
         sig_type = generate_signal(prob, global_score)
 
+        # --- SOXS STRATEGY LOGIC ---
+        soxs_signals = []
+        soxs_level = 1
+        
+        # Проверка CAPEX (Уровень 3)
+        if capex_sig == -1:
+            soxs_signals.append("❌ Снижение CAPEX гиперскейлеров")
+            soxs_level = max(soxs_level, 3)
+        
+        # 2. Проверка Guidance NVDA/AVGO
+        if guidance_sig == -1:
+            soxs_signals.append("📉 Ухудшение Guidance (NVDA/AVGO)")
+            soxs_level = max(soxs_level, 3)
+            
+        # Дивергенция: позитивная новость (Negative score) + падение рынка
+        if score < -3.5 and market_data.get("nasdaq_change", 0) < -0.5:
+             soxs_signals.append("⚠️ Дивергенция (нет реакции на позитив)")
+             soxs_level = max(soxs_level, 3)
+
+        # Медвежий режим (Уровень 4)
+        if market_data.get('soxx_below_ma200'):
+            soxs_signals.append("⚫ SOXX ниже 200-дневной средней")
+            soxs_level = 4
+
+        # Формирование вердикта по SOXS
+        soxs_verdict = ""
+        if soxs_level == 1:
+            soxs_verdict = "🟡 <b>УРОВЕНЬ 1: ШУМ</b> (Не трогать SOXS)"
+        elif soxs_level == 2:
+            soxs_verdict = "🟠 <b>УРОВЕНЬ 2: СЖАТИЕ</b> (Пробная позиция 20-30%)"
+        elif soxs_level == 3:
+            soxs_verdict = "🔴 <b>УРОВЕНЬ 3: ПОВОРОТ</b> (Увеличить до ядра 50-100%)"
+        elif soxs_level == 4:
+            soxs_verdict = "⚫ <b>УРОВЕНЬ 4: МЕДВЕЖИЙ РЕЖИМ</b> (Агрессивный лонг SOXS)"
+
+        soxs_msg = ""
+        if soxs_level > 1 or soxs_signals:
+            soxs_msg = (
+                f"-------------------\n"
+                f"🧭 <b>SOXS STRATEGY:</b>\n"
+                f"Статус: {soxs_verdict}\n"
+                f"Сигналы: {', '.join(soxs_signals) if soxs_signals else 'ротация'}\n"
+            )
+
         # Проверяем анти-спам ДО записи в базу, чтобы не плодить дубли
         can_send_alert = should_send(event_key, score, global_score, state, is_black_swan) 
 
@@ -1719,6 +1864,7 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
                 f"<b>Score:</b> {global_score:+.2f} (News: {score:+.2f}) | <b>Impact:</b> {prob:+.2f}%\n"
                 f"-------------------\n"
                 f"{forecast_str}\n"
+                f"{soxs_msg}"
                 f"-------------------\n"
                 f"{summary_part}"
                 f"📰 <a href=\"{html.escape(entry.link, quote=True)}\">{html.escape(title_ru or entry.title)}</a>"

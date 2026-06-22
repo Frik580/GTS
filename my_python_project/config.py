@@ -20,8 +20,7 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
 
 # Network Settings
-HTTP_PROXY = os.getenv("HTTP_PROXY") # Например: "http://user:pass@ip:port"
-USE_PROXY = True if HTTP_PROXY else False
+HTTP_PROXY = os.getenv("HTTP_PROXY") # Оставьте пустым в .env, если прокси не нужен
 
 # Database and Logs
 DB_PATH = "gts.db"
@@ -225,9 +224,16 @@ SPECIFIC_SOURCES_LIST = [
 ]
 
 # Настройки для поиска в соцсетях
-SOCIAL_SEARCH_ENABLED = False # Временно отключаем, так как RSS от соцсетей может быть шумным и требует доработки фильтров
+SOCIAL_SEARCH_ENABLED = True # Временно отключаем, так как RSS от соцсетей может быть шумным и требует доработки фильтров
 # Список надежных Nitter-инстансов (для Twitter RSS без API ключа)
-NITTER_INSTANCES = ["nitter.net", "nitter.it","nitter.poast.org", "nitter.privacydev.net", "nitter.no-logs.com", "nitter.projectsegfau.lt"]
+NITTER_INSTANCES = [
+    "nitter.net",
+    #  "nitter.it",
+    #  "nitter.poast.org",
+    #   "nitter.privacydev.net",
+    #    "nitter.no-logs.com",
+        # "nitter.projectsegfau.lt"
+        ]
 
 # Логика формирования целевых запросов Google News
 RSS_FEEDS = []
@@ -312,7 +318,7 @@ GEMINI_CONCURRENCY = 1 # Бесплатный тариф требует посл
 OPENROUTER_CONCURRENCY = 5 # Платные/быстрые модели могут обрабатываться параллельно
 DEEPSEEK_CONCURRENCY = 2 # Лимит для DeepSeek API
 
-ENABLE_HOURLY_REPORT = False # Включить/выключить отправку часового отчета в Telegram
+ENABLE_HOURLY_REPORT = True # Включить/выключить отправку часового отчета в Telegram
 HOURLY_SUMMARY_INTERVAL = 3600 # Интервал отправки часового отчета в Telegram (1 час)
 NUM_WORKERS = 4 # Увеличиваем до 4, так как DeepSeek и OpenRouter могут работать параллельно с Gemini
 
