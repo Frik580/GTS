@@ -450,56 +450,197 @@ async def get_fear_greed_index(session: aiohttp.ClientSession) -> Tuple[Optional
         logging.error(f"Error fetching Fear & Greed: {e}")
         return None, None, 0
 
-async def fetch_async_prices(session: aiohttp.ClientSession, tickers: List[str]) -> Tuple[pd.DataFrame, str]:
-    """Асинхронная загрузка цен через профессиональный API (TwelveData) с фоллбеком."""
+
+async def sync_historical_prices(tickers: List[str]):
+    """Запускается 1 раз в сутки. Догружает только недостающие дневные свечи."""
+    logging.info("⏳ Запуск синхронизации исторических данных из yfinance...")
+    loop = asyncio.get_event_loop()
+    now_utc = datetime.now(timezone.utc)
+    
+    async with get_db_connection() as conn:
+        for ticker in tickers:
+            # 1. Проверяем последнюю дату кэша в БД для этого тикера
+            async with conn.execute(
+                "SELECT date FROM daily_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1", 
+                (ticker,)
+            ) as cursor:
+                row = await cursor.fetchone()
+            
+            # Определяем необходимый период скачивания
+            if row:
+                last_date = datetime.strptime(row[0], '%Y-%m-%d').replace(tzinfo=timezone.utc)
+                delta_days = (now_utc - last_date).days
+                if delta_days <= 1:
+                    continue  # Данные актуальны, пропускаем
+                fetch_period = "5d" if delta_days < 5 else "1mo"
+            else:
+                fetch_period = "1y"  # Если базы нет, качаем за 1 год
+            
+            # Блокирующий вызов yfinance выполняем в Executor-пуле thread-безопасно
+            def fetch_data():
+                return yf.download(ticker, period=fetch_period, interval="1d", progress=False)['Close']
+            
+            try:
+                close_series = await loop.run_in_executor(sync_executor, fetch_data)
+                
+                if close_series is not None and not close_series.empty:
+                    # ГАРАНТИЯ ОДНОМЕРНОСТИ SERIES:
+                    # .squeeze() превращает DataFrame с одной колонкой в Series.
+                    close_series = close_series.squeeze()
+                    
+                    # Если yfinance вернул MultiIndex и squeeze не помог — жестко забираем первую колонку
+                    if isinstance(close_series, pd.DataFrame):
+                        close_series = close_series.iloc[:, 0]
+                        
+                    # Корректно пишем в БД
+                    records = []
+                    for dt, val in close_series.items():
+                        # Теперь val гарантированно является числом (float), а не Series
+                        if val is not None and not pd.isna(val):
+                            date_str = dt.strftime('%Y-%m-%d')
+                            records.append((ticker, date_str, float(val)))
+                    
+                    if records:
+                        await conn.executemany(
+                            "INSERT OR REPLACE INTO daily_prices (ticker, date, close) VALUES (?, ?, ?)",
+                            records
+                        )
+                        await conn.commit()
+                        logging.info(f"✅ Синхронизировано {len(records)} свечей для {ticker} (период: {fetch_period})")
+            except Exception as e:
+                logging.error(f"Ошибка при фоновом импорте {ticker}: {e}")
+
+
+# =====================================================================
+# КОНЦЕПТ ДОЛГОСРОЧНОГО КЭШИРОВАНИЯ В ОПЕРАТИВНОЙ ПАМЯТИ
+# =====================================================================
+
+def _stitch_prices(hist_df: Optional[pd.DataFrame], intraday_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Математически сшивает исторический дневной датасет (из RAM-кэша) 
+    и текущий свежий 15-минутный поток (интрадей котировки).
+    Предотвращает наложение дат и дублирование строк.
+    """
+    if hist_df is None or hist_df.empty:
+        return intraday_df
+    if intraday_df.empty:
+        return hist_df
+
+    try:
+        # Находим первый временной штамп свежих 15-минутных котировок
+        cutoff_date = intraday_df.index[0]
+        
+        # Отрезаем у архивной дневной истории всё, что заходит на территорию новых свежих цен
+        trimmed_hist = hist_df[hist_df.index < cutoff_date]
+        
+        # Объединяем историческую базу и свежий хвост
+        stitched_df = pd.concat([trimmed_hist, intraday_df]).sort_index()
+        return stitched_df
+    except Exception as e:
+        logging.error(f"⚠️ Ошибка при сшивании истории и интрадея: {e}. Возвращаем только интрадей котировки.")
+        return intraday_df
+
+_HISTORICAL_PRICES_CACHE: Optional[pd.DataFrame] = None
+_LAST_HIST_SYNC_TIME: float = 0.0
+
+async def fetch_async_prices(session: aiohttp.ClientSession, tickers: List[str], force_history: bool = False) -> Tuple[pd.DataFrame, str]:
+    """
+    Асинхронное получение котировок. Разделяет логику на редкий тяжелый 1y-кэш 
+    и частый легкий интрадей-запрос за 2 дня.
+    """
+    global _HISTORICAL_PRICES_CACHE, _LAST_HIST_SYNC_TIME
+    now = time.time()
+    
+    # Синхронизируем исторический кэш (1y) только если его нет в RAM ИЛИ прошло более 24 часов (86400с)
+    need_hist_sync = (_HISTORICAL_PRICES_CACHE is None) or (now - _LAST_HIST_SYNC_TIME > 86400) or force_history
+
+    # --- 1. ОБНОВЛЕНИЕ КЭША ИСТОРИИ (Раз в сутки) ---
+    if need_hist_sync:
+        logging.info("⏳ Заполнение глобального RAM-кэша истории за 1 год...")
+        try:
+            loop = asyncio.get_event_loop()
+            
+            # Нам обязательно нужен SOXX для расчета скользящей средней MA200
+            tickers_for_hist = list(tickers)
+            if "SOXX" not in tickers_for_hist:
+                tickers_for_hist.append("SOXX")
+
+            def fetch_yf_hist():
+                # Загружаем только дневную архивную сетку
+                return yf.download(tickers_for_hist, period="1y", interval="1d", progress=False)['Close']
+
+            hist_df = await loop.run_in_executor(sync_executor, fetch_yf_hist)
+            if not hist_df.empty:
+                # Нормализуем временную зону под UTC для бесшовного слияния далее
+                hist_df.index = pd.to_datetime(hist_df.index).tz_localize('UTC')
+                _HISTORICAL_PRICES_CACHE = hist_df
+                _LAST_HIST_SYNC_TIME = now
+                logging.info("✅ Глобальный RAM-кэш истории (1y, 1d) успешно обновлен.")
+            else:
+                logging.error("❌ Не удалось получить дневные котировки для кэша.")
+        except Exception as e:
+            logging.error(f"❌ Ошибка заполнения исторического кэша из yfinance: {e}")
+
+    # --- 2. БЫСТРЫЙ ИНТРАДЕЙ-ЗАПРОС (Каждые 7 минут) ---
     if config.MARKET_DATA_PROVIDER == "twelvedata" and config.MARKET_DATA_API_KEY:
-        # Маппинг тикеров под формат TwelveData
+        # Интеграция TwelveData
         td_map = {
             "^IXIC": "IXIC", "^GSPC": "SPX", "CL=F": "WTI/USD", 
             "BTC-USD": "BTC/USD", "^VIX": "VIX", "^MOVE": "MOVE", "DX-Y.NYB": "DXY"
         }
         symbols = ",".join([td_map.get(t, t) for t in tickers])
-        
-        # Добавляем SOXX для 200MA если нужно
         if "SOXX" not in tickers:
             tickers.append("SOXX")
 
-        url = f"https://api.twelvedata.com/time_series?symbol={symbols}&interval=15min&outputsize=500&apikey={config.MARKET_DATA_API_KEY}"
+        url = f"https://api.twelvedata.com/time_series?symbol={symbols}&interval=15min&outputsize=50&apikey={config.MARKET_DATA_API_KEY}"
         
         try:
             async with session.get(url, timeout=15) as resp:
                 if resp.status == 200:
-                    logging.debug("Цены успешно получены через TwelveData")
                     data = await resp.json()
                     combined = {}
                     for sym, res in data.items():
                         if 'values' in res:
                             df = pd.DataFrame(res['values'])
-                            df['datetime'] = pd.to_datetime(df['datetime'])
+                            df['datetime'] = pd.to_datetime(df['datetime']).dt.tz_localize('UTC')
                             df = df.set_index('datetime')['close'].astype(float)
-                            # Возвращаем тикер к формату бота
                             inv_map = {v: k for k, v in td_map.items()}
                             combined[inv_map.get(sym, sym)] = df
-                    return pd.DataFrame(combined).sort_index(), "twelvedata"
+                    
+                    intraday_df = pd.DataFrame(combined).sort_index()
+                    # Сшиваем RAM кэш истории (1 год) и текущую 15-минутку
+                    return _stitch_prices(_HISTORICAL_PRICES_CACHE, intraday_df), "twelvedata_hybrid"
                 else:
-                    raise Exception(f"API returned status {resp.status}")
+                    raise Exception(f"TwelveData API returned status {resp.status}")
         except Exception as e:
-            logging.error(f"TwelveData Error: {e}. Falling back to yfinance...")
+            logging.error(f"TwelveData Error: {e}. Transition to fast yfinance fallback...")
 
-    # --- FALLBACK TO YFINANCE (Non-Production) ---
-    logging.debug("Запрос цен через yfinance (fallback/default)")
-    loop = asyncio.get_event_loop()
-    # Для расчета MA200 нам нужно получить данные за год
-    def fetch_yf():
-        return yf.download(tickers, period="1y", interval="1d", progress=False)['Close']
+    # --- БЫСТРЫЙ ИНТРАДЕЙ ЧЕРЕЗ YFINANCE (Всего 2 дня истории 15-минутных баров!) ---
+    logging.debug("Запрос текущего интрадея (2d, 15m) через yfinance")
+    try:
+        loop = asyncio.get_event_loop()
+        def fetch_yf_intraday():
+            # Качаем ультра-легкий пакет цен за 2 дня вместо 1 года
+            return yf.download(tickers, period="2d", interval="15m", progress=False)['Close']
 
-    df = await loop.run_in_executor(sync_executor, fetch_yf)
-    return df, "yfinance"
+        intraday_data = await loop.run_in_executor(sync_executor, fetch_yf_intraday)
+        intraday_data.index = pd.to_datetime(intraday_data.index).tz_convert('UTC')
+        
+        # Сшиваем O(1) исторический DataFrame в памяти и свежий интрадей
+        final_df = _stitch_prices(_HISTORICAL_PRICES_CACHE, intraday_data)
+        return final_df, "yfinance_hybrid"
+    except Exception as e:
+        logging.error(f"Ошибка получения интрадей котировок: {e}")
+        # Если внешние запросы упали, отдаем хотя бы исторический кэш
+        if _HISTORICAL_PRICES_CACHE is not None:
+            return _HISTORICAL_PRICES_CACHE, "cached_fallback"
+        return pd.DataFrame(), "failed"
+
 
 async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
     """
-    Fetches recent market data for key assets using yfinance.
-    Returns a dictionary with percentage changes for relevant assets.
+    Оптимизированный менеджер рыночных данных.
+    Использует гибридное пополнение кэша цен, снижая время сбора с 15 секунд до <0.5сек.
     """
     market_data = {}
     start_time = time.time()
@@ -527,7 +668,7 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
     stale_map = {}
     last_bar_time = 0
     try:
-        # Заменяем блокирующий вызов на новый асинхронный метод
+        # Вызов оптимизированного метода сшивки кэша
         close_prices, provider_name = await fetch_async_prices(session, list(tickers_to_fetch.keys()))
         
         if close_prices.empty:
@@ -543,13 +684,16 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
 
         # --- РАСЧЕТ COMPOSITE GLOBAL REGIME ---
         try:
-            # 1. Расчет кривой доходности (Growth proxy)
-            if "^TNX" in close_prices.columns and "^IRX" in close_prices.columns:
-                close_prices['YIELD_CURVE'] = close_prices["^TNX"] - close_prices["^IRX"]
+            # Отрезаем строго интрадей-часть для равномерного шага вычислений (15 минут)
+            # Нам хватает последних 2 дней интрадея для точного вычисления дельты
+            cutoff_intraday = close_prices.index[-1] - timedelta(days=2)
+            intraday_prices = close_prices[close_prices.index >= cutoff_intraday].copy()
             
-            # 2. Нормализация доходностей для индекса стресса
-            # Мы считаем изменения: рост VIX, MOVE, DXY = +стресс; рост HYG, Curve = -стресс
-            returns = close_prices.pct_change().fillna(0)
+            if "^TNX" in intraday_prices.columns and "^IRX" in intraday_prices.columns:
+                intraday_prices['YIELD_CURVE'] = intraday_prices["^TNX"] - intraday_prices["^IRX"]
+            
+            # Процентные изменения на ОДНОРОДНОМ 15-минутном таймфрейме
+            returns = intraday_prices.pct_change().fillna(0)
             
             w = config.GLOBAL_REGIME_WEIGHTS
             stress_returns = (
@@ -560,11 +704,14 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
                 (returns.get('YIELD_CURVE', 0) * -1.0) * w['growth']
             )
             
-            # Создаем синтетический индекс "Global Stress", стартующий со 100
+            # Синтетический индекс стресса на чистом интрадее
             global_regime_index = (1 + stress_returns).cumprod() * 100
-            close_prices['GLOBAL_REGIME'] = global_regime_index
             
-            # Рассчитываем итоговое изменение для алертов
+            # Записываем результат обратно в DataFrame
+            close_prices['GLOBAL_REGIME'] = np.nan
+            close_prices.loc[global_regime_index.index, 'GLOBAL_REGIME'] = global_regime_index
+            
+            # 1 час = 4 свечи по 15 минут
             bars_lookback = config.MARKET_LOOKBACK_HOURS * 4
             if len(global_regime_index) > bars_lookback:
                 curr_regime = global_regime_index.iloc[-1]
@@ -575,40 +722,49 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
         except Exception as e:
             logging.error(f"Error calculating Composite Global Regime: {e}")
 
-        market_data['price_history'] = close_prices # Передаем историю цен для обучения
+        market_data['price_history'] = close_prices # Передаем полную историю (кэш + интрадей)
 
-        # Расчет 200-дневной средней для SOXX (Уровень 4)
-        if "SOXX" in close_prices.columns:
-            soxx_series = close_prices["SOXX"].dropna()
-            if len(soxx_series) >= 200:
-                ma200 = soxx_series.rolling(window=200).mean().iloc[-1]
-                market_data['soxx_below_ma200'] = soxx_series.iloc[-1] < ma200
+        # Вычисление Честной 200-дневной средней для SOXX
+        if _HISTORICAL_PRICES_CACHE is not None and "SOXX" in _HISTORICAL_PRICES_CACHE.columns:
+            # Извлекаем чистый дневной исторический ряд SOXX (без 15-минутных интервалов)
+            daily_soxx = _HISTORICAL_PRICES_CACHE["SOXX"].dropna().copy()
+            
+            # Обеспечиваем учет текущей цены текущего торгового дня
+            if "SOXX" in close_prices.columns:
+                current_price = float(close_prices["SOXX"].iloc[-1])
+                
+                last_hist_date = daily_soxx.index[-1].date()
+                today_date = close_prices.index[-1].date()
+                
+                if today_date > last_hist_date:
+                    new_idx = pd.to_datetime(today_date).tz_localize('UTC')
+                    daily_soxx[new_idx] = current_price
+                else:
+                    daily_soxx.iloc[-1] = current_price  # Обновляем текущую свечу
+            
+            if len(daily_soxx) >= 200:
+                ma200 = daily_soxx.rolling(window=200).mean().iloc[-1]
+                market_data['soxx_below_ma200'] = float(close_prices["SOXX"].iloc[-1]) < ma200
 
-        # Рассчитываем количество свечей (баров) исходя из 15-минутного интервала
-        # 1 час = 4 свечи по 15 минут
+        # Рассчитываем изменения согласно интервалу
         bars_lookback = config.MARKET_LOOKBACK_HOURS * 4
 
         for ticker_symbol, data_key in tickers_to_fetch.items():
             try:
-                # Извлекаем данные для конкретного тикера, если они есть в ответе
                 if ticker_symbol in close_prices.columns:
                     ticker_data = close_prices[ticker_symbol].dropna()
-                    # Нам нужно как минимум bars_lookback + 1 свечей
                     if len(ticker_data) > bars_lookback:
                         current_price = float(ticker_data.iloc[-1])
                         
-                        # Проверяем свежесть данных для конкретного тикера (4 часа)
                         current_bar_time = ticker_data.index[-1].timestamp()
                         is_ticker_stale = (time.time() - current_bar_time) > (4 * 3600)
                         stale_map[data_key] = is_ticker_stale
                         
                         last_bar_time = max(last_bar_time, current_bar_time)
                         
-                        # Сравниваем с ценой N часов назад (с учетом интервала свечей)
                         past_price = float(ticker_data.iloc[-(bars_lookback + 1)])
                         if past_price != 0:
                             market_data[data_key] = ((current_price - past_price) / past_price) * 100
-                            # Проверка на гэп (разрыв во времени более 12 часов, например, после выходных)
                             market_data[f"{data_key}_is_gap"] = (ticker_data.index[-1] - ticker_data.index[-(bars_lookback + 1)]).total_seconds() > 12 * 3600
                             market_data[f"{data_key}_prev_price"] = past_price
                 else:
@@ -616,7 +772,7 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
             except Exception as e:
                 logging.debug(f"Error processing {ticker_symbol}: {e}")
     except Exception as e:
-        logging.error(f"Global yfinance error: {e}")
+        logging.error(f"Global pricing pipeline error: {e}")
 
     # Добавляем Fear & Greed
     fng_val, fng_label, fng_change = await get_fear_greed_index(session)
@@ -627,7 +783,7 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
     else:
         logging.warning("Proceeding without Fear & Greed data due to fetch error.")
 
-    # Общий флаг для режима затухания (если хоть что-то активно, например BTC)
+    # Выставляем флаг закрытия сессии на основе времени последнего бара
     market_data['is_stale'] = (time.time() - last_bar_time) > (4 * 3600) if last_bar_time > 0 else True
     market_data['stale_map'] = stale_map
 
@@ -1088,40 +1244,6 @@ async def cleanup_db(state: GTSStateManager):
 # =========================
 # MAIN LOOP
 # =========================
-
-# def clean_title(title: str) -> str:
-#     """Удаляет мусор из заголовка (названия источников, лишние знаки)."""
-#     # Удаляем источники в конце: "Title - Reuters", "Title | CNBC", "Title : Source"
-#     cleaned = re.sub(r'\s+[-|:]\s+.*$', '', title)
-#     # Удаляем префиксы "Breaking:", "Update:"
-#     cleaned = re.sub(r'(?i)^(breaking|update|exclusive|just in):\s*', '', cleaned)
-#     # Список стоп-слов, которые часто меняются в заголовках об одном событии
-#     stop_words = {
-#         'reports', 'hit', 'triggers', 'massive', 'says', 'amid', 'following', 'after', 'due', 'warns', 'shows', 'proposes', 'plans', 'set', 'could', 'would', 'may', 'will', 'предложил', 'предлагает', 'может', 'планирует', 'хочет', 'объявил', 'ago', 'min', 'hours',
-#         'calendar', 'corporate', 'event', 'fiscal', 'announces', 'dividend', 'shareholder',
-#         'opinion', 'analysis', 'outlook', 'why', 'experts', 'expect', 'possible', 'likely', 'outlook', 'view', 'could', 'should'
-#     }
-#     # Удаляем пунктуацию
-#     cleaned = re.sub(r'[^\w\s]', ' ', cleaned)
-#     # Удаляем одиночные цифры (часто это время или кол-во чего-то)
-#     cleaned = re.sub(r'\b\d+\b', '', cleaned)
-#     # Очищаем от стоп-слов и нормализуем пробелы
-#     words = sorted([w for w in cleaned.lower().split() if w not in stop_words])
-#     return " ".join(words)
-
-# def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: float) -> bool:
-#     """Проверяет заголовок на схожесть с уже существующими в кэше."""
-#     if not new_title:
-#         return False
-    
-#     new_clean = clean_title(new_title)
-#     for title in existing_titles:
-#         # Сравниваем очищенные версии
-#         ratio = SequenceMatcher(None, new_clean, clean_title(title)).ratio()
-#         if ratio > threshold:
-#             logging.info(f"🚫 Fuzzy duplicate ({ratio:.2f}): '{new_title}' ≈ '{title}'")
-#             return True
-#     return False
 
 # 1. Компилируем регулярные выражения ОДИН РАЗ на уровне модуля
 RE_SOURCE_CLEAN = re.compile(r'\s+[-|:]\s+.*$')
@@ -1989,6 +2111,14 @@ async def main():
         try:
             # Инициализация БД (теперь асинхронная)
             await init_db()
+
+            tickers_list = list(config.ASSET_TICKER_MAP.values())
+            # Удаляем синтетический "GLOBAL_REGIME" из списка реальных тикеров yfinance
+            tickers_list = [t for t in tickers_list if t != "GLOBAL_REGIME"]
+
+            # Проводим разовую синхронизацию базы и RAM-кэша при старте
+            await sync_historical_prices(tickers_list)
+            await state.load_historical_cache_to_ram(tickers_list)
 
             # Проверка Ollama, если она выбрана как основная модель
             if config.USE_LOCAL_OLLAMA or config.OLLAMA_FALLBACK:

@@ -121,6 +121,16 @@ async def init_db():
         )
         """)
 
+        # Таблица для хранения ежедневных исторических цен
+        await conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS daily_prices (
+        ticker TEXT,
+        date TEXT,
+        close REAL,
+        PRIMARY KEY (ticker, date)
+        )
+        """)
+
         # Словарь миграций: описываем колонки, которые должны быть в таблицах
         # Это позволяет добавлять новые активы просто дополняя этот список
         required_columns = {
@@ -198,5 +208,6 @@ async def init_db():
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_predictions_event_id ON predictions(event_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_timestamp ON embeddings(timestamp)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_slug ON events(slug)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_prices_ticker_date ON daily_prices (ticker, date DESC)")
 
         await conn.commit()

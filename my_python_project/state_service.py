@@ -2,6 +2,7 @@ import time
 import json
 import logging
 import asyncio
+import pandas as pd  # <-- Добавлен импорт Pandas
 from collections import defaultdict, Counter, OrderedDict
 from datetime import datetime, timezone
 from typing import List, Tuple, Optional, Dict, Any
@@ -36,7 +37,6 @@ class MetricsManager:
         self.metrics[key] = value
 
     def __iadd__(self, other):
-        # Это позволит делать state.metrics += Counter(...) если нужно
         self.metrics.update(other)
         return self
 
@@ -52,7 +52,7 @@ class CacheManager:
     def __init__(self):
         self.urls = OrderedDict()
         self.titles = OrderedDict()
-        self.clean_titles = OrderedDict() # Быстрый поиск со скользящим окном
+        self.clean_titles = OrderedDict() 
         self.embeddings = OrderedDict()
         self.slugs = OrderedDict()
         self.narrative_counts = defaultdict(int)
@@ -67,9 +67,6 @@ class CacheManager:
     def add_url(self, url: str, title: str, embedding: Optional[List[float]] = None):
         self.urls[url] = True
         self.titles[title] = True
-        # clean_titles заполняется в engine.py, здесь обеспечиваем лимиты
-        # Очистка заголовка происходит в engine.py, но мы добавим его сюда
-        # для предотвращения O(N) перебора в будущем
         if embedding:
             self.embeddings[title] = (embedding, time.time())
         self._prune_caches()
@@ -82,7 +79,6 @@ class CacheManager:
         while len(self.clean_titles) > 2000: self.clean_titles.popitem(last=False)
         
         cutoff = now - (config.SLUG_DUPLICATE_HOURS * 3600)
-        # Очистка старых слагов и их счетчиков нарративов
         expired_slugs = [k for k, ts in self.slugs.items() if ts < cutoff]
         for k in expired_slugs:
             self.slugs.pop(k, None)
@@ -94,8 +90,8 @@ class LearningManager:
         self.asset_map = {}
         self.source_performance = {}
         self.model_sensitivities = {}
-        self.dirty_weights = set()  # Ключи: (event_key, asset)
-        self.dirty_model_sensitivities = set() # Ключи: model_name
+        self.dirty_weights = set()  
+        self.dirty_model_sensitivities = set() 
         self.weight_lock = asyncio.Lock()
 
     async def load_config_weights(self):
@@ -138,7 +134,6 @@ class ScoreManager:
             now = time.time()
             self._apply_decay_internal(composite_key, is_market_active, now)
             
-            # Применяем корреляцию актива: переводим Risk-Score ИИ в Bullish-Intensity актива
             correlation = config.ASSET_CORRELATION_MAP.get(asset.lower(), -1)
             weight = self.learning.get_weight(event_key, asset)
             self.scores[composite_key] = max(-config.MAX_SCORE_THRESHOLD, 
@@ -183,22 +178,21 @@ class GTSStateManager:
         self.learning = LearningManager()
         self.scores = ScoreManager(self.learning)
         
-        self.ai_client = None  # Reusable Gemini client
+        self.ai_client = None  
         self.db_lock = asyncio.Lock()
         self.gemini_limiter = asyncio.Semaphore(config.GEMINI_CONCURRENCY)
         self.openrouter_limiter = asyncio.Semaphore(config.OPENROUTER_CONCURRENCY)
         self.deepseek_limiter = asyncio.Semaphore(config.DEEPSEEK_CONCURRENCY)
-        self.ollama_limiter = asyncio.Semaphore(1) # Ollama обычно обрабатывает 1 запрос за раз
+        self.ollama_limiter = asyncio.Semaphore(1) 
         self.hourly_summary_news = []
         self.last_price_alert = {}
         self.learning_rate = config.LEARNING_RATE
+        self.historical_cache = defaultdict(list)  # <-- Перенесено сюда для правильного вызова в методах
 
     def __getitem__(self, key):
-        # Позволяет обращаться к метрикам напрямую через state["key"]
         return self.metrics[key]
 
     def __setitem__(self, key, value):
-        # Позволяет устанавливать метрики напрямую через state["key"] = val
         self.metrics[key] = value
 
     @property
@@ -273,7 +267,6 @@ class GTSStateManager:
         return self.scores.last_sent_score
 
     def log_metrics(self, q_size: int = 0):
-        """Метод для обратной совместимости с вызовом в engine.py"""
         self.metrics.log_report(
             q_size=q_size, 
             scores_count=len(self.scores),
@@ -308,26 +301,44 @@ class GTSStateManager:
                 async with conn.execute(f"SELECT title FROM events WHERE timestamp > datetime('now', '-{hours} hours') ORDER BY timestamp DESC LIMIT 100") as cursor:
                     return [row['title'] for row in await cursor.fetchall()]
 
+    # Метод перенесен сюда, настроены корректные отступы, db_lock и pandas Series
+    async def load_historical_cache_to_ram(self, tickers: List[str]):
+        """Загружает архивные котировки за последний год в RAM."""
+        logging.info("🧠 Загрузка исторических цен из БД в RAM...")
+        async with self.db_lock:
+            async with get_db_connection() as conn:
+                for ticker in tickers:
+                    async with conn.execute(
+                        """
+                        SELECT date, close FROM daily_prices 
+                        WHERE ticker = ? AND date >= datetime('now', '-365 days') 
+                        ORDER BY date ASC
+                        """, (ticker,)
+                    ) as cursor:
+                        rows = await cursor.fetchall()
+                    
+                    # Сохраняем в RAM в виде сериализованного объектного Series
+                    self.historical_cache[ticker] = pd.Series(
+                        {row['date']: row['close'] for row in rows}
+                    ).sort_index()
+        logging.info(f"✅ RAM-кэш котировок инициализирован для {len(tickers)} инструментов.")
+
     async def init_from_db(self):
         async with get_db_connection() as conn:
-            # Загрузка настроек
             async with conn.execute("SELECT value FROM settings WHERE key = 'impact_multiplier'") as cursor:
                 row = await cursor.fetchone()
             if row: self.scores.multiplier = row[0]
 
-            # Загрузка множителей активов из статистики
             async with conn.execute("SELECT target_asset, multiplier FROM asset_stats") as cursor:
                 rows = await cursor.fetchall()
             for row in rows:
                 self.scores.asset_multipliers[row['target_asset'].lower()] = row['multiplier']
 
-            # Загрузка чувствительности моделей (MSF)
             async with conn.execute("SELECT model_name, sensitivity FROM model_stats") as cursor:
                 rows = await cursor.fetchall()
             for row in rows:
                 self.learning.model_sensitivities[row['model_name']] = row['sensitivity']
 
-            # Предзагрузка очищенных заголовков для O(1) дедупликации
             async with conn.execute("SELECT title FROM events ORDER BY timestamp DESC LIMIT 1000") as cursor:
                 rows = await cursor.fetchall()
             from engine import clean_title
@@ -335,13 +346,11 @@ class GTSStateManager:
                 self.cache.clean_titles[clean_title(row['title'])] = True
 
             await self.learning.load_config_weights()
-            # Загрузка весов из БД
             async with conn.execute("SELECT event_key, target_asset, weight FROM weights") as cursor:
                 rows = await cursor.fetchall()
             for key, asset, val in rows:
                 self.learning.weights[(key, asset)] = val
             
-            # Загрузка динамического доверия к источникам
             async with conn.execute("SELECT source_domain, total_resolved, correct_count, sum_alpha FROM source_stats") as cursor:
                 rows = await cursor.fetchall()
             for row in rows:
@@ -352,7 +361,6 @@ class GTSStateManager:
                         "avg_alpha": (row['sum_alpha'] or 0.0) / total
                     }
             
-            # Загрузка эмбеддингов для семантической дедупликации
             emb_lookback = config.RAM_EMBEDDING_LOOKBACK_DAYS
             async with conn.execute("""
                 SELECT title, vector, timestamp 
@@ -374,7 +382,6 @@ class GTSStateManager:
                 except Exception:
                     continue
             
-            # Загрузка истории баллов для восстановления RAM-контекста (сюжеты и затухание)
             lookback = config.RAM_SCORE_LOOKBACK_DAYS
             async with conn.execute("""
                 SELECT event_key, target_asset, score, timestamp 
@@ -396,7 +403,6 @@ class GTSStateManager:
                     continue
                 
                 ckey = (ekey, asset)
-                # Симулируем затухание до момента этой исторической новости
                 self.scores._apply_decay_internal(ckey, True, p_ts)
                 
                 correlation = config.ASSET_CORRELATION_MAP.get(asset.lower(), -1)
@@ -406,12 +412,10 @@ class GTSStateManager:
                                             self.scores.get(ckey, 0.0) + (p_score * weight * correlation)))
                 self.scores.last_update[ckey] = p_ts
                 
-                # Восстановление контекста антиспама (последний балл сюжета)
                 self.scores.last_sent[ekey] = p_ts
                 if asset == 'global':
                     self.scores.last_sent_score[ekey] = self.scores.get(ckey, 0.0)
 
-            # Финальное затухание всех восстановленных баллов до текущего времени
             for ckey in list(self.scores.keys()):
                 self.scores._apply_decay_internal(ckey, True, now)
 
@@ -419,18 +423,14 @@ class GTSStateManager:
 
     async def save_to_db(self) -> int:
         saved_count = 0
-        # Очередность захвата локов: сначала weight_lock, потом db_lock.
-        # Это предотвращает Deadlock с функцией update_weights.
         async with self.learning.weight_lock:
             async with self.db_lock:
                 async with get_db_connection() as conn:
-                    # 1. Глобальный множитель
                     if self.scores.dirty_multiplier:
                         await conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('impact_multiplier', ?)", (self.multiplier,))
                         self.scores.dirty_multiplier = False
                         saved_count += 1
                     
-                    # 2. Множители активов
                     if self.scores.dirty_asset_multipliers:
                         for asset in list(self.scores.dirty_asset_multipliers):
                             mult = self.asset_multipliers.get(asset)
@@ -439,7 +439,6 @@ class GTSStateManager:
                                 saved_count += 1
                         self.scores.dirty_asset_multipliers.clear()
 
-                    # 3. Чувствительность моделей (MSF)
                     if self.learning.dirty_model_sensitivities:
                         for m_name in list(self.learning.dirty_model_sensitivities):
                             sens = self.model_sensitivities.get(m_name)
@@ -452,7 +451,6 @@ class GTSStateManager:
                                 saved_count += 1
                         self.learning.dirty_model_sensitivities.clear()
 
-                    # 4. Веса событий (Самая тяжелая часть)
                     if self.learning.dirty_weights:
                         for composite_key in list(self.learning.dirty_weights):
                             val = self.learning.weights.get(composite_key)
