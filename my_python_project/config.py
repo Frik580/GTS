@@ -340,7 +340,7 @@ IMPACT_MULTIPLIER = 0.3 # Базовая чувствительность к Z-s
 LEARNING_THRESHOLD = 0.7 # Минимальная уверенность ИИ для обучения на событии
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
 MIN_WEIGHT_THRESHOLD = 0.8 # Чистим базу от слабых связей активнее
-NEUTRAL_SCORE_THRESHOLD = 2.5 # Порог для классификации новости как нейтральной (не влияющей на рынок)
+NEUTRAL_SCORE_THRESHOLD = 2.0 # Порог для классификации новости как нейтральной (не влияющей на рынок)
 MAX_ENTITY_PARTS = 3 # Увеличено до 3, чтобы лучше обрабатывать сложные Slug от ИИ
 DUPLICATE_TITLE_THRESHOLD = 0.72 # Снижаем порог для лучшего захвата перефразированных заголовков
 FALLBACK_DUPLICATE_THRESHOLD = 0.50 # Повышаем чувствительность для не-семантического поиска
@@ -417,8 +417,10 @@ ASSET_BENCHMARK_CONFIG = {
     "sp500":  {"primary": "ACWI", "type": "rolling_beta"}, # Смена на ACWI (MSCI World)
     "soxs":   {"primary": "SOXX", "type": "leveraged", "factor": -3.0}, # Прямая связь с полупроводниками
     "btc":    {"primary": "^IXIC", "secondary": "DX-Y.NYB", "type": "multi_factor", "weights": [0.7, -0.3]}, 
-    "oil":    {"primary": "DX-Y.NYB", "type": "rolling_beta"}, 
-    "gold":   {"primary": "TIP", "type": "rolling_beta"}, # TIP = Real Yields Proxy
+    # "oil":    {"primary": "DX-Y.NYB", "type": "rolling_beta"}, 
+    "oil":    {"primary": "CL=F", "type": "fixed", "factor": 1.0},
+    # "gold":   {"primary": "TIP", "type": "rolling_beta"},
+    "gold":   {"primary": "GLD", "type": "fixed", "factor": 1.0},
     "global": {"primary": "GLOBAL_REGIME", "type": "fixed", "factor": 1.0}
 }
 
@@ -436,8 +438,8 @@ CLEANUP_INTERVAL = 86400 # Интервал очистки базы (24 часа
 EWMA_LAMBDA = 0.94 # Параметр затухания RiskMetrics
 BETA_CLIP = 3.0 # Ограничение экстремальных значений беты
 VOLATILITY_WINDOW = 40 # Окно для расчета реализованной волатильности
-Z_ALPHA_VOL_FLOOR = 0.05 # Минимальная волатильность (%) для Z-Alpha по обычным активам
-GLOBAL_Z_ALPHA_VOL_FLOOR = 0.25 # Более высокий floor для GLOBAL_REGIME, чтобы не учиться на микрошуме
+Z_ALPHA_VOL_FLOOR = 0.15 # Минимальная волатильность для расчета Z-Alpha (чтобы не учиться на микрошуме)
+GLOBAL_Z_ALPHA_VOL_FLOOR = 0.5 # Минимальная волатильность для расчета глобального Z-Alpha (чтобы не учиться на микрошуме)
 ALPHA_MIN_THRESHOLD = 0.05 
 
 # Если твой Win Rate выше 60% — система работает отлично. 

@@ -29,7 +29,7 @@ import config
 from state_service import GTSStateManager
 from ai_processor import ai_analyze_batch, get_embedding, is_semantic_duplicate
 from model_factory import init_model_pool, ModelRotator
-
+from quant_engine import analyze_soxs_strategy  # <-- Добавлен импорт новой стратегии!
 
 START_TIME = time.time()
 
@@ -1839,40 +1839,13 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
         market = market_signals(global_score)
         sig_type = generate_signal(prob, global_score)
 
-        # --- SOXS STRATEGY LOGIC ---
-        soxs_signals = []
-        soxs_level = 1
-        
-        # Проверка CAPEX (Уровень 3)
-        if capex_sig == -1:
-            soxs_signals.append("❌ Снижение CAPEX гиперскейлеров")
-            soxs_level = max(soxs_level, 3)
-        
-        # 2. Проверка Guidance NVDA/AVGO
-        if guidance_sig == -1:
-            soxs_signals.append("📉 Ухудшение Guidance (NVDA/AVGO)")
-            soxs_level = max(soxs_level, 3)
-            
-        # Дивергенция: позитивная новость (Negative score) + падение рынка
-        if score < -3.5 and market_data.get("nasdaq_change", 0) < -0.5:
-             soxs_signals.append("⚠️ Дивергенция (нет реакции на позитив)")
-             soxs_level = max(soxs_level, 3)
-
-        # Медвежий режим (Уровень 4)
-        if market_data.get('soxx_below_ma200'):
-            soxs_signals.append("⚫ SOXX ниже 200-дневной средней")
-            soxs_level = 4
-
-        # Формирование вердикта по SOXS
-        soxs_verdict = ""
-        if soxs_level == 1:
-            soxs_verdict = "🟡 <b>УРОВЕНЬ 1: ШУМ</b> (Не трогать SOXS)"
-        elif soxs_level == 2:
-            soxs_verdict = "🟠 <b>УРОВЕНЬ 2: СЖАТИЕ</b> (Пробная позиция 20-30%)"
-        elif soxs_level == 3:
-            soxs_verdict = "🔴 <b>УРОВЕНЬ 3: ПОВОРОТ</b> (Увеличить до ядра 50-100%)"
-        elif soxs_level == 4:
-            soxs_verdict = "⚫ <b>УРОВЕНЬ 4: МЕДВЕЖИЙ РЕЖИМ</b> (Агрессивный лонг SOXS)"
+        # --- ВНЕДРЕНИЕ ПОЛНОЙ ИЗОЛЯЦИИ SOXS-СТРАТЕГИИ ---
+        soxs_level, soxs_signals, soxs_verdict = analyze_soxs_strategy(
+            score=score,
+            capex_sig=capex_sig,
+            guidance_sig=guidance_sig,
+            market_data=market_data
+        )
 
         soxs_msg = ""
         if soxs_level > 1 or soxs_signals:
