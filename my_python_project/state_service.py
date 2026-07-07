@@ -170,6 +170,160 @@ class ScoreManager:
         return self.scores.get(key, default)
 
 class GTSStateManager:
+
+    # === МЕТОДЫ СБОРА ИНДИКАТОРОВ ДЛЯ SOXS v5.0 ===
+
+    async def get_last_capex_signals(self, days: int = 15) -> Dict[str, int]:
+        """
+        Извлекает последние подтвержденные ИИ сигналы capex за последние N дней.
+        """
+        signals = {"MSFT": 0, "META": 0, "AMZN": 0, "GOOGL": 0}
+        async with self.db_lock:
+            async with get_db_connection() as conn:
+                # Фильтруем события по тикерам и наличию сигналов
+                async with conn.execute("""
+                    SELECT event_key, capex_signal, timestamp
+                    FROM predictions 
+                    WHERE capex_signal IS NOT NULL AND capex_signal != 0
+                    AND timestamp >= datetime('now', '-' || ? || ' days')
+                    ORDER BY timestamp DESC
+                """, (days,)) as cursor:
+                    rows = await cursor.fetchall()
+                    
+                    # Пытаемся сопоставить сущности
+                    for row in rows:
+                        ekey = row['event_key'].upper()
+                        for comp in signals.keys():
+                            if comp in ekey:
+                                # Сохраняем самый свежий ненулевой сигнал
+                                if signals[comp] == 0:
+                                    signals[comp] = row['capex_signal']
+        return signals
+
+    async def get_last_guidance_signals(self, days: int = 15) -> Dict[str, int]:
+        """
+        Извлекает последние подтвержденные ИИ сигналы guidance производителей чипов.
+        """
+        signals = {"NVDA": 0, "AVGO": 0, "AMD": 0, "MU": 0}
+        async with self.db_lock:
+            async with get_db_connection() as conn:
+                async with conn.execute("""
+                    SELECT event_key, guidance_signal, timestamp
+                    FROM predictions 
+                    WHERE guidance_signal IS NOT NULL AND guidance_signal != 0
+                    AND timestamp >= datetime('now', '-' || ? || ' days')
+                    ORDER BY timestamp DESC
+                """, (days,)) as cursor:
+                    rows = await cursor.fetchall()
+                    
+                    for row in rows:
+                        ekey = row['event_key'].upper()
+                        for comp in signals.keys():
+                            if comp in ekey or (comp == "AVGO" and "BROADCOM" in ekey):
+                                if signals[comp] == 0:
+                                    signals[comp] = row['guidance_signal']
+        return signals
+
+    async def get_divergence_metrics_10d(self) -> int:
+        """
+        Оценивает силу дивергенции (Price confirmation) по 10-балльной шкале.
+        Считает количество подтвержденных сильных ИИ-событий (новости с score > 4.0),
+        которые привели к отрицательному движению цены или отсутствию реакции рынка.
+        """
+        async with self.db_lock:
+            async with get_db_connection() as conn:
+                async with conn.execute("""
+                    SELECT COUNT(*) as count FROM predictions
+                    WHERE score > 4.0 AND is_correct = 0 AND target_asset = 'soxs'
+                    AND timestamp >= datetime('now', '-10 days')
+                """) as cursor:
+                    row = await cursor.fetchone()
+                    count = row['count'] if row else 0
+                    # Масштабируем до диапазона 0..10
+                    return min(10, count * 2)
+
+    _market_caps_cache = {}
+    _last_caps_fetch = 0
+
+    async def get_rotation_ranking(self) -> int:
+        """
+        Leadership Fatigue Indicator v2.0 (Ротация во второй эшелон):
+        Сравнивает взвешенную по капитализации доходность "лидеров" (Tier 1)
+        и "преследователей" (Tier 2) за последние 10 торговых дней.
+        """
+        now = time.time()
+        # Кэшируем капитализацию на 24 часа, чтобы не делать лишних запросов
+        if not self._market_caps_cache or (now - self._last_caps_fetch > 86400):
+            try:
+                import yfinance as yf
+                all_rotation_tickers = ["NVDA", "AVGO", "ASML", "AMD", "MU", "INTC", "QCOM"]
+                tickers_str = " ".join(all_rotation_tickers)
+                yf_tickers = yf.Tickers(tickers_str)
+                
+                temp_caps = {}
+                for ticker in all_rotation_tickers:
+                    cap = yf_tickers.tickers[ticker].info.get('marketCap')
+                    if cap:
+                        temp_caps[ticker] = cap
+                
+                if len(temp_caps) > 3: # Убедимся, что получили достаточно данных
+                    self._market_caps_cache = temp_caps
+                    self._last_caps_fetch = now
+                    logging.info(f"✅ Кэш капитализации для Rotation Indicator обновлен: {self._market_caps_cache}")
+
+            except Exception as e:
+                logging.error(f"⚠️ Не удалось обновить кэш капитализации для Rotation Indicator: {e}")
+
+        try:
+            tier1 = {"NVDA": 0, "AVGO": 0, "ASML": 0}
+            tier2 = {"AMD": 0, "MU": 0, "INTC": 0, "QCOM": 0}
+
+            def get_weighted_return(basket: dict) -> float:
+                total_cap = 0
+                weighted_return = 0
+                
+                valid_tickers_in_basket = [t for t in basket.keys() if self.historical_cache.get(t) is not None and not self.historical_cache[t].empty and t in self._market_caps_cache]
+                if not valid_tickers_in_basket:
+                    return 0.0
+
+                for ticker in valid_tickers_in_basket:
+                    total_cap += self._market_caps_cache[ticker]
+
+                if total_cap == 0: return 0.0
+
+                for ticker in valid_tickers_in_basket:
+                    weight = self._market_caps_cache[ticker] / total_cap
+                    price_series = self.historical_cache[ticker]
+                    if len(price_series) > 10:
+                        ret = price_series.pct_change(10).iloc[-1]
+                        if pd.notna(ret):
+                            weighted_return += ret * weight
+                return weighted_return
+
+            ret_tier1 = get_weighted_return(tier1)
+            ret_tier2 = get_weighted_return(tier2)
+
+            if ret_tier1 == 0 and ret_tier2 == 0: return 3 # Фоллбек, если нет данных
+
+            spread = ret_tier2 - ret_tier1
+            if spread <= 0:
+                return max(0, int(3 + spread * 50)) # Увеличиваем чувствительность к отставанию
+            else:
+                return min(10, int(3 + spread * 100)) # И к опережению
+        except Exception as e:
+            logging.warning(f"Ошибка в get_rotation_ranking: {e}")
+            return 3
+
+    async def save_quant_decision(self, bear_prob: float, target_pos: float, capex: float, guidance: float, triggers: List[str]):
+        """Сохраняет исторический слепок решения в SQLite."""
+        async with self.db_lock:
+            async with get_db_connection() as conn:
+                await conn.execute("""
+                    INSERT INTO quant_decisions (bear_probability, target_position, capex_score, guidance_score, active_triggers)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (bear_prob, target_pos, capex, guidance, ", ".join(triggers)))
+                await conn.commit()
+
     """Фасад для доступа к специализированным менеджерам состояния."""
     def __init__(self):
         self.metrics = MetricsManager()

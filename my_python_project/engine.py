@@ -29,7 +29,8 @@ import config
 from state_service import GTSStateManager
 from ai_processor import ai_analyze_batch, get_embedding, is_semantic_duplicate
 from model_factory import init_model_pool, ModelRotator
-from quant_engine import analyze_soxs_strategy  # <-- Добавлен импорт новой стратегии!
+from quant_engine import SOXSQuantEngine
+import state_service
 
 START_TIME = time.time()
 
@@ -67,6 +68,79 @@ async def metrics_reporter_task(state: GTSStateManager):
         except Exception as e:
             logging.error(f"Error in metrics reporter: {e}")
         await asyncio.sleep(60) # Выводим отчет ровно раз в минуту
+
+# Инициализируем глобальное состояние и движок на уровне модуля
+last_notified_position = -1.0  # Используем -1.0 для корректной отправки первого сигнала (0.0 тоже позиция)
+quant_engine = SOXSQuantEngine()
+
+async def check_soxs_signals_task(session: aiohttp.ClientSession, state: GTSStateManager):
+    """
+    Периодический мониторинг фундаментального фона полупроводников по модели SOXS v5.0.
+    """
+    global last_notified_position
+    
+    # 1. Извлекаем последние агрегированные сигналы из БД (через переданный state)
+    capex_signals = await state.get_last_capex_signals()
+    guidance_signals = await state.get_last_guidance_signals()
+    
+    # 2. Получаем текущую цену SOXX и MA200 с передачей сессии
+    market_data = await get_market_data(session)
+    soxx_below_ma200 = market_data.get("soxx_below_ma200", False)
+    
+    # Получаем поведенческие метрики за 10 дней
+    divergence_score = await state.get_divergence_metrics_10d()
+    rotation_score = await state.get_rotation_ranking()
+    
+    # 3. Вызов математического расчета SOXS Quant Engine
+    res = quant_engine.calculate_bear_probability(
+        capex_signals=capex_signals,
+        guidance_signals=guidance_signals,
+        divergence_instances=divergence_score,
+        rotation_indicator=rotation_score,
+        soxx_below_ma200=soxx_below_ma200
+    )
+    
+    target_pos = res["target_position_percent"]
+    
+    # 4. Проверка изменения фазы позиции (если позиция сменила шаг)
+    if target_pos != last_notified_position:
+        direction_emoji = "🚨" if target_pos > last_notified_position else "✅"
+        
+        capex_tickers = ", ".join(config.SOXS_CAPEX_WEIGHTS.keys())
+        guidance_tickers = ", ".join(config.SOXS_GUIDANCE_WEIGHTS.keys())
+        
+        active_triggers_str = "\n".join([f"• {t}" for t in res["active_triggers"]]) if res["active_triggers"] else "• Отсутствуют (Bullish expansion)"
+        
+        msg = (
+            f"{direction_emoji} <b>[GTS QUANT ALERT] ИЗМЕНЕНИЕ ПОЗИЦИИ SOXS v5.0</b>\n\n"
+            f"Текущая вероятность разворота: <b>{res['bear_probability']}%</b>\n"
+            f"Рекомендуемая позиция SOXS: <b>{res['target_position_percent']}%</b>\n"
+            f"Режим торговой фазы: <code>{res['verdict_name']}</code>\n\n"
+            f"<b>Активные триггеры давления:</b>\n"
+            f"{active_triggers_str}\n\n"
+            f"<b>📊 Композитные фундаментальные индексы:</b>\n"
+            f"• CAPEX Index: <b>{'+' if res['capex_score'] > 0 else ''}{res['capex_score']}</b> ({capex_tickers})\n"
+            f"• Guidance Index: <b>{'+' if res['guidance_score'] > 0 else ''}{res['guidance_score']}</b> ({guidance_tickers})\n"
+            f"• Divergence Score: <b>{divergence_score}/10</b>\n"
+            f"• Sector Rotation Indicator: <b>{rotation_score}/10</b>\n"
+            f"• SOXX Below 200MA: <b>{'ДА (Bearish)' if soxx_below_ma200 else 'НЕТ (Bullish)'}</b>\n\n"
+            f"<i>Масштабирование тактического хэджа успешно обновлено в ядре системы.</i>"
+        )
+        
+        # Отправляем сообщение в Telegram
+        await send_telegram(session, msg)
+        
+        # Обновляем состояние в памяти
+        last_notified_position = target_pos
+        
+        # Логируем слепок в БД для истории
+        await state.save_quant_decision(
+            bear_prob=res['bear_probability'],
+            target_pos=target_pos,
+            capex=res['capex_score'],
+            guidance=res['guidance_score'],
+            triggers=res['active_triggers']
+        )
 
 async def auto_save_task(state: GTSStateManager):
     """Фоновая задача для периодического сохранения состояния в БД."""
@@ -419,14 +493,15 @@ def calibrate_multiplier(avg_error: float, state: GTSStateManager, asset: Option
         state.asset_multipliers[asset_low] = new_mult
         state.scores.dirty_asset_multipliers.add(asset_low)
         if abs(new_mult - old_mult) > 0.0001:
-            logging.info(f"⚙️ Multiplier ({asset_low}): {old_mult:.2f} -> {new_mult:.2f} (avg_err: {avg_error:+.2f})")
+            logging.info(f"⚙️ Multiplier ({asset_low.upper()}): {old_mult:.3f} -> {new_mult:.3f} (avg_err: {avg_error:+.2f})")
     else:
         old_mult = state.multiplier
         # Глобальная калибровка чувствительности к сигме
         state.multiplier = max(0.01, min(2.0, old_mult + (state.learning_rate * avg_error)))
         state.scores.dirty_multiplier = True
         if abs(state.multiplier - old_mult) > 0.0001:
-            logging.info(f"⚙️ Multiplier (GLOBAL): {old_mult:.2f} -> {state.multiplier:.2f}")
+            direction = "🔻" if state.multiplier < old_mult else "🔺"
+            logging.info(f"⚙️ Global Multiplier calibrated {direction} | Old: {old_mult:.3f}, New: {state.multiplier:.3f} (based on avg_error: {avg_error:+.2f})")
 
 async def get_fear_greed_index(session: aiohttp.ClientSession) -> Tuple[Optional[float], Optional[str], float]:
     """
@@ -1184,7 +1259,7 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
 
     # 4. СОХРАНЕНИЕ (Вне основного лока во избежание Deadlock)
     await state.save_to_db()
-    logging.info(f"System settings saved. New IMPACT_MULTIPLIER: {state.multiplier:.2f}") # Используем state.multiplier
+    logging.info(f"System settings saved. New IMPACT_MULTIPLIER: {state.multiplier:.3f}") # Используем state.multiplier
 
 async def _execute_vacuum():
     """Асинхронное выполнение VACUUM."""
@@ -1496,21 +1571,19 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
             if use_semantic:
                 new_embedding = await get_embedding(entry.title, model_rotator, state, session=session)
                 
-                # 3. Семантическая проверка (is_semantic_duplicate сам управляет своей блокировкой)
+                # 3. Семантическая проверка (сравниваем с тем, что уже есть в кэше)
                 if new_embedding and await is_semantic_duplicate(entry.title, new_embedding, state):
                     state.metrics.metrics["news_duplicate_semantic"] += 1
-                    async with state.cache.cache_lock:
-                        state.add_url(entry.link, entry.title, embedding=new_embedding)
+                    # Просто пропускаем новость, URL будет добавлен в любом случае, если она уникальна
                     continue
 
-            # 4. Финальное добавление в кэш (если новость прошла все фильтры)
-            async with state.cache_lock:
+            # 4. Финальное добавление в кэш и очередь (если новость прошла все фильтры)
+            async with state.cache.cache_lock:
                 # Считаем только реально новые новости, прошедшие фильтры дубликатов
                 processed_count += 1
                 if processed_count > max_entries_to_process:
                     logging.debug(f"Reached max_entries_to_process ({max_entries_to_process}) for feed {url}")
                     break
-                    
                 state.add_url(entry.link, entry.title, embedding=new_embedding)
 
             # Ставим в очередь для AI анализа
@@ -1665,7 +1738,17 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
         raw_score = score  # Сохраняем оригинальный балл от ИИ (-10..10)
         narrative_multiplier = 1.0
 
-        if abs(raw_score) < 0.1:
+        # --- Улучшение: Динамический порог тривиальности ---
+        # В периоды низкой волатильности (VIX < 15) мы более строги к новостям
+        vix_value = market_data.get('price_history', {}).get('^VIX', pd.Series(dtype=float)).iloc[-1] if market_data.get('price_history') is not None and '^VIX' in market_data['price_history'].columns else 20
+        
+        dynamic_trivial_threshold = config.TRIVIAL_SCORE_THRESHOLD
+        if vix_value < 15:
+            dynamic_trivial_threshold *= 1.5 # Повышаем порог (становимся строже)
+        elif vix_value > 25:
+            dynamic_trivial_threshold *= 0.7 # Снижаем порог (пропускаем больше новостей)
+
+        if abs(raw_score) < dynamic_trivial_threshold:
             logging.info(f"🔇 Trivial news ignored: {entry.title}")
             state.metrics["news_trivial"] += 1
             return
@@ -1839,23 +1922,6 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
         market = market_signals(global_score)
         sig_type = generate_signal(prob, global_score)
 
-        # --- ВНЕДРЕНИЕ ПОЛНОЙ ИЗОЛЯЦИИ SOXS-СТРАТЕГИИ ---
-        soxs_level, soxs_signals, soxs_verdict = analyze_soxs_strategy(
-            score=score,
-            capex_sig=capex_sig,
-            guidance_sig=guidance_sig,
-            market_data=market_data
-        )
-
-        soxs_msg = ""
-        if soxs_level > 1 or soxs_signals:
-            soxs_msg = (
-                f"-------------------\n"
-                f"🧭 <b>SOXS STRATEGY:</b>\n"
-                f"Статус: {soxs_verdict}\n"
-                f"Сигналы: {', '.join(soxs_signals) if soxs_signals else 'ротация'}\n"
-            )
-
         # Проверяем анти-спам ДО записи в базу, чтобы не плодить дубли
         can_send_alert = should_send(event_key, score, global_score, state, is_black_swan) 
 
@@ -1873,7 +1939,8 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
             a_weight = state.learning.get_weight(event_key, a_low)
             a_pred_z = min(abs(score * a_weight) * a_mult, 10.0)
             
-            pred_data.append((raw_score, a_pred_z, a_low, event_type, 1 if is_black_swan else 0, confidence, source_title, model_name, pub_db_time))
+            # FIX: Добавлены capex_sig и guidance_sig в кортеж для записи в БД
+            pred_data.append((raw_score, a_pred_z, a_low, event_type, 1 if is_black_swan else 0, confidence, source_title, model_name, pub_db_time, capex_sig, guidance_sig))
 
         # 4. СОХРАНЕНИЕ (Минимальная блокировка)
         try:
@@ -1888,9 +1955,10 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
                     
                     # Пакетная вставка прогнозов
                     full_pred_data = [(event_id, event_key) + d for d in pred_data]
+                    # FIX: Добавлены колонки capex_signal и guidance_signal в запрос
                     await conn.executemany("""
-                        INSERT INTO predictions (event_id, event_key, score, predicted_impact, target_asset, resolved, event_type, is_black_swan, confidence, source_domain, model_name, timestamp)
-                        VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO predictions (event_id, event_key, score, predicted_impact, target_asset, event_type, is_black_swan, confidence, source_domain, model_name, timestamp, capex_signal, guidance_signal, resolved)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                     """, full_pred_data)
                     await conn.commit()
 
@@ -1959,7 +2027,6 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
                 f"<b>Score:</b> {global_score:+.2f} (News: {score:+.2f}) | <b>Impact:</b> {prob:+.2f}%\n"
                 f"-------------------\n"
                 f"{forecast_str}\n"
-                f"{soxs_msg}"
                 f"-------------------\n"
                 f"{summary_part}"
                 f"📰 <a href=\"{html.escape(entry.link, quote=True)}\">{html.escape(title_ru or entry.title)}</a>"
@@ -2154,7 +2221,6 @@ async def main():
                     state.market_data_status = "FAILED"
 
                 logging.info(f"📊 Status: [До обучения: {minutes_left} мин | Готово новостей: {eligible_count}]")
-
                 is_market_active = not current_market_data.get('is_stale', True)
                 
                 if not is_market_active:
@@ -2184,6 +2250,13 @@ async def main():
                 for key in list(state.scores.keys()):
                     await state.apply_decay(key, is_market_active)
 
+
+                try:
+                    await check_soxs_signals_task(persistent_session, state)
+                except Exception as e:
+                    logging.error(f"Error in check_soxs_signals_task: {e}")
+
+
                 # 2. Создаем НОВУЮ сессию специально для этого цикла сканирования
                 # DummyCookieJar гарантирует, что Google News не будет "узнавать" нас по куки
                 async with aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar()) as scan_session:
@@ -2192,12 +2265,12 @@ async def main():
                         # Создаем задачу, но не ждем её сразу, чтобы соблюсти паузу
                         task = asyncio.create_task(process_single_feed(url, scan_session, loop, current_market_data))
                         scan_tasks.append(task)
-                        await asyncio.sleep(0.5) # Пауза между запросами (анти-бан)
+                        await asyncio.sleep(0.3) # Слегка уменьшаем паузу для ускорения
                     
                     # Дожидаемся завершения всех задач сканирования с общим таймаутом
                     if scan_tasks:
                         try:
-                            await asyncio.wait_for(asyncio.gather(*scan_tasks), timeout=300)
+                            await asyncio.wait_for(asyncio.gather(*scan_tasks), timeout=420)
                             logging.info(f"✅ Цикл сканирования лент завершен ({len(scan_tasks)} feeds)")
                         except asyncio.TimeoutError:
                             logging.warning("⚠️ Сканирование части лент прервано по таймауту.")

@@ -131,6 +131,18 @@ async def init_db():
         )
         """)
 
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS quant_decisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        bear_probability REAL,
+        target_position REAL,
+        capex_score REAL,
+        guidance_score REAL,
+        active_triggers TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
         # Словарь миграций: описываем колонки, которые должны быть в таблицах
         # Это позволяет добавлять новые активы просто дополняя этот список
         required_columns = {
@@ -159,7 +171,9 @@ async def init_db():
                 "confidence": "REAL DEFAULT 1.0",
                 "signed_alpha": "REAL DEFAULT 0",
                 "source_domain": "TEXT",
-                "model_name": "TEXT"
+                "model_name": "TEXT",
+                "capex_signal": "INTEGER DEFAULT 0",
+                "guidance_signal": "INTEGER DEFAULT 0"
             },
             "asset_stats": {
                 "multiplier": f"REAL DEFAULT {config.IMPACT_MULTIPLIER}"

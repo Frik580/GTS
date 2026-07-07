@@ -42,6 +42,8 @@ class PromptBuilder:
         STRICT SCORING LOGIC:
         - LOCAL/TRIVIAL news (local accidents, humor, memes, small community issues) MUST be score 0.
         - NO-ACTION/OPINION RULE: Articles that are pure editorials, "think pieces", broad market discussions, or "expert predictions" without a NEW factual event or data release MUST be score 0.
+        - RECAPS/SUMMARIES: Articles that just summarize past events ("What happened in the markets yesterday", "Weekly review") MUST be score 0.
+        - VAGUE STATEMENTS: News like "CEO is optimistic about the future" or "Company continues to innovate" without specific new data or product announcements MUST be score 0.
         - HARD NEWS ONLY: Only events that represent a change in current state (e.g., "X happened", "Data Y was released", "Official Z stated") should get a non-zero score.
         - INDIVIDUAL stock news (earnings, major upgrades) for key tickers like NVDA, MSFT, etc., should be between -4 and 4.
         Identify key entities. Use these tags for categorization reference only: {tags_hint}.
@@ -75,9 +77,10 @@ class PromptBuilder:
         - EXTREME CAUTION: Never exceed the -10 to 10 range. Most significant news should fall between 2.5 and 4.0.
         Analyze the INTENT and FACTUALITY. If the news is just a "reasoning" on a topic, score it 0.
 
-        SPECIAL SOXS SIGNALS:
-        - If MSFT, AMZN, or META mention AI CAPEX changes: set capex_signal (1: increase, -1: decrease).
-        - If NVDA or Broadcom (AVGO) change future guidance: set guidance_signal (1: upgrade, -1: downgrade).
+        SPECIAL SOXS SIGNALS RULES:
+        - If MSFT, META, AMZN, or GOOGL mention specific cloud or AI CAPEX changes: set capex_signal (1: increase/boost, -1: decrease/cut, 0: unchanged).
+        - If NVDA, Broadcom (AVGO), AMD, or Micron (MU) change future financial guidance: set guidance_signal (1: upgrade/higher outlook, -1: downgrade/cut, 0: stable).
+        - If the news does not contain those specific events, these fields MUST be null.
         """
 
 class ResponseParser:
@@ -216,10 +219,12 @@ async def ai_analyze_batch(
     for attempt in range(3):
         model_name = rotator.get_active()["name"]
         try:
+            start_time = time.time()
             # Добавляем жесткий таймаут на ответ от любого провайдера ИИ
             res_text, _ = await asyncio.wait_for(
                 provider.call(prompt, session), timeout=90
             )
+            state.metrics.ai_timings.append(time.time() - start_time)
             data = ResponseParser.parse(res_text)
             if data:
                 results_map = ResponseParser.validate_and_extract_batch(data, model_name)
@@ -275,8 +280,15 @@ async def get_embedding(text: str, rotator: Any, state: Any, session: aiohttp.Cl
                 async with session.post(url, headers=headers, json=payload, timeout=10) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        return data['data'][0]['embedding']
-                    logging.error(f"OpenRouter Embedding error status: {resp.status}")
+                        if 'data' in data and data['data']:
+                            return data['data'][0]['embedding']
+                        else:
+                            error_message = data.get('error', {}).get('message', 'Unknown error structure')
+                            logging.error(f"OpenRouter Embedding error (200 OK): {error_message}")
+                            # Возбуждаем исключение, чтобы оно было поймано и залогировано как Fallback Embedding error
+                            raise Exception(f"OpenRouter API returned success status but contained an error: {error_message}")
+                    else:
+                        logging.error(f"OpenRouter Embedding error status: {resp.status}")
             except Exception as e:
                 logging.error(f"Fallback Embedding error: {e}")
 
@@ -290,6 +302,10 @@ async def is_semantic_duplicate(title: str, embedding: List[float], state: Any) 
 
     async with state.cache.cache_lock:
         for cached_title, (cached_emb, ts) in state.cache.embeddings.items():
+            # FIX: Исключаем сравнение новости с самой собой, если она уже попала в кэш
+            if title == cached_title:
+                continue
+
             if time.time() - ts > config.SEMANTIC_DEDUPLICATION_WINDOW * 3600:
                 continue
             cached = np.asarray(cached_emb, dtype=float)

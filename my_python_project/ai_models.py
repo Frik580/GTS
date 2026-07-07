@@ -19,10 +19,7 @@ class NewsAnalysisResponse(BaseModel):
     guidance_signal: Optional[int] = Field(None, description="1: upgrade, 0: stable, -1: downgrade")
 
     def to_analysis_tuple(self, model_name: str) -> Tuple:
-        """Преобразует модель в кортеж для дальнейшей обработки в engine.py."""
-        # Принудительное ограничение диапазона (Safety Clip) для score и confidence
         safe_score = max(-10.0, min(10.0, self.score))
-        # Если ИИ выдал 9.0 вместо 0.9, приводим к 0.9. Если просто > 1, ограничиваем 1.0.
         safe_conf = self.confidence / 10.0 if self.confidence > 1.0 else max(0.0, self.confidence)
         
         return (
@@ -35,6 +32,7 @@ class NewsAnalysisResponse(BaseModel):
             safe_conf,
             self.summary,
             self.title_ru,
+            # Добавляем новые параметры в возвращаемый кортеж
             self.capex_signal,
             self.guidance_signal
         )

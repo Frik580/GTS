@@ -151,8 +151,8 @@ HBM_INDEX_COMPONENTS = {
 
 
 
-# Основные RSS-ленты Yahoo Finance для расширения охвата рынка
-YAHOO_FINANCE_FEEDS = [
+# Дополнительные прямые RSS-ленты для расширения охвата рынка
+DIRECT_RSS_FEEDS = [
     "https://finance.yahoo.com/news/rss", # Общая лента финансовых новостей
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA,AMD,AVGO,TSM,INTC,MU&region=US&lang=en-US", # Лента для полупроводников
     "https://feeds.finance.yahoo.com/rss/2.0/headline?s=MU,000660.KS,005930.KS&region=US&lang=en-US", # Лента для памяти (HBM)
@@ -224,7 +224,7 @@ SPECIFIC_SOURCES_LIST = [
 ]
 
 # Настройки для поиска в соцсетях
-SOCIAL_SEARCH_ENABLED = True # Временно отключаем, так как RSS от соцсетей может быть шумным и требует доработки фильтров
+SOCIAL_SEARCH_ENABLED = False # Временно отключаем, так как RSS от соцсетей может быть шумным и требует доработки фильтров
 # Список надежных Nitter-инстансов (для Twitter RSS без API ключа)
 NITTER_INSTANCES = [
     "nitter.net",
@@ -265,13 +265,13 @@ if SOCIAL_SEARCH_ENABLED:
         # Reddit Search RSS
         RSS_FEEDS.append(f"https://www.reddit.com/search.rss?q={keyword_q}&sort=new&t=hour")
 
-RSS_FEEDS += YAHOO_FINANCE_FEEDS
-RSS_MAX_ENTRIES = 15 # Увеличено до 15, чтобы находить доверенные источники внутри агрегаторов
-RSS_MAX_ENTRIES_INACTIVE = 30 # Увеличено до 30 для более глубокого охвата за ночь
+RSS_FEEDS += DIRECT_RSS_FEEDS
+RSS_MAX_ENTRIES = 25 # Увеличено для более глубокого сканирования активного рынка
+RSS_MAX_ENTRIES_INACTIVE = 40 # Увеличено для более глубокого охвата за ночь
 
 # Time Intervals (in seconds)
 CHECK_INTERVAL = 420 # Увеличено до 7 минут, чтобы снизить риск Rate Limit (429)
-COOLDOWN = 900 # Увеличиваем до 15 минут, чтобы не спамить повторами одного события
+COOLDOWN = 480 # Снижаем до 8 минут для более частых обновлений по сюжету
 LEARNING_INTERVAL = 1800 # 30 минут — оптимально для накопления выборки цен
 MARKET_LOOKBACK_HOURS = 2 # Увеличиваем до 2 часов: macro-alpha требует времени для проявления
 MAX_NEWS_AGE_HOURS = 4 # Увеличено до 4ч для надежности захвата RSS
@@ -339,8 +339,9 @@ MIN_SAMPLE_SIZE_FOR_RESET = 15 # Увеличим выборку для боле
 IMPACT_MULTIPLIER = 0.3 # Базовая чувствительность к Z-score (Sigmas)
 LEARNING_THRESHOLD = 0.7 # Минимальная уверенность ИИ для обучения на событии
 PIVOT_THRESHOLD = 5.0 # Порог "разворотной" новости, при котором накопленный балл обнуляется
-MIN_WEIGHT_THRESHOLD = 0.8 # Чистим базу от слабых связей активнее
-NEUTRAL_SCORE_THRESHOLD = 2.0 # Порог для классификации новости как нейтральной (не влияющей на рынок)
+TRIVIAL_SCORE_THRESHOLD = 0.05 # Порог для отсеивания тривиальных новостей (балл от ИИ)
+MIN_WEIGHT_THRESHOLD = 0.7 # Ослабляем порог для сохранения большего числа связей
+NEUTRAL_SCORE_THRESHOLD = 1.8 # СНИЖАЕМ ПОРОГ, чтобы пропускать больше новостей
 MAX_ENTITY_PARTS = 3 # Увеличено до 3, чтобы лучше обрабатывать сложные Slug от ИИ
 DUPLICATE_TITLE_THRESHOLD = 0.72 # Снижаем порог для лучшего захвата перефразированных заголовков
 FALLBACK_DUPLICATE_THRESHOLD = 0.50 # Повышаем чувствительность для не-семантического поиска
@@ -349,7 +350,7 @@ SEMANTIC_DUPLICATE_THRESHOLD = 0.78 # Более агрессивная скле
 USE_EMBEDDINGS = True # Включить/выключить семантическую дедупликацию через векторы
 EMBEDDING_MODEL = "models/gemini-embedding-2" # Основная модель эмбеддингов (Gemini)
 OPENROUTER_EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2:free" # Высокопроизводительная альтернатива для OpenRouter
-CONFIDENCE_THRESHOLD = 0.35 # Минимальная уверенность ИИ для принятия новости
+CONFIDENCE_THRESHOLD = 0.25 # СНИЖАЕМ ПОРОГ, чтобы дать шанс новостям с умеренной уверенностью
 SLUG_SPAM_WINDOW = 7200 # 2 часа: если новость с тем же Slug пришла быстрее, она игнорируется как дубль
 
 NON_FINANCIAL_SCORE_DECAY_FACTOR = 0.5 # Коэффициент снижения балла для нефинансовых/дипломатических новостей
@@ -382,6 +383,8 @@ SOURCE_TRUST_LEVELS = {
     "msn.com": 0.0,
     "aol.com": 0.0,
     "newsonair.gov.in": 0.0,
+    "energynow.ca": 0.0,
+    "energynow.com": 0.0
 }
 DEFAULT_TRUST_SCORE = 0.65  # Немного снижаем базу для фильтрации случайных источников
 
@@ -442,9 +445,38 @@ Z_ALPHA_VOL_FLOOR = 0.15 # Минимальная волатильность д�
 GLOBAL_Z_ALPHA_VOL_FLOOR = 0.5 # Минимальная волатильность для расчета глобального Z-Alpha (чтобы не учиться на микрошуме)
 ALPHA_MIN_THRESHOLD = 0.05 
 
-# Если твой Win Rate выше 60% — система работает отлично. 
-# Если ниже 40% — значит, либо веса в config.py настроены неверно, либо рынок сейчас ведет себя иррационально.
+# --- ПАРАМЕТРЫ СТРАТЕГИИ SOXS v5.0 (BEAR PROBABILITY) ---
 
-# Средняя абсолютная ошибка (avg_abs_error): Чем ниже это число, тем лучше откалиброван ваш global_impact_multiplier. 
-# Если ошибка везде большая (например, > 20), значит множитель в config.py требует ручной корректировки 
-# или системе нужно больше времени на обучение.
+# Веса компаний для расчета совокупного CAPEX (сумма весов = 1.0)
+SOXS_CAPEX_WEIGHTS = {
+    "MSFT": 0.35,
+    "META": 0.25,
+    "AMZN": 0.25,
+    "GOOGL": 0.15
+}
+
+# Веса компаний для расчета совокупного GUIDANCE чипмейкеров (сумма весов = 1.0)
+SOXS_GUIDANCE_WEIGHTS = {
+    "NVDA": 0.45,
+    "AVGO": 0.25,
+    "AMD": 0.15,
+    "MU": 0.15
+}
+
+# Сила влияния компонентов на итоговый Bear Score
+SOXS_FACTOR_WEIGHTS = {
+    "capex": 25.0,
+    "guidance": 30.0,
+    "divergence": 20.0,    # Максимальное значение 1.0 (шкала 0..10 / 10)
+    "rotation": 15.0,      # Максимальное значение 1.0 (шкала 0..10 / 10)
+    "ma200_trend": 10.0    # Бонус за нахождение SOXX ниже MA200
+}
+
+# Пороговые значения вероятностей для изменения размера позиции
+SOXS_POSITION_LEVELS = [
+    {"limit": 30.0, "position": 0.0, "name": "0% Position (Bullish Regime)"},
+    {"limit": 50.0, "position": 20.0, "name": "20% Position (Probationary Tactical Hedge)"},
+    {"limit": 70.0, "position": 50.0, "name": "50% Position (Core Tactical Hedge)"},
+    {"limit": 85.0, "position": 100.0, "name": "100% Position (Full Market Protection Plan)"},
+    {"limit": 100.1, "position": 120.0, "name": "Aggressive Entry (120%+ Leveraged Cyclical Top)"}
+]
