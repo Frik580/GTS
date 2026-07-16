@@ -120,7 +120,7 @@ async def inspect_gts():
         # Исключаем шум из статистики, чтобы он не занижал WinRate и не искажал среднюю ошибку
         async with conn.execute(f"""
             SELECT target_asset, is_correct, actual_move, predicted_impact, timestamp, resolved
-            FROM predictions WHERE resolved >= 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm' AND actual_move > 0
+            FROM predictions WHERE resolved >= 1 AND abs(score) >= {config.NEUTRAL_SCORE_THRESHOLD} AND LOWER(target_asset) != 'hbm' AND is_correct >= 0
         """) as cursor:
             df_all = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
 
@@ -141,18 +141,25 @@ async def inspect_gts():
             
             stats_data = []
             # Итерируем по всем активам, которые есть либо в текущих прогнозах, либо в накопленной статистике
-            all_unique_assets = pd.concat([df_all['target_asset'], asset_stats_df['target_asset']]).unique()
-
+            all_assets_series = [df_all['target_asset']]
+            if not asset_stats_df.empty:
+                all_assets_series.append(asset_stats_df['target_asset'])
+            
+            all_unique_assets = pd.concat(all_assets_series).unique()
+ 
             for asset in all_unique_assets:
                 if asset and asset.lower() == 'hbm':
                     continue
 
                 # Общие показатели (накопленные)
-                asset_total_stats = asset_stats_df[asset_stats_df['target_asset'] == asset]
+                if not asset_stats_df.empty:
+                    asset_total_stats = asset_stats_df[asset_stats_df['target_asset'] == asset]
+                else:
+                    asset_total_stats = pd.DataFrame() # Создаем пустой DataFrame, чтобы последующая логика работала
                 if not asset_total_stats.empty:
-                    total_cnt = asset_total_stats['total_resolved'].iloc[0]
-                    total_wr = (asset_total_stats['correct_count'].iloc[0] / total_cnt) * 100 if total_cnt > 0 else 0
-                    total_err = asset_total_stats['sum_error'].iloc[0] / total_cnt if total_cnt > 0 else 0
+                    total_cnt = int(asset_total_stats['total_resolved'].iloc[0])
+                    total_wr = (float(asset_total_stats['correct_count'].iloc[0]) / total_cnt) * 100 if total_cnt > 0 else 0
+                    total_err = float(asset_total_stats['sum_error'].iloc[0]) / total_cnt if total_cnt > 0 else 0
                 else: # Если актива нет в asset_stats (например, новый актив)
                     total_cnt = 0
                     total_wr = 0

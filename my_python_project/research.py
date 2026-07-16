@@ -78,6 +78,7 @@ def init_model_pool():
 
 model_pool = init_model_pool()
 current_model_idx = 0
+snoozed_providers = {} # provider_name -> snooze_until_timestamp
 
 async def run_global_research():
     """Анализирует макро-триггеры и сохраняет предложения в БД."""
@@ -96,10 +97,28 @@ async def run_global_research():
 
     for attempt in range(max_retries):
         tried = 0
-        while tried < len(model_pool):
+        start_idx = current_model_idx
+        
+        # Цикл поиска доступной модели
+        while True:
+            active = model_pool[current_model_idx]
+            provider = active.get("provider")
+            snooze_until = snoozed_providers.get(provider)
+
+            if snooze_until and asyncio.get_event_loop().time() < snooze_until:
+                current_model_idx = (current_model_idx + 1) % len(model_pool)
+                if current_model_idx == start_idx:
+                    logging.warning("[Research] All providers are snoozed. Waiting 60s.")
+                    await asyncio.sleep(60)
+                continue
+            
+            # Нашли доступную модель, выходим из цикла поиска
+            break
+
+        try:
             try:
-                active = model_pool[current_model_idx]
                 res_text = ""
+                logging.info(f"[Research] Attempting to use model: {active['name']}")
 
                 if active.get("provider") in ["openrouter", "deepseek"]:
                     api_url = "https://openrouter.ai/api/v1/chat/completions" if active.get("provider") == "openrouter" else "https://api.deepseek.com/chat/completions"
@@ -125,7 +144,7 @@ async def run_global_research():
                             timeout=aiohttp.ClientTimeout(total=120, connect=15)
                         ) as resp:
                             if resp.status != 200:
-                                raise Exception(f"OpenRouter Error {resp.status}")
+                                raise Exception(f"API Error {resp.status}: {await resp.text()}")
                             res_json = await resp.json()
                             res_text = (res_json.get('choices', [{}])[0].get('message', {}).get('content') or "").strip()
                 else:
@@ -157,11 +176,18 @@ async def run_global_research():
                 
                 logging.info(f"✅ Research finished. Found {len(suggestions)} new suggestions.")
                 return
-            except Exception as e:
-                logging.warning(f"⚠️ Model {model_pool[current_model_idx]['name']} failed: {e}")
-                current_model_idx = (current_model_idx + 1) % len(model_pool)
-                tried += 1
-        
+            except Exception as e: # Эта вложенность нужна, чтобы поймать ошибку и правильно обработать ее ниже
+                raise e
+        except Exception as e:
+            err_str = str(e)
+            failed_provider = active.get("provider")
+            logging.warning(f"⚠️ [Research] Model {active['name']} failed: {err_str[:200]}")
+            if "429" in err_str or "rate limit" in err_str.lower():
+                snooze_until = asyncio.get_event_loop().time() + 300 # Snooze for 5 mins
+                snoozed_providers[failed_provider] = snooze_until
+                logging.info(f"[Research] Snoozing provider '{failed_provider}' for 5 minutes.")
+            
+            current_model_idx = (current_model_idx + 1) % len(model_pool)
         await asyncio.sleep(60 * (attempt + 1))
 
     logging.error("❌ Global Research failed after all retries.")

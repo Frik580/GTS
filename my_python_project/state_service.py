@@ -173,20 +173,22 @@ class GTSStateManager:
 
     # === МЕТОДЫ СБОРА ИНДИКАТОРОВ ДЛЯ SOXS v5.0 ===
 
-    async def get_last_capex_signals(self, days: int = 15) -> Dict[str, int]:
+    async def get_last_capex_signals(self, days: int = 15) -> Dict[str, Tuple[int, Optional[str], Optional[str], Optional[str]]]:
         """
         Извлекает последние подтвержденные ИИ сигналы capex за последние N дней.
+        Возвращает словарь с кортежем (сигнал, event_key, timestamp, link).
         """
-        signals = {"MSFT": 0, "META": 0, "AMZN": 0, "GOOGL": 0}
+        signals = {ticker: (0, None, None, None) for ticker in ["MSFT", "META", "AMZN", "GOOGL"]}
         async with self.db_lock:
             async with get_db_connection() as conn:
                 # Фильтруем события по тикерам и наличию сигналов
                 async with conn.execute("""
-                    SELECT event_key, capex_signal, timestamp
-                    FROM predictions 
-                    WHERE capex_signal IS NOT NULL AND capex_signal != 0
-                    AND timestamp >= datetime('now', '-' || ? || ' days')
-                    ORDER BY timestamp DESC
+                    SELECT p.event_key, p.capex_signal, p.timestamp, e.link
+                    FROM predictions p
+                    JOIN events e ON p.event_id = e.id
+                    WHERE p.capex_signal IS NOT NULL AND p.capex_signal != 0
+                    AND p.timestamp >= datetime('now', '-' || ? || ' days')
+                    ORDER BY p.timestamp DESC
                 """, (days,)) as cursor:
                     rows = await cursor.fetchall()
                     
@@ -195,24 +197,26 @@ class GTSStateManager:
                         ekey = row['event_key'].upper()
                         for comp in signals.keys():
                             if comp in ekey:
-                                # Сохраняем самый свежий ненулевой сигнал
-                                if signals[comp] == 0:
-                                    signals[comp] = row['capex_signal']
+                                # Сохраняем самый свежий ненулевой сигнал для каждой компании
+                                if signals[comp][0] == 0:
+                                    signals[comp] = (row['capex_signal'], row['event_key'], row['timestamp'], row['link'])
         return signals
 
-    async def get_last_guidance_signals(self, days: int = 15) -> Dict[str, int]:
+    async def get_last_guidance_signals(self, days: int = 15) -> Dict[str, Tuple[int, Optional[str], Optional[str], Optional[str]]]:
         """
         Извлекает последние подтвержденные ИИ сигналы guidance производителей чипов.
+        Возвращает словарь с кортежем (сигнал, event_key, timestamp, link).
         """
-        signals = {"NVDA": 0, "AVGO": 0, "AMD": 0, "MU": 0}
+        signals = {ticker: (0, None, None, None) for ticker in ["NVDA", "AVGO", "AMD", "MU"]}
         async with self.db_lock:
             async with get_db_connection() as conn:
                 async with conn.execute("""
-                    SELECT event_key, guidance_signal, timestamp
-                    FROM predictions 
-                    WHERE guidance_signal IS NOT NULL AND guidance_signal != 0
-                    AND timestamp >= datetime('now', '-' || ? || ' days')
-                    ORDER BY timestamp DESC
+                    SELECT p.event_key, p.guidance_signal, p.timestamp, e.link
+                    FROM predictions p
+                    JOIN events e ON p.event_id = e.id
+                    WHERE p.guidance_signal IS NOT NULL AND p.guidance_signal != 0
+                    AND p.timestamp >= datetime('now', '-' || ? || ' days')
+                    ORDER BY p.timestamp DESC
                 """, (days,)) as cursor:
                     rows = await cursor.fetchall()
                     
@@ -220,11 +224,11 @@ class GTSStateManager:
                         ekey = row['event_key'].upper()
                         for comp in signals.keys():
                             if comp in ekey or (comp == "AVGO" and "BROADCOM" in ekey):
-                                if signals[comp] == 0:
-                                    signals[comp] = row['guidance_signal']
+                                if signals[comp][0] == 0: # Если сигнал для этой компании еще не найден
+                                    signals[comp] = (row['guidance_signal'], row['event_key'], row['timestamp'], row['link'])
         return signals
 
-    async def get_divergence_metrics_10d(self) -> int:
+    async def get_divergence_metrics_10d(self) -> Tuple[int, List[str]]:
         """
         Оценивает силу дивергенции (Price confirmation) по 10-балльной шкале.
         Считает количество подтвержденных сильных ИИ-событий (новости с score > 4.0),
@@ -233,44 +237,60 @@ class GTSStateManager:
         async with self.db_lock:
             async with get_db_connection() as conn:
                 async with conn.execute("""
-                    SELECT COUNT(*) as count FROM predictions
+                    SELECT event_key FROM predictions
                     WHERE score > 4.0 AND is_correct = 0 AND target_asset = 'soxs'
-                    AND timestamp >= datetime('now', '-10 days')
+                    AND timestamp >= datetime('now', '-10 days') GROUP BY event_key
                 """) as cursor:
-                    row = await cursor.fetchone()
-                    count = row['count'] if row else 0
+                    rows = await cursor.fetchall()
+                    keys = [row['event_key'] for row in rows] if rows else []
                     # Масштабируем до диапазона 0..10
-                    return min(10, count * 2)
+                    return min(10, len(keys) * 2), keys
 
     _market_caps_cache = {}
     _last_caps_fetch = 0
 
-    async def get_rotation_ranking(self) -> int:
+    async def get_rotation_ranking(self) -> Tuple[int, float, float, float]:
         """
         Leadership Fatigue Indicator v2.0 (Ротация во второй эшелон):
         Сравнивает взвешенную по капитализации доходность "лидеров" (Tier 1)
         и "преследователей" (Tier 2) за последние 10 торговых дней.
         """
         now = time.time()
+        all_rotation_tickers = ["NVDA", "AVGO", "ASML", "AMD", "MU", "INTC", "QCOM"]
+
+        # Проверяем, есть ли данные в кэше. Если нет, принудительно обновляем.
+        missing_caps = any(t not in self._market_caps_cache for t in all_rotation_tickers)
+        missing_price_tickers = [t for t in all_rotation_tickers if self.historical_cache.get(t) is None or self.historical_cache[t].empty]
+        missing_prices = bool(missing_price_tickers)
+
+        force_update = missing_caps or missing_prices
+
         # Кэшируем капитализацию на 24 часа, чтобы не делать лишних запросов
-        if not self._market_caps_cache or (now - self._last_caps_fetch > 86400):
+        if force_update or (now - self._last_caps_fetch > 86400):
             try:
+                # Обновляем исторические цены, если их нет
+                if missing_prices: # Используем флаг, а не список
+                    logging.info(f"⏳ Обновление кэша цен для Rotation Indicator (отсутствуют: {missing_price_tickers})...")
+                    await self.load_historical_cache_to_ram(missing_price_tickers)
+
                 import yfinance as yf
-                all_rotation_tickers = ["NVDA", "AVGO", "ASML", "AMD", "MU", "INTC", "QCOM"]
-                tickers_str = " ".join(all_rotation_tickers)
-                yf_tickers = yf.Tickers(tickers_str)
-                
                 temp_caps = {}
+                logging.info("⏳ Обновление кэша капитализации для Rotation Indicator...")
+
                 for ticker in all_rotation_tickers:
-                    cap = yf_tickers.tickers[ticker].info.get('marketCap')
-                    if cap:
-                        temp_caps[ticker] = cap
-                
-                if len(temp_caps) > 3: # Убедимся, что получили достаточно данных
+                    try:
+                        # Устанавливаем таймаут для каждого запроса, чтобы избежать зависаний
+                        t = yf.Ticker(ticker)
+                        cap = t.info.get('marketCap')
+                        if cap:
+                            temp_caps[ticker] = cap
+                    except Exception as e:
+                        logging.warning(f"⚠️ Не удалось получить marketCap для {ticker}: {str(e)[:100]}")
+
+                if len(temp_caps) >= len(all_rotation_tickers) // 2: # Убедимся, что получили хотя бы половину данных
                     self._market_caps_cache = temp_caps
                     self._last_caps_fetch = now
                     logging.info(f"✅ Кэш капитализации для Rotation Indicator обновлен: {self._market_caps_cache}")
-
             except Exception as e:
                 logging.error(f"⚠️ Не удалось обновить кэш капитализации для Rotation Indicator: {e}")
 
@@ -284,6 +304,10 @@ class GTSStateManager:
                 
                 valid_tickers_in_basket = [t for t in basket.keys() if self.historical_cache.get(t) is not None and not self.historical_cache[t].empty and t in self._market_caps_cache]
                 if not valid_tickers_in_basket:
+                    # Логируем, почему корзина пуста
+                    missing_p = [t for t in basket.keys() if self.historical_cache.get(t) is None or self.historical_cache[t].empty]
+                    missing_c = [t for t in basket.keys() if t not in self._market_caps_cache]
+                    logging.warning(f"Rotation: пустая корзина. Нет цен для: {missing_p}. Нет капитализации для: {missing_c}")
                     return 0.0
 
                 for ticker in valid_tickers_in_basket:
@@ -303,16 +327,17 @@ class GTSStateManager:
             ret_tier1 = get_weighted_return(tier1)
             ret_tier2 = get_weighted_return(tier2)
 
-            if ret_tier1 == 0 and ret_tier2 == 0: return 3 # Фоллбек, если нет данных
+            if ret_tier1 == 0 and ret_tier2 == 0: return 3, 0.0, 0.0, 0.0 # Фоллбек, если нет данных
 
             spread = ret_tier2 - ret_tier1
             if spread <= 0:
-                return max(0, int(3 + spread * 50)) # Увеличиваем чувствительность к отставанию
+                score = max(0, int(3 + spread * 50)) # Увеличиваем чувствительность к отставанию
             else:
-                return min(10, int(3 + spread * 100)) # И к опережению
+                score = min(10, int(3 + spread * 100)) # И к опережению
+            return score, spread, ret_tier1, ret_tier2
         except Exception as e:
             logging.warning(f"Ошибка в get_rotation_ranking: {e}")
-            return 3
+            return 3, 0.0, 0.0, 0.0
 
     async def save_quant_decision(self, bear_prob: float, target_pos: float, capex: float, guidance: float, triggers: List[str]):
         """Сохраняет исторический слепок решения в SQLite."""
@@ -469,12 +494,55 @@ class GTSStateManager:
                         ORDER BY date ASC
                         """, (ticker,)
                     ) as cursor:
-                        rows = await cursor.fetchall()
-                    
-                    # Сохраняем в RAM в виде сериализованного объектного Series
-                    self.historical_cache[ticker] = pd.Series(
-                        {row['date']: row['close'] for row in rows}
-                    ).sort_index()
+                        rows = await cursor.fetchall() # <-- Здесь rows пустой, если в БД нет данных
+
+                    # Если в БД нет данных, принудительно загружаем из yfinance
+                    if not rows:
+                        logging.warning(f"Данные для {ticker} не найдены в локальной БД. Загрузка из yfinance...")
+                        try:
+                            import yfinance as yf
+                            # Загружаем дневные данные за последний год
+                            downloaded_data = yf.download(ticker, period="1y", interval="1d", progress=False)
+                            
+                            data = pd.Series(dtype=float)
+
+                            if not downloaded_data.empty:
+                                if isinstance(downloaded_data, pd.Series):
+                                    data = downloaded_data
+                                elif 'Close' in downloaded_data.columns:
+                                    # .squeeze() handles the case where yfinance returns a DataFrame
+                                    # with a MultiIndex, resulting in df['Close'] being a
+                                    # single-column DataFrame instead of a Series.
+                                    close_data = downloaded_data['Close'].squeeze()
+                                    if isinstance(close_data, pd.Series):
+                                        data = close_data
+
+                            if not data.empty:
+                                # Сохраняем в БД для будущего использования
+                                records_to_save = []
+                                for dt, val in data.items():
+                                    if pd.notna(val):
+                                        date_str = dt.strftime('%Y-%m-%d')
+                                        records_to_save.append((ticker, date_str, float(val)))
+                                
+                                if records_to_save:
+                                    await conn.executemany(
+                                        "INSERT OR REPLACE INTO daily_prices (ticker, date, close) VALUES (?, ?, ?)",
+                                        records_to_save
+                                    )
+                                    await conn.commit()
+                                    logging.info(f"✅ Сохранено {len(records_to_save)} записей для {ticker} в локальную БД.")
+                                
+                                # Заполняем RAM-кэш свежими данными
+                                self.historical_cache[ticker] = data.sort_index()
+                            else:
+                                self.historical_cache[ticker] = pd.Series(dtype=float) # Создаем пустую серию, чтобы избежать повторных попыток
+                        except Exception as e:
+                            logging.error(f"❌ Ошибка при загрузке {ticker} из yfinance: {e}")
+                    else:
+                        # Если данные есть в БД, используем их
+                        self.historical_cache[ticker] = pd.Series({row['date']: row['close'] for row in rows}).sort_index()
+
         logging.info(f"✅ RAM-кэш котировок инициализирован для {len(tickers)} инструментов.")
 
     async def init_from_db(self):

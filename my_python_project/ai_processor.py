@@ -20,6 +20,9 @@ except ImportError:
     json_repair = None
 
 class PromptBuilder:
+    """
+    Формирует промпт для анализа новостей.
+    """
     @staticmethod
     def build_analysis_prompt(news_items: List[Dict[str, str]]) -> str:
         tags_hint = ", ".join([f'"{k}"' for k in config.TRACKED_KEYWORDS.keys()])
@@ -28,7 +31,7 @@ class PromptBuilder:
         
         formatted_news = ""
         for i, item in enumerate(news_items):
-            formatted_news += f"ID: {i}\nTime: {item['pub_time']}\nContent: {item['text']}\n---\n"
+            formatted_news += f"ID: {item['id']}\nTime: {item['pub_time']}\nContent: {item['text']}\n---\n"
 
         
         return f"""
@@ -84,6 +87,9 @@ class PromptBuilder:
         """
 
 class ResponseParser:
+    """
+    Парсит и валидирует JSON-ответ от AI-модели.
+    """
     @staticmethod
     def parse(res_text: str) -> Optional[Dict]:
         if not res_text:
@@ -134,11 +140,18 @@ class ResponseParser:
             return {}
 
 class FallbackAnalyzer:
+    """
+    Возвращает нейтральный "запасной" результат, если основной анализ не удался.
+    """
     @staticmethod
     async def run(text: str, state_learning: Any) -> Tuple:
         text_hash = hashlib.md5(text.encode()).hexdigest()[:10]
         slug = f"fallback_{text_hash}"
         return (0.0, "neutral", [], slug, False, "Fallback", 0.5, "", "", None, None)
+
+# Кэш для хранения результатов анализа AI. Ключ - хэш текста новости, значение - кортеж с результатом.
+# Этот кэш помогает избежать повторных запросов к AI для одинаковых новостей.
+ai_response_cache: Dict[str, Tuple] = {}
 
 class AIProvider:
     def __init__(self, rotator: Any, state: Any):
@@ -212,10 +225,46 @@ async def ai_analyze_batch(
     news_batch: List[Dict], rotator: Any, state: Any, session: aiohttp.ClientSession
 ) -> List[Tuple]:
     """Анализирует пакет новостей за один вызов ИИ."""
-    prompt = PromptBuilder.build_analysis_prompt(news_batch)
+    
+    # 1. Проверка кэша и разделение новостей
+    batch_to_process = []
+    cached_results = {}
+    original_indices = {}
+    
+    for i, item in enumerate(news_batch):
+        text_hash = hashlib.md5(item['text'].encode()).hexdigest()
+        if text_hash in ai_response_cache:
+            cached_results[i] = ai_response_cache[text_hash]
+            logging.info(f"CACHE HIT: Найдена новость с хэшем {text_hash[:8]}...")
+        else:
+            # Сохраняем оригинальный индекс, чтобы потом правильно собрать результаты
+            original_indices[len(batch_to_process)] = i
+            # Добавляем уникальный ID для промпта
+            item_with_id = item.copy()
+            item_with_id['id'] = len(batch_to_process)
+            batch_to_process.append(item_with_id)
+
+    # Если все новости нашлись в кэше, сразу возвращаем результат
+    if not batch_to_process:
+        logging.info("CACHE HIT: Все новости в пакете были найдены в кэше.")
+        return [cached_results[i] for i in range(len(news_batch))]
+
+    logging.info(f"AI Batch: {len(cached_results)} из кэша, {len(batch_to_process)} на анализ.")
+
+    # 2. Анализ новостей, которых нет в кэше
+    final_results = [None] * len(news_batch)
+    
+    # Заполняем итоговый массив результатами из кэша
+    for i, result in cached_results.items():
+        final_results[i] = result
+
+    # Если есть что анализировать
+    if not batch_to_process:
+        return [res for res in final_results if res is not None]
+
+    prompt = PromptBuilder.build_analysis_prompt(batch_to_process)
     provider = AIProvider(rotator, state)
     state.metrics.metrics["ai_requests"] += 1
-
     for attempt in range(3):
         model_name = rotator.get_active()["name"]
         try:
@@ -229,17 +278,29 @@ async def ai_analyze_batch(
             if data:
                 results_map = ResponseParser.validate_and_extract_batch(data, model_name)
                 
-                # СТРОГАЯ ПРОВЕРКА: Количество ответов ИИ должно строго совпадать с размером батча
-                if results_map and len(results_map) == len(news_batch):
-                    try:
-                        return [results_map[i] for i in range(len(news_batch))]
-                    except KeyError:
-                        logging.warning(f"AI returned invalid IDs (mapping failed) from {model_name}. Rotating...")
+                # СТРОГАЯ ПРОВЕРКА: Количество ответов ИИ должно строго совпадать с размером отправленного на анализ батча
+                if results_map and len(results_map) == len(batch_to_process):
+                    # 3. Сохранение новых результатов в кэш и сборка итогового ответа
+                    for j, result_tuple in results_map.items():
+                        # Находим оригинальный индекс новости в исходном батче
+                        original_idx = original_indices.get(j)
+                        if original_idx is not None:
+                            # Сохраняем в кэш
+                            text_hash = hashlib.md5(news_batch[original_idx]['text'].encode()).hexdigest()
+                            ai_response_cache[text_hash] = result_tuple
+                            # Записываем в итоговый массив
+                            final_results[original_idx] = result_tuple
+
+                    # Заполняем пропуски (если AI не вернул анализ для какой-то новости)
+                    for i in range(len(final_results)):
+                        if final_results[i] is None:
+                            final_results[i] = await FallbackAnalyzer.run(news_batch[i]['text'], state.learning)
+                    return final_results
                 else:
                     actual_count = len(results_map) if results_map else 0
-                    logging.warning(f"AI incomplete response ({actual_count}/{len(news_batch)}) from {model_name}. Rotating...")
-
-            await rotator.rotate(state)
+                    logging.warning(f"AI incomplete response ({actual_count}/{len(batch_to_process)}) from {model_name}. Rotating...")
+                    # This is not a provider failure, just an incomplete response. Rotate normally.
+                    await rotator.rotate(state)
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
@@ -247,13 +308,25 @@ async def ai_analyze_batch(
                 retry_match = re.search(r"retry in ([\d.]+)s", err_str)
                 wait_info = f" (Retry in {retry_match.group(1)}s)" if retry_match else ""
                 clean_error = f"429 Resource Exhausted{wait_info}"
+                # Snooze the provider that failed
+                failed_provider = rotator.get_active().get("provider")
+                logging.warning(f"AI attempt {attempt + 1}/3 failed ({model_name}): {clean_error}")
+                await rotator.rotate(state, failed_provider=failed_provider)
             else:
-                # Обрезаем слишком длинные сообщения об ошибках
                 clean_error = (err_str[:150] + "...") if len(err_str) > 150 else err_str
-            logging.warning(f"AI attempt {attempt + 1}/3 failed ({model_name}): {clean_error}")
-            await rotator.rotate(state)
+                logging.warning(f"AI attempt {attempt + 1}/3 failed ({model_name}): {clean_error}")
+                await rotator.rotate(state)
 
-    return [await FallbackAnalyzer.run(item['text'], state.learning) for item in news_batch]
+    # Если все попытки не удались, заполняем оставшиеся места fallback-результатами
+    for j in range(len(batch_to_process)):
+        original_idx = original_indices.get(j)
+        if original_idx is not None and final_results[original_idx] is None:
+            fallback_result = await FallbackAnalyzer.run(news_batch[original_idx]['text'], state.learning)
+            final_results[original_idx] = fallback_result
+
+    return final_results
+
+
 
 async def get_embedding(text: str, rotator: Any, state: Any, session: aiohttp.ClientSession) -> Optional[List[float]]:
     if config.GEMINI_API_KEY and state.ai_client:

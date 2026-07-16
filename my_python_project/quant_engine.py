@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple, Optional
 import config
 
 class SOXSQuantEngine:
@@ -12,8 +12,8 @@ class SOXSQuantEngine:
         
     def calculate_bear_probability(
         self, 
-        capex_signals: Dict[str, int], 
-        guidance_signals: Dict[str, int], 
+        capex_signals: Dict[str, Tuple[int, Optional[str], Optional[str], Optional[str]]], 
+        guidance_signals: Dict[str, Tuple[int, Optional[str], Optional[str], Optional[str]]], 
         divergence_instances: int,      # шкала 0..10 (Price Confirmation Divergence)
         rotation_indicator: int,         # шкала 0..10 (Leadership Fatigue)
         soxx_below_ma200: bool
@@ -24,13 +24,13 @@ class SOXSQuantEngine:
         # 1. Рассчитываем взвешенный индекс CAPEX
         capex_score = 0.0
         for company, weight in config.SOXS_CAPEX_WEIGHTS.items():
-            sig = capex_signals.get(company, 0)  # По умолчанию 0 (стабильно)
+            sig = capex_signals.get(company, (0, None, None, None))[0]  # Извлекаем только сам сигнал
             capex_score += sig * weight
 
         # 2. Рассчитываем взвешенный индекс Guidance
         guidance_score = 0.0
         for company, weight in config.SOXS_GUIDANCE_WEIGHTS.items():
-            sig = guidance_signals.get(company, 0)
+            sig = guidance_signals.get(company, (0, None, None, None))[0] # Извлекаем только сам сигнал
             guidance_score += sig * weight
 
         # Нормализация поведенческих метрик (шкала 0-10 -> 0.0-1.0)
@@ -52,7 +52,7 @@ class SOXSQuantEngine:
         self.logger.info(
             f"SOXS Quant Calculation: Capex={capex_impact:.2f}, Guidance={guidance_impact:.2f}, "
             f"Divergence={divergence_impact:.2f}, Rotation={rotation_impact:.2f}, MA200={ma200_impact:.2f} "
-            f"-> Total Bear Score: {bear_score:.2f}"
+            f"-> Total Bear Score: {bear_score:.2f} (SOXX below MA200: {soxx_below_ma200})"
         )
 
         # 4. Нормализация сырого балла в диапазон вероятности [0% - 100%]
@@ -70,15 +70,15 @@ class SOXSQuantEngine:
 
         # Сбор активных триггеров для понимания контекста
         active_triggers = []
-        if capex_signals.get("MSFT", 0) == -1: active_triggers.append("❌ MSFT CAPEX Cut")
-        if capex_signals.get("META", 0) == -1: active_triggers.append("❌ META CAPEX Cut")
-        if capex_signals.get("AMZN", 0) == -1: active_triggers.append("❌ AMZN CAPEX Cut")
-        if capex_signals.get("GOOGL", 0) == -1: active_triggers.append("❌ GOOGL CAPEX Cut")
+        if capex_signals.get("MSFT", (0,))[0] == -1: active_triggers.append("❌ MSFT CAPEX Cut")
+        if capex_signals.get("META", (0,))[0] == -1: active_triggers.append("❌ META CAPEX Cut")
+        if capex_signals.get("AMZN", (0,))[0] == -1: active_triggers.append("❌ AMZN CAPEX Cut")
+        if capex_signals.get("GOOGL", (0,))[0] == -1: active_triggers.append("❌ GOOGL CAPEX Cut")
         
-        if guidance_signals.get("NVDA", 0) == -1: active_triggers.append("📉 NVDA guidance downgrade")
-        if guidance_signals.get("AVGO", 0) == -1: active_triggers.append("📉 AVGO guidance downgrade")
-        if guidance_signals.get("AMD", 0) == -1: active_triggers.append("📉 AMD guidance downgrade")
-        if guidance_signals.get("MU", 0) == -1: active_triggers.append("📉 MU guidance downgrade")
+        if guidance_signals.get("NVDA", (0,))[0] == -1: active_triggers.append("📉 NVDA guidance downgrade")
+        if guidance_signals.get("AVGO", (0,))[0] == -1: active_triggers.append("📉 AVGO guidance downgrade")
+        if guidance_signals.get("AMD", (0,))[0] == -1: active_triggers.append("📉 AMD guidance downgrade")
+        if guidance_signals.get("MU", (0,))[0] == -1: active_triggers.append("📉 MU guidance downgrade")
         
         if divergence_instances > 4: active_triggers.append(f"⚠️ Price Confirmation Divergence ({divergence_instances}/10)")
         if rotation_indicator > 4: active_triggers.append(f"🔄 Leadership Fatigue: Rotation into 2nd tier ({rotation_indicator}/10)")

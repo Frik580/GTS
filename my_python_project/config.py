@@ -10,6 +10,9 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 MARKET_DATA_API_KEY = os.getenv("MARKET_DATA_API_KEY") # Ключ от TwelveData или др.
+# Включить/отключить использование DeepSeek
+USE_DEEPSEEK = os.getenv("USE_DEEPSEEK", "True").lower() == "true"
+
 # Провайдер данных: "twelvedata" или "yfinance" (фоллбек)
 MARKET_DATA_PROVIDER = os.getenv("MARKET_DATA_PROVIDER", "yfinance")
 
@@ -116,7 +119,7 @@ ENTITY_CANONICAL_MAP = {
     "MICROSOFT": "MSFT",
     
     "CPI": "INFLATION", "PCE": "INFLATION", "INFLATION": "INFLATION", "CONSUMER_PRICE_INDEX": "INFLATION",
-    "GDP": "ECONOMY", "GROWTH": "ECONOMY",
+    "PPI": "INFLATION", "PRODUCER_PRICE_INDEX": "INFLATION", "GDP": "ECONOMY", "GROWTH": "ECONOMY",
     "NONFARM_PAYROLLS": "EMPLOYMENT", "NFP": "EMPLOYMENT", "JOBS": "EMPLOYMENT", "UNEMPLOYMENT": "EMPLOYMENT",
     "YIELD": "TREASURY", "TREASURY": "TREASURY", "BOND": "TREASURY", "10Y": "TREASURY",
     
@@ -129,7 +132,8 @@ ENTITY_CANONICAL_MAP = {
     "SHALE": "OIL_SUPPLY",
     
     "UPGRADE": "UPGRADE",
-    "DOWNGRADE": "DOWNGRADE",
+    "DOWNGRADE": "DOWNGRADE", "DECLINE": "DROP", "FALL": "DROP", "DECREASE": "DROP", "LOWER": "DROP",
+    "INCREASE": "RISE", "SURGE": "RISE", "JUMP": "RISE", "HIGHER": "RISE",
     "EARNINGS": "EARNINGS", "QUARTERLY_RESULTS": "EARNINGS"
 }
 
@@ -228,8 +232,8 @@ SOCIAL_SEARCH_ENABLED = False # Временно отключаем, так ка
 # Список надежных Nitter-инстансов (для Twitter RSS без API ключа)
 NITTER_INSTANCES = [
     "nitter.net",
-    #  "nitter.it",
-    #  "nitter.poast.org",
+     "nitter.it",
+     "nitter.poast.org",
     #   "nitter.privacydev.net",
     #    "nitter.no-logs.com",
         # "nitter.projectsegfau.lt"
@@ -309,8 +313,15 @@ NARRATIVE_MAX_MULTIPLIER = 2.0 # Максимальное усиление (2x)
 # AI Delays
 AI_DELAY_JSON = 3 # Немного сокращаем ожидание для повышения пропускной способности
 AI_DELAY_NO_JSON = 10 # Задержка для тяжелых/медленных моделей
-AI_BATCH_SIZE = 15 # Увеличено для повышения пропускной способности (оптимально для Flash-моделей)
+DEFAULT_AI_BATCH_SIZE = 25 # Размер пакета по умолчанию. Используется для провайдеров, не указанных в PROVIDER_BATCH_SIZES (например, DeepSeek). Увеличение экономит токены.
 AI_BATCH_WAIT_SECONDS = 60 # Время ожидания для накопления пакета новостей
+PROVIDER_BATCH_SIZES = {
+    "gemini": 3,
+    "nvidia": 5,
+    "openai": 5,
+    "openrouter": 5,
+    "deepseek": 35 # Можно задать явно здесь
+}
 ONLY_PRIORITY_GEMINI = True # Если True, используются только модели Gemini из family_priority
 
 # Concurrency Settings
@@ -318,11 +329,12 @@ GEMINI_CONCURRENCY = 1 # Бесплатный тариф требует посл
 OPENROUTER_CONCURRENCY = 5 # Платные/быстрые модели могут обрабатываться параллельно
 DEEPSEEK_CONCURRENCY = 2 # Лимит для DeepSeek API
 
-ENABLE_HOURLY_REPORT = True # Включить/выключить отправку часового отчета в Telegram
+ENABLE_HOURLY_REPORT = False # Включить/выключить отправку часового отчета в Telegram
 HOURLY_SUMMARY_INTERVAL = 3600 # Интервал отправки часового отчета в Telegram (1 час)
-NUM_WORKERS = 4 # Увеличиваем до 4, так как DeepSeek и OpenRouter могут работать параллельно с Gemini
+NUM_WORKERS = 2 # Увеличиваем до 4, так как DeepSeek и OpenRouter могут работать параллельно с Gemini
 
 # Logic Factors
+ENABLE_TRIVIAL_FILTER = False # Включить/выключить фильтр тривиальных новостей
 DECAY_FACTOR = 0.9 # Оптимальный баланс: новость сохраняет 50% силы через 15-20 минут и затухает за 2-3 часа.
 NIGHT_DECAY_FACTOR = 0.98 # Почти не снижаем балл, когда рынок закрыт, чтобы сохранить контекст к открытию
 MAX_SCORE_THRESHOLD = 25.0
@@ -343,10 +355,10 @@ TRIVIAL_SCORE_THRESHOLD = 0.05 # Порог для отсеивания трив
 MIN_WEIGHT_THRESHOLD = 0.7 # Ослабляем порог для сохранения большего числа связей
 NEUTRAL_SCORE_THRESHOLD = 1.8 # СНИЖАЕМ ПОРОГ, чтобы пропускать больше новостей
 MAX_ENTITY_PARTS = 3 # Увеличено до 3, чтобы лучше обрабатывать сложные Slug от ИИ
-DUPLICATE_TITLE_THRESHOLD = 0.72 # Снижаем порог для лучшего захвата перефразированных заголовков
+DUPLICATE_TITLE_THRESHOLD = 0.8 # Снижаем порог для лучшего захвата перефразированных заголовков
 FALLBACK_DUPLICATE_THRESHOLD = 0.50 # Повышаем чувствительность для не-семантического поиска
 SEMANTIC_DEDUPLICATION_WINDOW = 720 # Увеличено до 30 дней (720ч) для борьбы с ре-индексацией старых новостей
-SEMANTIC_DUPLICATE_THRESHOLD = 0.78 # Более агрессивная склейка (0.79 было слишком строго для разных языков/стилей)
+SEMANTIC_DUPLICATE_THRESHOLD = 0.85 # Снижаем порог для более агрессивного поиска семантических дублей
 USE_EMBEDDINGS = True # Включить/выключить семантическую дедупликацию через векторы
 EMBEDDING_MODEL = "models/gemini-embedding-2" # Основная модель эмбеддингов (Gemini)
 OPENROUTER_EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2:free" # Высокопроизводительная альтернатива для OpenRouter
@@ -407,8 +419,8 @@ ASSET_CORRELATION_MAP = {
     "nasdaq": -1,
     "sp500": -1,
     "oil": 1,
-    "vix": 1,
-    "gold": 1,
+    "vix": 0,    # Нейтральная корреляция: пусть Z-Alpha определяет направление
+    "gold": 0,   # Нейтральная корреляция: золото зависит от DXY и ставок, а не только от риска
     "btc": -1,
     "soxs": 1,
     "global": 1  # Global Regime (Stress) растет при Risk-Off
@@ -419,21 +431,20 @@ ASSET_BENCHMARK_CONFIG = {
     "nasdaq": {"primary": "^GSPC", "type": "rolling_beta"}, 
     "sp500":  {"primary": "ACWI", "type": "rolling_beta"}, # Смена на ACWI (MSCI World)
     "soxs":   {"primary": "SOXX", "type": "leveraged", "factor": -3.0}, # Прямая связь с полупроводниками
-    "btc":    {"primary": "^IXIC", "secondary": "DX-Y.NYB", "type": "multi_factor", "weights": [0.7, -0.3]}, 
+    "btc":    {"primary": "^GSPC", "type": "rolling_beta"}, # Меняем на динамическую бету к широкому рынку (S&P 500)
     # "oil":    {"primary": "DX-Y.NYB", "type": "rolling_beta"}, 
-    "oil":    {"primary": "CL=F", "type": "fixed", "factor": 1.0},
-    # "gold":   {"primary": "TIP", "type": "rolling_beta"},
-    "gold":   {"primary": "GLD", "type": "fixed", "factor": 1.0},
+    "oil":    {"primary": "CL=F", "type": "fixed", "factor": 1.0}, # Для нефти оставляем простую модель
+    "gold":   {"primary": "TIP", "secondary": "DX-Y.NYB", "type": "multi_factor", "weights": [0.5, -0.5]}, # 50% реальные ставки, 50% обратная корреляция с DXY
     "global": {"primary": "GLOBAL_REGIME", "type": "fixed", "factor": 1.0}
 }
 
 # Веса для композитного режима Global Regime
 GLOBAL_REGIME_WEIGHTS = {
-    "vix": 0.35,      # Equity Stress
-    "move": 0.20,     # Bond Stress (^MOVE)
-    "dxy": 0.15,      # Liquidity (Dollar Index)
-    "hyg": 0.20,      # Credit Stress (High Yield Corp) - Inverted
-    "growth": 0.10    # Growth Expectations (Yield Curve 10Y-3M) - Inverted
+    "vix": 0.25,      # Equity Stress (Снижаем вес, т.к. VIX бывает обманчив)
+    "move": 0.15,     # Bond Stress (^MOVE)
+    "dxy": 0.15,      # Liquidity (Dollar Index) (Оставляем)
+    "hyg": 0.25,      # Credit Stress (High Yield Corp) - Inverted (Повышаем, это важный индикатор)
+    "growth": 0.20    # Growth Expectations (Yield Curve 10Y-3M) - Inverted (Повышаем, ключевой макро-фактор)
 }
 CLEANUP_INTERVAL = 86400 # Интервал очистки базы (24 часа)
 

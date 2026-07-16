@@ -110,7 +110,7 @@ async def recalculate_all_stats():
         # 1. Загружаем все разрешенные прогнозы
         query = """
             SELECT p.id, p.event_key, p.score, p.target_asset, p.timestamp, 
-                   p.event_type, p.predicted_impact, p.source_domain, 
+                   p.event_type, p.predicted_impact, p.source_domain, p.confidence,
                    p.confidence, p.model_name, e.slug 
             FROM predictions p
             LEFT JOIN events e ON p.event_id = e.id
@@ -175,14 +175,6 @@ async def recalculate_all_stats():
         
         updates = []
         correct_count = 0
-        
-        # Накопители для статистики источников (чтобы не использовать hardcoded SQL)
-        source_accumulators = {} # {domain: {total, correct, error, conf, alpha, alpha_sq}}
-        model_accumulators = {} # {model: {total, sensitivity}}
-        slug_counters = {} # {slug: count}
-
-        print(f"Найдено {len(df)} прогнозов для анализа.")
-        
         print("🧠 Пересчет направлений (is_correct)...")
         for _, row in df.iterrows():
             asset = row['target_asset']
@@ -211,134 +203,96 @@ async def recalculate_all_stats():
                     # Используем централизованную мапу корреляций
                     correlation = config.ASSET_CORRELATION_MAP.get(asset.lower(), -1)
                     
-                    # НОВОЕ ПРАВИЛО: Направление верно, если знак совпадает
-                    is_correct = 1 if (row['score'] * signed_alpha * correlation) > 0 else 0
+                    # ПРАВИЛО ОПРЕДЕЛЕНИЯ is_correct
+                    if correlation == 0:
+                        # Для нейтральной корреляции (Gold, VIX) направление верно, если знаки score и alpha совпадают
+                        is_correct = 1 if (row['score'] * signed_alpha) > 0 else 0
+                    else:
+                        # Для стандартной корреляции (Risk-On/Off)
+                        is_correct = 1 if (row['score'] * signed_alpha * correlation) > 0 else 0
+
                     if is_correct: correct_count += 1
                     
-                    # Находим чувствительность модели на момент этого прогноза
-                    m_name = row.get('model_name', 'unknown')
-                    if m_name not in model_accumulators:
-                        model_accumulators[m_name] = {"total": 0, "sensitivity": 1.0}
-                    
-                    current_sens = model_accumulators[m_name]["sensitivity"]
-
-                    # Расчет trust_factor (синхронно с логикой engine.py)
-                    domain_src = (row['source_domain'] or "unknown").lower()
-                    trust_factor = config.DEFAULT_TRUST_SCORE
-                    for s_key, s_weight in config.SOURCE_TRUST_LEVELS.items():
-                        if s_key.lower() in domain_src:
-                            trust_factor = s_weight
-                            break
-
-                    # Расчет Narrative Boost
-                    narrative_mult = 1.0
-                    if row['slug']:
-                        slug_l = row['slug'].lower()
-                        slug_counters[slug_l] = slug_counters.get(slug_l, 0) + 1
-                        if slug_counters[slug_l] > 1:
-                            boost = (slug_counters[slug_l] - 1) * config.NARRATIVE_BOOST_PER_HIT
-                            narrative_mult = min(config.NARRATIVE_MAX_MULTIPLIER, 1.0 + boost)
-
-                    # Пересчитываем прогноз в сигмах (ВАЖНО: сделать ДО использования в статистике источников)
-                    m = multipliers.get(asset, config.IMPACT_MULTIPLIER)
-                    w = weights_map.get((row['event_key'], asset), 1.0)
-                    new_pred_z = min(abs(row['score'] * w) * m * trust_factor * row['confidence'] * current_sens * narrative_mult, 10.0)
-
-                    # Накапливаем статистику источников динамически
-                    if row['source_domain']:
-                        domain = row['source_domain'].lower()
-                        if domain not in source_accumulators:
-                            source_accumulators[domain] = {"total": 0, "correct": 0, "error": 0.0, "conf": 0.0, "alpha": 0.0, "alpha_sq": 0.0}
-                        
-                        stats = source_accumulators[domain]
-                        stats["total"] += 1
-                        stats["correct"] += is_correct
-                        stats["error"] += abs(actual_z - new_pred_z)
-                        stats["conf"] += row['confidence']
-                        
-                        # Динамическая Alpha источника: (Market_Move * Correlation * News_Sign)
-                        dir_alpha = signed_alpha * correlation * (1 if row['score'] > 0 else -1)
-                        stats["alpha"] += dir_alpha
-                        stats["alpha_sq"] += (dir_alpha * dir_alpha)
-
-                    model_accumulators[m_name]["total"] += 1
-                    
-                    # Симулируем процесс обучения MSF для каждой исторической записи
-                    effective_error = (actual_z - new_pred_z) if is_correct else -(actual_z + new_pred_z)
-                    model_accumulators[m_name]["sensitivity"] = max(0.1, min(5.0, current_sens + (config.LEARNING_RATE * effective_error * 0.5)))
-
-                    updates.append((is_correct, actual_z, signed_alpha, new_pred_z, row['id']))
+                    # Сохраняем только is_correct, actual_move (Z-score) и signed_alpha. НЕ ТРОГАЕМ predicted_impact.
+                    updates.append((is_correct, actual_z, signed_alpha, row['id']))
 
             except Exception as e:
                 continue
 
         # 4. Массовое обновление флагов
-        await conn.execute("DROP TABLE IF EXISTS temp_recalc_results")
         await conn.execute("""
-            CREATE TEMP TABLE temp_recalc_results (
+            CREATE TABLE IF NOT EXISTS temp_recalc_results (
                 id INTEGER PRIMARY KEY,
                 is_correct INTEGER,
                 actual_move REAL,
-                signed_alpha REAL,
-                new_predicted_impact REAL
+                signed_alpha REAL
             )
         """)
+        await conn.execute("DELETE FROM temp_recalc_results")
         await conn.executemany("""
-            INSERT INTO temp_recalc_results (is_correct, actual_move, signed_alpha, new_predicted_impact, id) 
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO temp_recalc_results (is_correct, actual_move, signed_alpha, id) 
+            VALUES (?, ?, ?, ?)
         """, updates)
 
         await conn.execute("""
             UPDATE predictions
             SET is_correct = (SELECT is_correct FROM temp_recalc_results WHERE temp_recalc_results.id = predictions.id),
                 actual_move = (SELECT actual_move FROM temp_recalc_results WHERE temp_recalc_results.id = predictions.id),
-                signed_alpha = (SELECT signed_alpha FROM temp_recalc_results WHERE temp_recalc_results.id = predictions.id),
-                predicted_impact = (SELECT new_predicted_impact FROM temp_recalc_results WHERE temp_recalc_results.id = predictions.id)
+                signed_alpha = (SELECT signed_alpha FROM temp_recalc_results WHERE temp_recalc_results.id = predictions.id)
             WHERE id IN (SELECT id FROM temp_recalc_results)
         """)
+        await conn.execute("DROP TABLE temp_recalc_results")
 
         print(f"✅ Обновлено прогнозов: {len(updates)} (Верных: {correct_count})")
 
         # Очищаем статистику перед пересозданием
         await conn.execute("DELETE FROM source_stats")
         await conn.execute("DELETE FROM asset_stats")
-        await conn.execute("DELETE FROM model_stats")
-
-        # 5.5 Сохранение пересчитанной чувствительности моделей
-        print("🧠 Пересчет чувствительности моделей (MSF)...")
-        for m_name, m_stats in model_accumulators.items():
-            await conn.execute("""
-                INSERT INTO model_stats (model_name, sensitivity, total_resolved)
-                VALUES (?, ?, ?)
-            """, (m_name, m_stats["sensitivity"], m_stats["total"]))
-
-        # 6. Пересчет статистики источников
-        print("📊 Пересоздание Source Stats...")
-        for domain, s in source_accumulators.items():
-            await conn.execute("""
-                INSERT INTO source_stats (source_domain, total_resolved, correct_count, sum_error, sum_confidence, sum_alpha, sum_alpha_sq)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (domain, s["total"], s["correct"], s["error"], s["conf"], s["alpha"], s["alpha_sq"]))
-        
-        # 7. Пересчет статистики активов
-        print("📉 Пересоздание Asset Stats...")
-        await conn.execute("""
-            INSERT INTO asset_stats (target_asset, total_resolved, correct_count, sum_error, multiplier)
-            SELECT target_asset, COUNT(*), SUM(CASE WHEN is_correct > 0 THEN 1 ELSE 0 END), SUM(ABS(actual_move - predicted_impact)), ?
-            FROM predictions
-            WHERE resolved >= 1 AND is_correct >= 0
-            GROUP BY target_asset
-        """, (config.IMPACT_MULTIPLIER,))
-        
-        # Восстанавливаем сохраненные множители для каждого актива
-        for asset, mult in multipliers.items():
-            await conn.execute("UPDATE asset_stats SET multiplier = ? WHERE target_asset = ?", (mult, asset))
-        
+        await conn.execute("DELETE FROM model_stats") # Также очищаем статистику моделей
         await conn.commit()
 
+        # --- ПЕРЕСБОР АГРЕГИРОВАННОЙ СТАТИСТИКИ ---
+        print("📊 Пересбор агрегированной статистики...")
+        # Загружаем обновленные данные
+        async with conn.execute("""
+            SELECT target_asset, is_correct, predicted_impact, actual_move, source_domain, model_name, confidence, signed_alpha
+            FROM predictions WHERE resolved >= 1 AND is_correct >= 0
+        """) as cursor:
+            stats_df = pd.DataFrame([dict(r) for r in await cursor.fetchall()])
+
+        if not stats_df.empty:
+            stats_df['error'] = abs(stats_df['actual_move'] - stats_df['predicted_impact'])
+
+            # Статистика по активам
+            asset_stats = stats_df.groupby('target_asset').agg(
+                total_resolved=('is_correct', 'count'),
+                correct_count=('is_correct', 'sum'),
+                sum_error=('error', 'sum')
+            ).reset_index()
+            asset_records = [tuple(x) for x in asset_stats.to_numpy()]
+            await conn.executemany(
+                "INSERT INTO asset_stats (target_asset, total_resolved, correct_count, sum_error) VALUES (?, ?, ?, ?)",
+                asset_records
+            )
+
+            # Статистика по источникам
+            source_stats = stats_df.groupby('source_domain').agg(
+                total_resolved=('is_correct', 'count'),
+                correct_count=('is_correct', 'sum'),
+                sum_error=('error', 'sum'),
+                sum_confidence=('confidence', 'sum'),
+                sum_alpha=('signed_alpha', 'sum'),
+                sum_alpha_sq=('signed_alpha', lambda x: (x**2).sum())
+            ).reset_index()
+            source_records = [tuple(x) for x in source_stats.to_numpy()]
+            await conn.executemany(
+                "INSERT INTO source_stats (source_domain, total_resolved, correct_count, sum_error, sum_confidence, sum_alpha, sum_alpha_sq) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                source_records
+            )
+            await conn.commit()
+
     new_winrate = (correct_count / len(updates) * 100) if updates else 0
-    print(f"✨ Готово! Новый WinRate системы: {new_winrate:.2f}%")
-    print("ℹ️ Теперь можно запустить inspect_db.py для проверки.")
+    print(f"✨ Готово! Общий WinRate системы после пересчета: {new_winrate:.2f}%")
 
 if __name__ == "__main__":
     try:

@@ -86,10 +86,13 @@ async def check_soxs_signals_task(session: aiohttp.ClientSession, state: GTSStat
     # 2. Получаем текущую цену SOXX и MA200 с передачей сессии
     market_data = await get_market_data(session)
     soxx_below_ma200 = market_data.get("soxx_below_ma200", False)
+    soxx_ma200_value = market_data.get("soxx_ma200_value", 0.0)
+    soxx_current_price = market_data.get("soxx_current_price", 0.0)
     
     # Получаем поведенческие метрики за 10 дней
-    divergence_score = await state.get_divergence_metrics_10d()
-    rotation_score = await state.get_rotation_ranking()
+    # Нормализуем до максимального значения 10 для консистентности модели
+    divergence_score, divergence_keys = await state.get_divergence_metrics_10d()
+    rotation_score, rotation_spread, ret_t1, ret_t2 = await state.get_rotation_ranking() # Existing line
     
     # 3. Вызов математического расчета SOXS Quant Engine
     res = quant_engine.calculate_bear_probability(
@@ -105,12 +108,32 @@ async def check_soxs_signals_task(session: aiohttp.ClientSession, state: GTSStat
     # 4. Проверка изменения фазы позиции (если позиция сменила шаг)
     if target_pos != last_notified_position:
         direction_emoji = "🚨" if target_pos > last_notified_position else "✅"
-        
-        capex_tickers = ", ".join(config.SOXS_CAPEX_WEIGHTS.keys())
-        guidance_tickers = ", ".join(config.SOXS_GUIDANCE_WEIGHTS.keys())
+        divergence_details = f" ({', '.join(divergence_keys)})" if divergence_keys else ""
         
         active_triggers_str = "\n".join([f"• {t}" for t in res["active_triggers"]]) if res["active_triggers"] else "• Отсутствуют (Bullish expansion)"
         
+        # Формируем детальную строку для CAPEX
+        capex_details_parts = []
+        for ticker, (signal, event_key, ts, link) in capex_signals.items():
+            if signal != 0:
+                date_str = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S').strftime('%d.%m')
+                sign = "🟢" if signal > 0 else "🔴"
+                capex_details_parts.append(f'{sign} {ticker} (<a href="{link}">{event_key}</a> {date_str})')
+        capex_tickers = ", ".join(config.SOXS_CAPEX_WEIGHTS.keys())
+        capex_details_str = f" ({', '.join(capex_details_parts)})" if capex_details_parts else f" ({capex_tickers})"
+
+        # Формируем детальную строку для Guidance
+        guidance_details_parts = []
+        for ticker, (signal, event_key, ts, link) in guidance_signals.items():
+            if signal != 0:
+                # Преобразуем timestamp в читаемый формат
+                date_str = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S').strftime('%d.%m')
+                sign = "🟢" if signal > 0 else "🔴"
+                guidance_details_parts.append(f'{sign} {ticker} (<a href="{link}">{event_key}</a> {date_str})')
+        
+        guidance_tickers = ", ".join(config.SOXS_GUIDANCE_WEIGHTS.keys())
+        guidance_details_str = f" ({', '.join(guidance_details_parts)})" if guidance_details_parts else f" ({guidance_tickers})"
+
         msg = (
             f"{direction_emoji} <b>[GTS QUANT ALERT] ИЗМЕНЕНИЕ ПОЗИЦИИ SOXS v5.0</b>\n\n"
             f"Текущая вероятность разворота: <b>{res['bear_probability']}%</b>\n"
@@ -119,11 +142,13 @@ async def check_soxs_signals_task(session: aiohttp.ClientSession, state: GTSStat
             f"<b>Активные триггеры давления:</b>\n"
             f"{active_triggers_str}\n\n"
             f"<b>📊 Композитные фундаментальные индексы:</b>\n"
-            f"• CAPEX Index: <b>{'+' if res['capex_score'] > 0 else ''}{res['capex_score']}</b> ({capex_tickers})\n"
-            f"• Guidance Index: <b>{'+' if res['guidance_score'] > 0 else ''}{res['guidance_score']}</b> ({guidance_tickers})\n"
-            f"• Divergence Score: <b>{divergence_score}/10</b>\n"
-            f"• Sector Rotation Indicator: <b>{rotation_score}/10</b>\n"
-            f"• SOXX Below 200MA: <b>{'ДА (Bearish)' if soxx_below_ma200 else 'НЕТ (Bullish)'}</b>\n\n"
+            f"• CAPEX Index: <b>{'+' if res['capex_score'] > 0 else ''}{res['capex_score']:.2f}</b>{capex_details_str}\n"
+            f"• Guidance Index: <b>{'+' if res['guidance_score'] > 0 else ''}{res['guidance_score']:.2f}</b>{guidance_details_str}\n"
+            f"• Divergence Score: <b>{divergence_score}/10</b>{divergence_details}\n"
+            f"• Sector Rotation: <b>{rotation_score}/10</b> (Spread: {rotation_spread*100:+.2f}%)\n"
+            f"  (T1: {ret_t1*100:+.2f}% vs T2: {ret_t2*100:+.2f}%)\n"
+            f"• SOXX vs 200MA: <b>{'НИЖЕ (Bearish)' if soxx_below_ma200 else 'ВЫШЕ (Bullish)'}</b>\n"
+            f"  (Price: ${soxx_current_price:.2f} vs MA: ${soxx_ma200_value:.2f})\n\n"
             f"<i>Масштабирование тактического хэджа успешно обновлено в ядре системы.</i>"
         )
         
@@ -739,6 +764,10 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
         "^TNX": "tnx_yield",
         "^IRX": "irx_yield"
     }
+    
+    # Гарантируем, что SOXX всегда будет в списке для расчета MA200
+    if "SOXX" not in tickers_to_fetch:
+        tickers_to_fetch["SOXX"] = "soxx_change"
 
     stale_map = {}
     last_bar_time = 0
@@ -756,6 +785,15 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
 
         market_data['active_provider'] = provider_name
         lookback = config.MARKET_LOOKBACK_HOURS
+
+        # Инициализируем значения по умолчанию
+        market_data['soxx_ma200_value'] = 0.0
+        market_data['soxx_current_price'] = 0.0 # Инициализация для предотвращения nan
+
+        # Получаем текущую цену SOXX, если она доступна и не NaN
+        if "SOXX" in close_prices.columns and not close_prices["SOXX"].empty and pd.notna(close_prices["SOXX"].iloc[-1]):
+            market_data['soxx_current_price'] = float(close_prices["SOXX"].iloc[-1])
+
 
         # --- РАСЧЕТ COMPOSITE GLOBAL REGIME ---
         try:
@@ -802,25 +840,34 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
         # Вычисление Честной 200-дневной средней для SOXX
         if _HISTORICAL_PRICES_CACHE is not None and "SOXX" in _HISTORICAL_PRICES_CACHE.columns:
             # Извлекаем чистый дневной исторический ряд SOXX (без 15-минутных интервалов)
-            daily_soxx = _HISTORICAL_PRICES_CACHE["SOXX"].dropna().copy()
+            daily_soxx_series = _HISTORICAL_PRICES_CACHE["SOXX"].dropna().copy()
             
-            # Обеспечиваем учет текущей цены текущего торгового дня
-            if "SOXX" in close_prices.columns:
-                current_price = float(close_prices["SOXX"].iloc[-1])
-                
-                last_hist_date = daily_soxx.index[-1].date()
-                today_date = close_prices.index[-1].date()
-                
-                if today_date > last_hist_date:
-                    new_idx = pd.to_datetime(today_date).tz_localize('UTC')
-                    daily_soxx[new_idx] = current_price
-                else:
-                    daily_soxx.iloc[-1] = current_price  # Обновляем текущую свечу
+            # 1. Определяем самую последнюю доступную цену SOXX
+            latest_price = market_data.get('soxx_current_price', 0.0)
+            if latest_price == 0.0 and not daily_soxx_series.empty and pd.notna(daily_soxx_series.iloc[-1]):
+                latest_price = float(daily_soxx_series.iloc[-1])
             
-            if len(daily_soxx) >= 200:
-                ma200 = daily_soxx.rolling(window=200).mean().iloc[-1]
-                market_data['soxx_below_ma200'] = float(close_prices["SOXX"].iloc[-1]) < ma200
+            # Обновляем market_data сразу, чтобы использовать актуальное значение везде
+            market_data['soxx_current_price'] = latest_price
 
+            # 2. "Пришиваем" последнюю цену к историческому ряду для точного расчета MA
+            if latest_price != 0.0 and not daily_soxx_series.empty:
+                last_hist_date = daily_soxx_series.index[-1].date()
+                if not close_prices.empty:
+                    today_date = close_prices.index[-1].date() # Используем дату последнего бара из close_prices
+                    if today_date > last_hist_date:
+                        new_idx = pd.to_datetime(today_date).tz_localize('UTC')
+                        daily_soxx_series[new_idx] = latest_price
+                    else:
+                        daily_soxx_series.iloc[-1] = latest_price  # Обновляем текущую свечу
+
+            # 3. Рассчитываем MA200 и сравниваем с последней ценой
+            if len(daily_soxx_series) >= 200:
+                ma200 = daily_soxx_series.rolling(window=200).mean().iloc[-1]
+                if pd.notna(ma200) and ma200 > 0:
+                    market_data['soxx_ma200_value'] = float(ma200)
+                    market_data['soxx_below_ma200'] = latest_price < ma200
+            
         # Рассчитываем изменения согласно интервалу
         bars_lookback = config.MARKET_LOOKBACK_HOURS * 4
 
@@ -1138,11 +1185,11 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                 # FIX: Используем знаковое raw_change для определения корректности направления.
                 # row['actual_move'] нельзя использовать, так как там хранится модуль (abs) из предыдущей фазы,
                 # что приводит к потере информации о направлении движения рынка.
-                is_correct = 1 if (score * raw_change * correlation) > 0 else 0
+                is_correct = 1 if (score * raw_change_pct * correlation) > 0 else 0
 
                 # Если направление неверное, ошибка становится значительно более "негативной",
                 # что заставляет систему агрессивнее снижать множители и веса.
-                effective_error = (actual - predicted) if is_correct else -(actual + predicted)
+                effective_error = (actual - predicted) if is_correct else -(actual + predicted) * config.ASYMMETRIC_LR_FACTOR
                 error = effective_error
 
                 # КАЛИБРОВКА MSF: Подстраиваем чувствительность модели
@@ -1612,32 +1659,37 @@ async def news_worker(worker_id: int, session: aiohttp.ClientSession, state: GTS
         batch = []
         # Пытаемся собрать пакет новостей
         try:
+            # Динамическое определение размера пакета на основе текущего провайдера
+            active_provider = rotator.get_active().get("provider", "gemini")
+            target_batch_size = config.PROVIDER_BATCH_SIZES.get(active_provider, config.DEFAULT_AI_BATCH_SIZE)
+            logging.info(f"Worker {worker_id}: New batch cycle. Provider: {active_provider.upper()}, Target Size: {target_batch_size}")
+
             # Ждем первую новость
             item = await news_queue.get()
             batch.append(item)
-            logging.info(f"📦 Worker {worker_id}: Начат сбор пакета (1/{config.AI_BATCH_SIZE})")
+            logging.info(f"📦 Worker {worker_id}: Начат сбор пакета (1/{target_batch_size})")
             
             # Накопление пакета: ждем до лимита времени или пока не наберется AI_BATCH_SIZE
             batch_start_time = time.time()
-            while len(batch) < config.AI_BATCH_SIZE:
+            while len(batch) < target_batch_size:
                 elapsed = time.time() - batch_start_time
                 wait_time = config.AI_BATCH_WAIT_SECONDS - elapsed
                 
                 if wait_time <= 0:
-                    logging.info(f"⏱ Worker {worker_id}: Лимит времени ожидания исчерпан ({len(batch)}/{config.AI_BATCH_SIZE})")
+                    logging.info(f"⏱ Worker {worker_id}: Лимит времени ожидания исчерпан ({len(batch)}/{target_batch_size})")
                     break
                     
                 try:
                     # Пытаемся забрать следующую новость из очереди с учетом оставшегося времени
                     next_item = await asyncio.wait_for(news_queue.get(), timeout=wait_time)
                     batch.append(next_item)
-                    logging.info(f"➕ Worker {worker_id}: Добавлена новость ({len(batch)}/{config.AI_BATCH_SIZE})")
+                    logging.info(f"➕ Worker {worker_id}: Добавлена новость ({len(batch)}/{target_batch_size})")
                 except asyncio.TimeoutError:
-                    logging.info(f"⏱ Worker {worker_id}: Ожидание новых сообщений истекло ({len(batch)}/{config.AI_BATCH_SIZE})")
+                    logging.info(f"⏱ Worker {worker_id}: Ожидание новых сообщений истекло ({len(batch)}/{target_batch_size})")
                     break
             
-            if len(batch) >= config.AI_BATCH_SIZE:
-                logging.info(f"🚀 Worker {worker_id}: Пакет полностью укомплектован ({len(batch)}/{config.AI_BATCH_SIZE})")
+            if len(batch) >= target_batch_size:
+                logging.info(f"🚀 Worker {worker_id}: Пакет полностью укомплектован ({len(batch)}/{target_batch_size})")
             
             # Обрабатываем пакет
             prepared_batch = []
@@ -1654,7 +1706,7 @@ async def news_worker(worker_id: int, session: aiohttp.ClientSession, state: GTS
                 clean_body = re.sub(r'<[^>]+>', '', body_text).strip()
                 
                 prepared_batch.append({
-                    "text": f"{entry.title}\n{clean_body}"[:4000], # Ограничиваем разумным пределом
+                    "text": f"{entry.title}\n{clean_body}"[:1800], # Оптимизация: сокращаем контекст до 1800 символов
                     "pub_time": entry.get('published') or entry.get('updated') or "Unknown",
                     "entry": entry,
                     "market_data": m_data
@@ -1738,20 +1790,21 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
         raw_score = score  # Сохраняем оригинальный балл от ИИ (-10..10)
         narrative_multiplier = 1.0
 
-        # --- Улучшение: Динамический порог тривиальности ---
-        # В периоды низкой волатильности (VIX < 15) мы более строги к новостям
-        vix_value = market_data.get('price_history', {}).get('^VIX', pd.Series(dtype=float)).iloc[-1] if market_data.get('price_history') is not None and '^VIX' in market_data['price_history'].columns else 20
-        
-        dynamic_trivial_threshold = config.TRIVIAL_SCORE_THRESHOLD
-        if vix_value < 15:
-            dynamic_trivial_threshold *= 1.5 # Повышаем порог (становимся строже)
-        elif vix_value > 25:
-            dynamic_trivial_threshold *= 0.7 # Снижаем порог (пропускаем больше новостей)
+        if config.ENABLE_TRIVIAL_FILTER:
+            # --- Улучшение: Динамический порог тривиальности ---
+            # В периоды низкой волатильности (VIX < 15) мы более строги к новостям
+            vix_value = market_data.get('price_history', {}).get('^VIX', pd.Series(dtype=float)).iloc[-1] if market_data.get('price_history') is not None and '^VIX' in market_data['price_history'].columns else 20
+            
+            dynamic_trivial_threshold = config.TRIVIAL_SCORE_THRESHOLD
+            if vix_value < 15:
+                dynamic_trivial_threshold *= 1.5 # Повышаем порог (становимся строже)
+            elif vix_value > 25:
+                dynamic_trivial_threshold *= 0.7 # Снижаем порог (пропускаем больше новостей)
 
-        if abs(raw_score) < dynamic_trivial_threshold:
-            logging.info(f"🔇 Trivial news ignored: {entry.title}")
-            state.metrics["news_trivial"] += 1
-            return
+            if abs(raw_score) < dynamic_trivial_threshold:
+                logging.info(f"🔇 Trivial news ignored: {entry.title}")
+                state.metrics["news_trivial"] += 1
+                return
 
         # Slug Logic (Duplicates & Narrative Tracking)
         normalized_slug = slug.strip().lower() if slug else None
