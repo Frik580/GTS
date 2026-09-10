@@ -81,8 +81,13 @@ class PromptBuilder:
         Analyze the INTENT and FACTUALITY. If the news is just a "reasoning" on a topic, score it 0.
 
         SPECIAL SOXS SIGNALS RULES:
-        - If MSFT, META, AMZN, or GOOGL mention specific cloud or AI CAPEX changes: set capex_signal (1: increase/boost, -1: decrease/cut, 0: unchanged).
-        - If NVDA, Broadcom (AVGO), AMD, or Micron (MU) change future financial guidance: set guidance_signal (1: upgrade/higher outlook, -1: downgrade/cut, 0: stable).
+        - CAPEX companies: MSFT, META, AMZN, GOOGL/Google/Alphabet.
+          Set capex_signal when news mentions AI/cloud/data center CAPEX or spending changes:
+          1 = increase/boost/expand, -1 = decrease/cut/reduce/pause, 0 = explicitly unchanged, null = not mentioned.
+        - GUIDANCE companies: NVDA/NVIDIA, AVGO/Broadcom, AMD, MU/Micron.
+          Set guidance_signal for earnings outlook, revenue forecast, datacenter demand guidance:
+          1 = raise/upgrade/beat, -1 = lower/downgrade/miss/warning, 0 = reaffirmed/unchanged, null = not mentioned.
+        - Use ticker aliases in your reasoning (NVIDIA_HALVE -> guidance for NVDA if about Nvidia guidance/forecast).
         - If the news does not contain those specific events, these fields MUST be null.
         """
 
@@ -161,7 +166,9 @@ class AIProvider:
     async def call(self, prompt: str, session: aiohttp.ClientSession) -> Tuple[Optional[str], str]:
         active = self.rotator.get_active()
         provider = active.get("provider", "gemini")
-        limiter = getattr(self.state, f"{provider}_limiter")
+        limiter = getattr(self.state, f"{provider}_limiter", None)
+        if limiter is None:
+            limiter = asyncio.Semaphore(1)
 
         async with limiter:
             if provider == "gemini":
@@ -190,36 +197,44 @@ class AIProvider:
                     logging.info(f"✅ [LOCAL AI] Локальный анализ завершен ({active['name']})")
                     return res_json['message']['content'], active["name"]
 
-            api_url = (
-                "https://openrouter.ai/api/v1/chat/completions"
-                if provider == "openrouter"
-                else "https://api.deepseek.com/chat/completions"
-            )
-            api_key = config.OPENROUTER_API_KEY if provider == "openrouter" else config.DEEPSEEK_API_KEY
-            payload = {"model": active["name"], "messages": [{"role": "user", "content": prompt}]}
-            if active.get("supports_json"):
-                payload["response_format"] = {"type": "json_object"}
-            async with session.post(
-                api_url,
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            ) as resp:
-                if resp.status != 200:
-                    error_body = await resp.text()
-                    raise Exception(f"API {provider} returned status {resp.status}: {error_body}")
-                
-                res_json = await resp.json()
-                
-                # Проверка на наличие сообщения об ошибке внутри JSON (даже при статусе 200)
-                if 'error' in res_json:
-                    err_msg = res_json['error'].get('message', 'Unknown provider error')
-                    err_code = res_json['error'].get('code', 'N/A')
-                    raise Exception(f"{provider.upper()} API Error {err_code}: {err_msg}")
+            if provider in ("groq", "cerebras", "openrouter", "deepseek"):
+                api_urls = {
+                    "groq": "https://api.groq.com/openai/v1/chat/completions",
+                    "cerebras": "https://api.cerebras.ai/v1/chat/completions",
+                    "openrouter": "https://openrouter.ai/api/v1/chat/completions",
+                    "deepseek": "https://api.deepseek.com/chat/completions",
+                }
+                api_keys = {
+                    "groq": config.GROQ_API_KEY,
+                    "cerebras": config.CEREBRAS_API_KEY,
+                    "openrouter": config.OPENROUTER_API_KEY,
+                    "deepseek": config.DEEPSEEK_API_KEY,
+                }
+                api_url = api_urls[provider]
+                api_key = api_keys[provider]
+                payload = {"model": active["name"], "messages": [{"role": "user", "content": prompt}]}
+                if active.get("supports_json"):
+                    payload["response_format"] = {"type": "json_object"}
+                async with session.post(
+                    api_url,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json=payload,
+                ) as resp:
+                    if resp.status != 200:
+                        error_body = await resp.text()
+                        raise Exception(f"API {provider} returned status {resp.status}: {error_body}")
+                    res_json = await resp.json()
 
-                if 'choices' not in res_json or not res_json['choices']:
-                    raise Exception(f"Unexpected JSON structure from {provider}: {res_json}")
-                
-                return res_json['choices'][0]['message']['content'], active["name"]
+                    if 'error' in res_json:
+                        err_msg = res_json['error'].get('message', 'Unknown provider error')
+                        err_code = res_json['error'].get('code', 'N/A')
+                        raise Exception(f"{provider.upper()} API Error {err_code}: {err_msg}")
+
+                    if 'choices' not in res_json or not res_json['choices']:
+                        raise Exception(f"Unexpected JSON structure from {provider}: {res_json}")
+                    return res_json['choices'][0]['message']['content'], active["name"]
+
+            raise Exception(f"Unknown AI provider: {provider}")
 
 async def ai_analyze_batch(
     news_batch: List[Dict], rotator: Any, state: Any, session: aiohttp.ClientSession
@@ -303,7 +318,7 @@ async def ai_analyze_batch(
                     await rotator.rotate(state)
         except Exception as e:
             err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "rate limit" in err_str.lower() or "402" in err_str or "403" in err_str:
                 # Пытаемся вытянуть время ожидания из текста ошибки
                 retry_match = re.search(r"retry in ([\d.]+)s", err_str)
                 wait_info = f" (Retry in {retry_match.group(1)}s)" if retry_match else ""
@@ -343,27 +358,6 @@ async def get_embedding(text: str, rotator: Any, state: Any, session: aiohttp.Cl
                     pass # Лимит Gemini исчерпан, молча переходим к фоллбеку
                 else:
                     logging.error(f"Gemini Embedding error: {e}")
-
-    if config.OPENROUTER_API_KEY:
-        async with state.openrouter_limiter:
-            try:
-                url = "https://openrouter.ai/api/v1/embeddings"
-                headers = {"Authorization": f"Bearer {config.OPENROUTER_API_KEY}"}
-                payload = {"model": config.OPENROUTER_EMBEDDING_MODEL, "input": text}
-                async with session.post(url, headers=headers, json=payload, timeout=10) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if 'data' in data and data['data']:
-                            return data['data'][0]['embedding']
-                        else:
-                            error_message = data.get('error', {}).get('message', 'Unknown error structure')
-                            logging.error(f"OpenRouter Embedding error (200 OK): {error_message}")
-                            # Возбуждаем исключение, чтобы оно было поймано и залогировано как Fallback Embedding error
-                            raise Exception(f"OpenRouter API returned success status but contained an error: {error_message}")
-                    else:
-                        logging.error(f"OpenRouter Embedding error status: {resp.status}")
-            except Exception as e:
-                logging.error(f"Fallback Embedding error: {e}")
 
     return None
 

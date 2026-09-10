@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from typing import List, Tuple, Optional, Dict, Any
 from db import get_db_connection
 import config
+from market_data_history import load_validated_daily_frame
+from soxs_signal_utils import divergence_weight, match_prediction_to_ticker
 
 class MetricsManager:
     def __init__(self):
@@ -25,7 +27,7 @@ class MetricsManager:
 
         logging.info("--- [GTS METRICS REPORT] ---")
         logging.info(f"📊 News: {self.metrics['news_sent_telegram']} sent / {self.metrics['news_received']} received")
-        logging.info(f"🛡️ Filters: Src={self.metrics['news_source_filtered']}, URL={self.metrics['news_duplicate_url']}, Hash={self.metrics['news_duplicate_hash']}, Fzy={self.metrics['news_duplicate_fuzzy']}, Sem={self.metrics['news_duplicate_semantic']}, Slug={self.metrics['news_duplicate_slug']}, LowSc={self.metrics['news_low_score']}, LowConf={self.metrics['news_low_confidence']}, Triv={self.metrics['news_trivial']}, SocMute={self.metrics['news_social_muted']}, BTCIgnore={self.metrics['news_btc_ignored']}, Cool={self.metrics['news_cooldown_filtered']}, DB_Dup={self.metrics['news_db_duplicate']}")
+        logging.info(f"🛡️ Filters: Src={self.metrics['news_source_filtered']}, URL={self.metrics['news_duplicate_url']}, Hash={self.metrics['news_duplicate_hash']}, Fzy={self.metrics['news_duplicate_fuzzy']}, Sem={self.metrics['news_duplicate_semantic']}, Slug={self.metrics['news_duplicate_slug']}, Startup={self.metrics.get('news_startup_filtered', 0)}, LowSc={self.metrics['news_low_score']}, LowConf={self.metrics['news_low_confidence']}, Triv={self.metrics['news_trivial']}, SocMute={self.metrics['news_social_muted']}, BTCIgnore={self.metrics['news_btc_ignored']}, Cool={self.metrics['news_cooldown_filtered']}, DB_Dup={self.metrics['news_db_duplicate']}")
         logging.info(f"🧠 AI: Avg Time {avg_ai:.2f}s, Requests {self.metrics['ai_requests']}")
         logging.info(f"📈 Market: Provider={market_status}, LastSync={last_sync}, AvgTime={avg_market:.2f}s")
         logging.info(f"🩺 Health: Queue={q_size}, RAM_Scores={scores_count}, Uptime={round((time.time() - self.start_time)/3600, 2)}h")
@@ -173,17 +175,19 @@ class GTSStateManager:
 
     # === МЕТОДЫ СБОРА ИНДИКАТОРОВ ДЛЯ SOXS v5.0 ===
 
-    async def get_last_capex_signals(self, days: int = 15) -> Dict[str, Tuple[int, Optional[str], Optional[str], Optional[str]]]:
+    async def get_last_capex_signals(self, days: int = None) -> Dict[str, Tuple[int, Optional[str], Optional[str], Optional[str]]]:
         """
         Извлекает последние подтвержденные ИИ сигналы capex за последние N дней.
         Возвращает словарь с кортежем (сигнал, event_key, timestamp, link).
         """
-        signals = {ticker: (0, None, None, None) for ticker in ["MSFT", "META", "AMZN", "GOOGL"]}
+        if days is None:
+            days = config.SOXS_SIGNAL_LOOKBACK_DAYS
+        signals = {ticker: (0, None, None, None) for ticker in config.SOXS_CAPEX_WEIGHTS.keys()}
         async with self.db_lock:
             async with get_db_connection() as conn:
-                # Фильтруем события по тикерам и наличию сигналов
                 async with conn.execute("""
-                    SELECT p.event_key, p.capex_signal, p.timestamp, e.link
+                    SELECT p.event_key, p.capex_signal, p.timestamp, e.link,
+                           e.title, e.summary, e.slug
                     FROM predictions p
                     JOIN events e ON p.event_id = e.id
                     WHERE p.capex_signal IS NOT NULL AND p.capex_signal != 0
@@ -191,27 +195,39 @@ class GTSStateManager:
                     ORDER BY p.timestamp DESC
                 """, (days,)) as cursor:
                     rows = await cursor.fetchall()
-                    
-                    # Пытаемся сопоставить сущности
+
                     for row in rows:
-                        ekey = row['event_key'].upper()
                         for comp in signals.keys():
-                            if comp in ekey:
-                                # Сохраняем самый свежий ненулевой сигнал для каждой компании
-                                if signals[comp][0] == 0:
-                                    signals[comp] = (row['capex_signal'], row['event_key'], row['timestamp'], row['link'])
+                            if signals[comp][0] != 0:
+                                continue
+                            if match_prediction_to_ticker(
+                                comp,
+                                row["event_key"],
+                                row["title"] or "",
+                                row["summary"] or "",
+                                row["slug"] or "",
+                            ):
+                                signals[comp] = (
+                                    row["capex_signal"],
+                                    row["event_key"],
+                                    row["timestamp"],
+                                    row["link"],
+                                )
         return signals
 
-    async def get_last_guidance_signals(self, days: int = 15) -> Dict[str, Tuple[int, Optional[str], Optional[str], Optional[str]]]:
+    async def get_last_guidance_signals(self, days: int = None) -> Dict[str, Tuple[int, Optional[str], Optional[str], Optional[str]]]:
         """
         Извлекает последние подтвержденные ИИ сигналы guidance производителей чипов.
         Возвращает словарь с кортежем (сигнал, event_key, timestamp, link).
         """
-        signals = {ticker: (0, None, None, None) for ticker in ["NVDA", "AVGO", "AMD", "MU"]}
+        if days is None:
+            days = config.SOXS_SIGNAL_LOOKBACK_DAYS
+        signals = {ticker: (0, None, None, None) for ticker in config.SOXS_GUIDANCE_WEIGHTS.keys()}
         async with self.db_lock:
             async with get_db_connection() as conn:
                 async with conn.execute("""
-                    SELECT p.event_key, p.guidance_signal, p.timestamp, e.link
+                    SELECT p.event_key, p.guidance_signal, p.timestamp, e.link,
+                           e.title, e.summary, e.slug
                     FROM predictions p
                     JOIN events e ON p.event_id = e.id
                     WHERE p.guidance_signal IS NOT NULL AND p.guidance_signal != 0
@@ -219,44 +235,72 @@ class GTSStateManager:
                     ORDER BY p.timestamp DESC
                 """, (days,)) as cursor:
                     rows = await cursor.fetchall()
-                    
+
                     for row in rows:
-                        ekey = row['event_key'].upper()
                         for comp in signals.keys():
-                            if comp in ekey or (comp == "AVGO" and "BROADCOM" in ekey):
-                                if signals[comp][0] == 0: # Если сигнал для этой компании еще не найден
-                                    signals[comp] = (row['guidance_signal'], row['event_key'], row['timestamp'], row['link'])
+                            if signals[comp][0] != 0:
+                                continue
+                            if match_prediction_to_ticker(
+                                comp,
+                                row["event_key"],
+                                row["title"] or "",
+                                row["summary"] or "",
+                                row["slug"] or "",
+                            ):
+                                signals[comp] = (
+                                    row["guidance_signal"],
+                                    row["event_key"],
+                                    row["timestamp"],
+                                    row["link"],
+                                )
         return signals
 
     async def get_divergence_metrics_10d(self) -> Tuple[int, List[str]]:
         """
-        Оценивает силу дивергенции (Price confirmation) по 10-балльной шкале.
-        Считает количество подтвержденных сильных ИИ-событий (новости с score > 4.0),
-        которые привели к отрицательному движению цены или отсутствию реакции рынка.
+        Price Confirmation Divergence v2:
+        bearish semiconductor signals (guidance/capex cuts, failed bearish news)
+        that did not confirm in price action.
         """
+        lookback = config.SOXS_DIVERGENCE_LOOKBACK_DAYS
         async with self.db_lock:
             async with get_db_connection() as conn:
                 async with conn.execute("""
-                    SELECT event_key FROM predictions
-                    WHERE score > 4.0 AND is_correct = 0 AND target_asset = 'soxs'
-                    AND timestamp >= datetime('now', '-10 days') GROUP BY event_key
-                """) as cursor:
+                    SELECT p.event_key, p.score, p.target_asset, p.is_correct, p.resolved,
+                           p.guidance_signal, p.capex_signal
+                    FROM predictions p
+                    WHERE p.timestamp >= datetime('now', '-' || ? || ' days')
+                    ORDER BY p.timestamp DESC
+                """, (lookback,)) as cursor:
                     rows = await cursor.fetchall()
-                    keys = [row['event_key'] for row in rows] if rows else []
-                    # Масштабируем до диапазона 0..10
-                    return min(10, len(keys) * 2), keys
+
+        seen_keys = set()
+        total_weight = 0
+        keys: List[str] = []
+        for row in rows:
+            r = dict(row)
+            w = divergence_weight(r)
+            if w <= 0:
+                continue
+            ekey = r["event_key"]
+            if ekey in seen_keys:
+                continue
+            seen_keys.add(ekey)
+            total_weight += w
+            keys.append(ekey)
+
+        return min(10, total_weight), keys
 
     _market_caps_cache = {}
     _last_caps_fetch = 0
 
-    async def get_rotation_ranking(self) -> Tuple[int, float, float, float]:
+    async def get_rotation_ranking(self) -> Tuple[Optional[int], float, float, float]:
         """
         Leadership Fatigue Indicator v2.0 (Ротация во второй эшелон):
         Сравнивает взвешенную по капитализации доходность "лидеров" (Tier 1)
         и "преследователей" (Tier 2) за последние 10 торговых дней.
         """
         now = time.time()
-        all_rotation_tickers = ["NVDA", "AVGO", "ASML", "AMD", "MU", "INTC", "QCOM"]
+        all_rotation_tickers = list(config.ROTATION_TICKERS)
 
         # Проверяем, есть ли данные в кэше. Если нет, принудительно обновляем.
         missing_caps = any(t not in self._market_caps_cache for t in all_rotation_tickers)
@@ -298,23 +342,26 @@ class GTSStateManager:
             tier1 = {"NVDA": 0, "AVGO": 0, "ASML": 0}
             tier2 = {"AMD": 0, "MU": 0, "INTC": 0, "QCOM": 0}
 
-            def get_weighted_return(basket: dict) -> float:
+            def get_weighted_return(basket: dict) -> Optional[float]:
                 total_cap = 0
                 weighted_return = 0
+                min_required = (len(basket) + 1) // 2
                 
                 valid_tickers_in_basket = [t for t in basket.keys() if self.historical_cache.get(t) is not None and not self.historical_cache[t].empty and t in self._market_caps_cache]
-                if not valid_tickers_in_basket:
+                if len(valid_tickers_in_basket) < min_required:
                     # Логируем, почему корзина пуста
                     missing_p = [t for t in basket.keys() if self.historical_cache.get(t) is None or self.historical_cache[t].empty]
                     missing_c = [t for t in basket.keys() if t not in self._market_caps_cache]
-                    logging.warning(f"Rotation: пустая корзина. Нет цен для: {missing_p}. Нет капитализации для: {missing_c}")
-                    return 0.0
+                    logging.warning(f"Rotation: недостаточно данных. Нет цен для: {missing_p}. Нет капитализации для: {missing_c}")
+                    return None
 
                 for ticker in valid_tickers_in_basket:
                     total_cap += self._market_caps_cache[ticker]
 
-                if total_cap == 0: return 0.0
+                if total_cap == 0:
+                    return None
 
+                valid_returns = 0
                 for ticker in valid_tickers_in_basket:
                     weight = self._market_caps_cache[ticker] / total_cap
                     price_series = self.historical_cache[ticker]
@@ -322,12 +369,14 @@ class GTSStateManager:
                         ret = price_series.pct_change(10).iloc[-1]
                         if pd.notna(ret):
                             weighted_return += ret * weight
-                return weighted_return
+                            valid_returns += 1
+                return weighted_return if valid_returns >= min_required else None
 
             ret_tier1 = get_weighted_return(tier1)
             ret_tier2 = get_weighted_return(tier2)
 
-            if ret_tier1 == 0 and ret_tier2 == 0: return 3, 0.0, 0.0, 0.0 # Фоллбек, если нет данных
+            if ret_tier1 is None or ret_tier2 is None:
+                return None, 0.0, 0.0, 0.0
 
             spread = ret_tier2 - ret_tier1
             if spread <= 0:
@@ -337,16 +386,43 @@ class GTSStateManager:
             return score, spread, ret_tier1, ret_tier2
         except Exception as e:
             logging.warning(f"Ошибка в get_rotation_ranking: {e}")
-            return 3, 0.0, 0.0, 0.0
+            return None, 0.0, 0.0, 0.0
 
-    async def save_quant_decision(self, bear_prob: float, target_pos: float, capex: float, guidance: float, triggers: List[str]):
+    async def save_quant_decision(
+        self,
+        bear_prob: float,
+        target_pos: float,
+        capex: float,
+        guidance: float,
+        triggers: List[str],
+        bear_score: float = 0.0,
+        readiness_status: str = "LEGACY",
+        is_actionable: bool = False,
+        shadow_target_pos: Optional[float] = None,
+        block_reason: Optional[str] = None,
+    ):
         """Сохраняет исторический слепок решения в SQLite."""
         async with self.db_lock:
             async with get_db_connection() as conn:
                 await conn.execute("""
-                    INSERT INTO quant_decisions (bear_probability, target_position, capex_score, guidance_score, active_triggers)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (bear_prob, target_pos, capex, guidance, ", ".join(triggers)))
+                    INSERT INTO quant_decisions (
+                        bear_probability, bear_score, target_position, capex_score,
+                        guidance_score, active_triggers, readiness_status,
+                        is_actionable, shadow_target_position, block_reason
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    bear_prob,
+                    bear_score,
+                    target_pos,
+                    capex,
+                    guidance,
+                    ", ".join(triggers),
+                    readiness_status,
+                    1 if is_actionable else 0,
+                    shadow_target_pos,
+                    block_reason,
+                ))
                 await conn.commit()
 
     """Фасад для доступа к специализированным менеджерам состояния."""
@@ -360,9 +436,11 @@ class GTSStateManager:
         self.ai_client = None  
         self.db_lock = asyncio.Lock()
         self.gemini_limiter = asyncio.Semaphore(config.GEMINI_CONCURRENCY)
+        self.groq_limiter = asyncio.Semaphore(config.GROQ_CONCURRENCY)
+        self.cerebras_limiter = asyncio.Semaphore(config.CEREBRAS_CONCURRENCY)
         self.openrouter_limiter = asyncio.Semaphore(config.OPENROUTER_CONCURRENCY)
         self.deepseek_limiter = asyncio.Semaphore(config.DEEPSEEK_CONCURRENCY)
-        self.ollama_limiter = asyncio.Semaphore(1) 
+        self.ollama_limiter = asyncio.Semaphore(1)
         self.hourly_summary_news = []
         self.last_price_alert = {}
         self.learning_rate = config.LEARNING_RATE
@@ -474,74 +552,38 @@ class GTSStateManager:
     def clear_hourly_summary_news(self):
         self.hourly_summary_news.clear()
 
-    async def get_db_titles(self, hours: int = 3) -> List[str]:
+    async def get_db_titles(self, hours: int = 72, limit: int = 500) -> List[str]:
         async with self.db_lock:
             async with get_db_connection() as conn:
-                async with conn.execute(f"SELECT title FROM events WHERE timestamp > datetime('now', '-{hours} hours') ORDER BY timestamp DESC LIMIT 100") as cursor:
+                async with conn.execute(
+                    """
+                    SELECT title FROM events
+                    WHERE timestamp > datetime('now', '-' || ? || ' hours')
+                    ORDER BY timestamp DESC LIMIT ?
+                    """,
+                    (hours, limit),
+                ) as cursor:
                     return [row['title'] for row in await cursor.fetchall()]
 
     # Метод перенесен сюда, настроены корректные отступы, db_lock и pandas Series
     async def load_historical_cache_to_ram(self, tickers: List[str]):
-        """Загружает архивные котировки за последний год в RAM."""
-        logging.info("🧠 Загрузка исторических цен из БД в RAM...")
+        """Load only histories that pass the production data-quality gate."""
+        logging.info("🧠 Загрузка проверенных исторических цен из БД в RAM...")
         async with self.db_lock:
             async with get_db_connection() as conn:
-                for ticker in tickers:
-                    async with conn.execute(
-                        """
-                        SELECT date, close FROM daily_prices 
-                        WHERE ticker = ? AND date >= datetime('now', '-365 days') 
-                        ORDER BY date ASC
-                        """, (ticker,)
-                    ) as cursor:
-                        rows = await cursor.fetchall() # <-- Здесь rows пустой, если в БД нет данных
-
-                    # Если в БД нет данных, принудительно загружаем из yfinance
-                    if not rows:
-                        logging.warning(f"Данные для {ticker} не найдены в локальной БД. Загрузка из yfinance...")
-                        try:
-                            import yfinance as yf
-                            # Загружаем дневные данные за последний год
-                            downloaded_data = yf.download(ticker, period="1y", interval="1d", progress=False)
-                            
-                            data = pd.Series(dtype=float)
-
-                            if not downloaded_data.empty:
-                                if isinstance(downloaded_data, pd.Series):
-                                    data = downloaded_data
-                                elif 'Close' in downloaded_data.columns:
-                                    # .squeeze() handles the case where yfinance returns a DataFrame
-                                    # with a MultiIndex, resulting in df['Close'] being a
-                                    # single-column DataFrame instead of a Series.
-                                    close_data = downloaded_data['Close'].squeeze()
-                                    if isinstance(close_data, pd.Series):
-                                        data = close_data
-
-                            if not data.empty:
-                                # Сохраняем в БД для будущего использования
-                                records_to_save = []
-                                for dt, val in data.items():
-                                    if pd.notna(val):
-                                        date_str = dt.strftime('%Y-%m-%d')
-                                        records_to_save.append((ticker, date_str, float(val)))
-                                
-                                if records_to_save:
-                                    await conn.executemany(
-                                        "INSERT OR REPLACE INTO daily_prices (ticker, date, close) VALUES (?, ?, ?)",
-                                        records_to_save
-                                    )
-                                    await conn.commit()
-                                    logging.info(f"✅ Сохранено {len(records_to_save)} записей для {ticker} в локальную БД.")
-                                
-                                # Заполняем RAM-кэш свежими данными
-                                self.historical_cache[ticker] = data.sort_index()
-                            else:
-                                self.historical_cache[ticker] = pd.Series(dtype=float) # Создаем пустую серию, чтобы избежать повторных попыток
-                        except Exception as e:
-                            logging.error(f"❌ Ошибка при загрузке {ticker} из yfinance: {e}")
-                    else:
-                        # Если данные есть в БД, используем их
-                        self.historical_cache[ticker] = pd.Series({row['date']: row['close'] for row in rows}).sort_index()
+                frame = await load_validated_daily_frame(
+                    conn, tickers, days=config.PRICE_HISTORY_RAM_DAYS
+                )
+            for ticker in tickers:
+                if ticker in frame.columns and not frame[ticker].dropna().empty:
+                    self.historical_cache[ticker] = frame[ticker].dropna().sort_index()
+                else:
+                    logging.error(
+                        "История %s не прошла проверку; RAM-кэш оставлен пустым "
+                        "(fail-closed).",
+                        ticker,
+                    )
+                    self.historical_cache[ticker] = pd.Series(dtype=float)
 
         logging.info(f"✅ RAM-кэш котировок инициализирован для {len(tickers)} инструментов.")
 
@@ -566,6 +608,24 @@ class GTSStateManager:
             from engine import clean_title
             for row in rows:
                 self.cache.clean_titles[clean_title(row['title'])] = True
+
+            async with conn.execute(
+                """
+                SELECT link, title FROM events
+                ORDER BY timestamp DESC LIMIT ?
+                """,
+                (config.DB_URL_CACHE_LIMIT,),
+            ) as cursor:
+                url_rows = await cursor.fetchall()
+            for row in url_rows:
+                if row['link']:
+                    self.cache.urls[row['link']] = True
+                if row['title']:
+                    self.cache.titles[row['title']] = True
+            logging.info(
+                f"📚 Dedup cache loaded: {len(self.cache.clean_titles)} titles, "
+                f"{len(self.cache.urls)} URLs from DB"
+            )
 
             await self.learning.load_config_weights()
             async with conn.execute("SELECT event_key, target_asset, weight FROM weights") as cursor:

@@ -4,101 +4,7 @@ import yfinance as yf
 from datetime import datetime, timedelta, timezone
 import config
 from db import get_db_connection, init_db
-import numpy as np
-
-def _drop_tz(series):
-    if series.index.tz is not None:
-        series = series.copy()
-        series.index = series.index.tz_convert(None)
-    return series
-
-def get_ewma_beta(target_rets, bench_rets):
-    if len(target_rets) < 10:
-        return 1.0
-    alpha = 1 - config.EWMA_LAMBDA
-    cov = target_rets.ewm(alpha=alpha).cov(bench_rets).iloc[-1]
-    var = bench_rets.ewm(alpha=alpha).var().iloc[-1]
-    beta = cov / var if var > 0 else 1.0
-    return max(-config.BETA_CLIP, min(config.BETA_CLIP, beta))
-
-def calculate_expected_move(target_key, bench_cfg, prediction_time, b_move_raw, price_history):
-    try:
-        target_ticker = config.ASSET_TICKER_MAP.get(target_key)
-        hist_end = prediction_time
-        hist_start = hist_end - timedelta(days=2)
-
-        if bench_cfg["type"] == "leveraged":
-            return b_move_raw * bench_cfg["factor"]
-
-        if bench_cfg["type"] == "multi_factor":
-            return b_move_raw * bench_cfg["weights"][0]
-
-        bench_ticker = bench_cfg["primary"]
-        if target_ticker in price_history and bench_ticker in price_history:
-            t_rets = _drop_tz(price_history[target_ticker].dropna()).loc[hist_start:hist_end].pct_change().dropna()
-            b_rets = _drop_tz(price_history[bench_ticker].dropna()).loc[hist_start:hist_end].pct_change().dropna()
-            beta = get_ewma_beta(t_rets, b_rets)
-            return b_move_raw * beta
-
-        return b_move_raw * bench_cfg.get("factor", 1.0)
-    except Exception:
-        return 0.0
-
-async def calculate_signed_alpha(asset, ticker, p_time, t_end, history):
-    ts = _drop_tz(history[ticker].dropna())
-    idx_at = ts.index.get_indexer([p_time], method='backfill')[0]
-    if idx_at == -1:
-        return None
-
-    # Корректируем окно для обработки нерабочего времени
-    actual_start = ts.index[idx_at]
-    lookback_duration = t_end - p_time
-    shifted_end = actual_start + lookback_duration
-    
-    # Если данных в истории не хватает для покрытия смещенного окна, пропускаем
-    if ts.index[-1] < shifted_end:
-        return None
-
-    idx_after = ts.index.get_indexer([shifted_end], method='backfill')[0]
-    if idx_after == -1 or idx_at == idx_after:
-        return None
-
-    p_at = float(ts.iloc[idx_at])
-    p_after = float(ts.iloc[idx_after])
-    if p_at == 0:
-        return None
-
-    raw_change = float(((p_after - p_at) / p_at) * 100)
-    b_cfg = config.ASSET_BENCHMARK_CONFIG.get(asset.lower())
-
-    # Расчет волатильности (используем окно ДО новости или ближайшее доступное)
-    asset_rets = _drop_tz(history[ticker].dropna()).loc[:t_end].pct_change().tail(config.VOLATILITY_WINDOW)
-    realized_vol_raw = asset_rets.std() * 100
-    if pd.isna(realized_vol_raw) or realized_vol_raw == 0:
-        realized_vol_raw = 1.0  # Дефолт 1%, если данных мало
-
-    vol_floor = config.GLOBAL_Z_ALPHA_VOL_FLOOR if asset.lower() == "global" else config.Z_ALPHA_VOL_FLOOR
-    realized_vol = max(realized_vol_raw, vol_floor)
-
-    alpha_val = raw_change
-    if b_cfg:
-        bench_key = b_cfg["primary"]
-        # Если бенчмарк совпадает с тикером (случай global), не вычитаем его
-        if bench_key in history and bench_key != ticker:
-            b_ts = _drop_tz(history[bench_key].dropna())
-            idx_b_at = b_ts.index.get_indexer([p_time], method='backfill')[0]
-            # Синхронизируем окно бенчмарка со смещенным окном актива
-            idx_b_after = b_ts.index.get_indexer([shifted_end], method='backfill')[0]
-
-            if idx_b_at != -1 and idx_b_after != -1:
-                b_at = float(b_ts.iloc[idx_b_at])
-                b_after = float(b_ts.iloc[idx_b_after])
-                if b_at != 0:
-                    b_move = ((b_after - b_at) / b_at) * 100
-                    expected = calculate_expected_move(asset.lower(), b_cfg, p_time, b_move, history)
-                    alpha_val = (raw_change - expected)
-
-    return alpha_val / realized_vol
+from alpha_utils import calculate_signed_alpha
 
 async def recalculate_all_stats():
     print("🚀 Запуск полного пересчета статистики GTS...")
@@ -132,10 +38,18 @@ async def recalculate_all_stats():
         download_tickers = [config.ASSET_TICKER_MAP[a] for a in assets_lower 
                            if a in config.ASSET_TICKER_MAP and config.ASSET_TICKER_MAP[a] != 'GLOBAL_REGIME']
         
-        # Если есть глобальный режим, добавляем его компоненты
+        # Если есть глобальный режим, добавляем его компоненты и бенчмарк для Z-Alpha
         if 'global' in assets_lower:
             regime_comps = ['^VIX', '^MOVE', 'DX-Y.NYB', 'HYG', '^TNX', '^IRX']
             download_tickers.extend(regime_comps)
+            global_bench = config.ASSET_BENCHMARK_CONFIG.get("global", {}).get("primary")
+            if global_bench and global_bench != "GLOBAL_REGIME":
+                download_tickers.append(global_bench)
+        
+        # Multi-factor benchmarks (gold: TIP + DXY)
+        for asset_cfg in config.ASSET_BENCHMARK_CONFIG.values():
+            if asset_cfg.get("secondary"):
+                download_tickers.append(asset_cfg["secondary"])
         
         download_tickers = list(set(download_tickers))
         print(f"📈 Загрузка истории для тикеров: {download_tickers}")
@@ -189,13 +103,8 @@ async def recalculate_all_stats():
             p_time = datetime.strptime(row['timestamp'], '%Y-%m-%d %H:%M:%S')
             t_end = p_time + timedelta(hours=lookback_h)
             
-            # Ищем ближайшие цены в истории
             try:
-                ts = history[ticker].dropna()
-                # Убираем таймзоны для сравнения
-                ts.index = ts.index.tz_localize(None)
-                
-                signed_alpha = await calculate_signed_alpha(asset, ticker, p_time, t_end, history)
+                signed_alpha = calculate_signed_alpha(asset, ticker, p_time, t_end, history)
                 if signed_alpha is not None:
 
                     actual_z = min(abs(signed_alpha), 10.0)
@@ -216,7 +125,7 @@ async def recalculate_all_stats():
                     # Сохраняем только is_correct, actual_move (Z-score) и signed_alpha. НЕ ТРОГАЕМ predicted_impact.
                     updates.append((is_correct, actual_z, signed_alpha, row['id']))
 
-            except Exception as e:
+            except Exception:
                 continue
 
         # 4. Массовое обновление флагов

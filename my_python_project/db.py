@@ -132,13 +132,32 @@ async def init_db():
         """)
 
         await conn.execute("""
+        CREATE TABLE IF NOT EXISTS price_sync_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticker TEXT NOT NULL,
+            provider TEXT,
+            status TEXT NOT NULL,
+            row_count INTEGER NOT NULL DEFAULT 0,
+            first_date TEXT,
+            last_date TEXT,
+            error TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        await conn.execute("""
         CREATE TABLE IF NOT EXISTS quant_decisions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         bear_probability REAL,
+        bear_score REAL,
         target_position REAL,
         capex_score REAL,
         guidance_score REAL,
         active_triggers TEXT,
+        readiness_status TEXT DEFAULT 'LEGACY',
+        is_actionable INTEGER DEFAULT 0,
+        shadow_target_position REAL,
+        block_reason TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -174,6 +193,13 @@ async def init_db():
                 "model_name": "TEXT",
                 "capex_signal": "INTEGER DEFAULT 0",
                 "guidance_signal": "INTEGER DEFAULT 0"
+            },
+            "quant_decisions": {
+                "bear_score": "REAL",
+                "readiness_status": "TEXT DEFAULT 'LEGACY'",
+                "is_actionable": "INTEGER DEFAULT 0",
+                "shadow_target_position": "REAL",
+                "block_reason": "TEXT",
             },
             "asset_stats": {
                 "multiplier": f"REAL DEFAULT {config.IMPACT_MULTIPLIER}"

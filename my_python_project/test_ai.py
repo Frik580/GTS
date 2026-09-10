@@ -1,5 +1,6 @@
 import asyncio
 import aiohttp
+from http_utils import create_session
 import textwrap
 from engine import ai_analyze, ModelRotator, init_model_pool, GTSStateManager
 from typing import List, Dict
@@ -18,7 +19,7 @@ async def run_test_for_provider(provider_name: str, test_cases: List[Dict[str, s
 
     print(f"--- 🚀 ТЕСТИРОВАНИЕ ПРОВАЙДЕРА: {provider_name.upper()} (Модель: {rotator.get_active()['name']}) ---")
     
-    async with aiohttp.ClientSession() as session:
+    async with create_session() as session:
         for i, case in enumerate(test_cases):
             print(f"\n--- കേസ് #{i+1}: {case['description']} ---")
             print(f"Текст: {case['text']}")
@@ -57,6 +58,8 @@ async def main():
     ]
 
     # Последовательно тестируем каждого провайдера
+    await run_test_for_provider("groq", test_cases)
+    await run_test_for_provider("cerebras", test_cases)
     await run_test_for_provider("gemini", test_cases)
     await run_test_for_provider("openrouter", test_cases)
     await run_test_for_provider("deepseek", test_cases)

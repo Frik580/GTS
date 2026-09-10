@@ -1,43 +1,54 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.js
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
 
-# testing
-/coverage
+# Packaging and build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
 
-# vscode
-/.vscode/
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# local env files
-.env*.local
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-
-# project specific
+# Local configuration and secrets
 .env
+.env.*
+!.env.example
+!.env.template
+
+# Local databases and runtime logs
 *.db
-gts.log
+*.sqlite
+*.sqlite3
+*.db-*
+*.log
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project-specific generated output
+graphify-out/

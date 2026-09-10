@@ -30,9 +30,25 @@ from state_service import GTSStateManager
 from ai_processor import ai_analyze_batch, get_embedding, is_semantic_duplicate
 from model_factory import init_model_pool, ModelRotator
 from quant_engine import SOXSQuantEngine
+from quant_calibration import (
+    CalibrationBlockedError,
+    fit_from_history,
+    load_calibrator_from_db,
+    load_daily_soxx_from_db,
+    save_calibrator_to_db,
+)
+from alpha_utils import calculate_expected_move
+from soxs_signal_utils import enrich_soxs_signals
+from http_utils import create_session, create_verified_ssl_context
+from market_data_history import (
+    fetch_yahoo_chart_intraday,
+    load_validated_daily_frame,
+    sync_daily_price_histories,
+)
 import state_service
 
 START_TIME = time.time()
+ENGINE_START_TS = START_TIME  # watermark для ONLY_NEWS_AFTER_STARTUP
 
 # =========================
 # LOGGING CONFIG
@@ -71,13 +87,226 @@ async def metrics_reporter_task(state: GTSStateManager):
 
 # Инициализируем глобальное состояние и движок на уровне модуля
 last_notified_position = -1.0  # Используем -1.0 для корректной отправки первого сигнала (0.0 тоже позиция)
+last_applied_soxs_position = -1.0
+pending_soxs_target: Optional[float] = None
+pending_soxs_confirm_count = 0
+last_soxs_position_change_ts = 0.0
+last_soxs_snapshot_ts = 0.0
 quant_engine = SOXSQuantEngine()
+last_soxs_calibration_run = 0.0
+last_soxs_readiness: Dict[str, Any] = {
+    "status": "SHADOW",
+    "is_actionable": False,
+    "blockers": ["calibration_not_fitted", "manual_promotion_disabled"],
+}
+
+
+def apply_soxs_hysteresis(raw_target: float) -> float:
+    """Require consecutive cycles + min interval before changing applied SOXS position."""
+    global last_applied_soxs_position, pending_soxs_target, pending_soxs_confirm_count
+    global last_soxs_position_change_ts
+
+    if last_applied_soxs_position < 0:
+        last_applied_soxs_position = raw_target
+        pending_soxs_target = raw_target
+        pending_soxs_confirm_count = config.SOXS_POSITION_CONFIRM_CYCLES
+        return raw_target
+
+    if raw_target != pending_soxs_target:
+        pending_soxs_target = raw_target
+        pending_soxs_confirm_count = 1
+    else:
+        pending_soxs_confirm_count += 1
+
+    if pending_soxs_confirm_count < config.SOXS_POSITION_CONFIRM_CYCLES:
+        return last_applied_soxs_position
+
+    if raw_target == last_applied_soxs_position:
+        return last_applied_soxs_position
+
+    min_gap = config.SOXS_POSITION_HYSTERESIS_HOURS * 3600
+    if last_soxs_position_change_ts > 0 and (time.time() - last_soxs_position_change_ts) < min_gap:
+        return last_applied_soxs_position
+
+    last_applied_soxs_position = raw_target
+    last_soxs_position_change_ts = time.time()
+    return last_applied_soxs_position
+
+
+def _parse_sqlite_utc_timestamp(value: Any) -> float:
+    """Convert SQLite timestamps to epoch seconds; invalid values stay unlocked."""
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+def _position_state_from_rows(rows: List[Any]) -> Tuple[float, float]:
+    """Return latest position and timestamp of the latest actual position change."""
+    latest_position = -1.0
+    previous_position: Optional[float] = None
+    last_change_ts = 0.0
+
+    for row in rows:
+        try:
+            position = float(row["target_position"])
+            if not math.isfinite(position):
+                continue
+            timestamp = _parse_sqlite_utc_timestamp(row["timestamp"])
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+
+        latest_position = position
+        if previous_position is None or position != previous_position:
+            last_change_ts = timestamp
+        previous_position = position
+
+    return latest_position, last_change_ts
+
+
+async def load_soxs_position_state_from_db() -> Tuple[float, float]:
+    async with get_db_connection() as conn:
+        async with conn.execute(
+            "SELECT target_position, timestamp FROM quant_decisions ORDER BY id ASC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return _position_state_from_rows(rows)
+
+
+async def load_last_soxs_position_from_db() -> float:
+    """Backward-compatible accessor for callers that only need the position."""
+    position, _ = await load_soxs_position_state_from_db()
+    return position
+
+
+async def init_soxs_position_state() -> None:
+    """Restore applied SOXS position from the latest quant snapshot."""
+    global last_notified_position, last_applied_soxs_position, pending_soxs_target
+    global pending_soxs_confirm_count, last_soxs_position_change_ts
+
+    pos, change_ts = await load_soxs_position_state_from_db()
+    if pos >= 0:
+        last_notified_position = pos
+        last_applied_soxs_position = pos
+        pending_soxs_target = pos
+        pending_soxs_confirm_count = config.SOXS_POSITION_CONFIRM_CYCLES
+        last_soxs_position_change_ts = change_ts
+        logging.info(
+            "SOXS position state restored from DB: %.0f%% (last change: %s)",
+            pos,
+            datetime.fromtimestamp(change_ts, timezone.utc).isoformat() if change_ts else "unknown",
+        )
+
+
+def _positive_finite_number(value: Any) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float, np.number))
+        and math.isfinite(float(value))
+        and float(value) > 0
+    )
+
+
+def _soxs_market_data_gaps(
+    market_data: Optional[Dict[str, Any]], rotation_score: Optional[int]
+) -> List[str]:
+    """List inputs that make an SOXS decision unsafe to calculate."""
+    if not market_data:
+        return ["market_data", "soxx_current_price", "soxx_ma200_value", "soxx_below_ma200", "rotation_indicator"]
+
+    gaps = []
+    if not _positive_finite_number(market_data.get("soxx_current_price")):
+        gaps.append("soxx_current_price")
+    if not _positive_finite_number(market_data.get("soxx_ma200_value")):
+        gaps.append("soxx_ma200_value")
+    if not isinstance(market_data.get("soxx_below_ma200"), (bool, np.bool_)):
+        gaps.append("soxx_below_ma200")
+    stale_map = market_data.get("stale_map")
+    if (
+        market_data.get("is_stale", True)
+        or not isinstance(stale_map, dict)
+        or stale_map.get("soxx_change", True)
+    ):
+        gaps.append("soxx_price_stale")
+    if rotation_score is None:
+        gaps.append("rotation_indicator")
+    return gaps
+
+
+def _soxs_signal_readiness(
+    calibrator: Any,
+    market_data: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Return the auditable promotion state for an SOXS position alert."""
+    calibration_state = "SHADOW"
+    blockers: List[str] = []
+
+    if calibrator.is_blocked:
+        calibration_state = "BLOCKED"
+        blockers.append(calibrator.block_reason or "calibration_blocked")
+    elif not calibrator.is_fitted:
+        blockers.append(calibrator.block_reason or "calibration_not_fitted")
+    else:
+        calibration_state = "VALIDATED"
+        if calibrator.sample_count < config.SOXS_ACTIONABLE_MIN_SAMPLES:
+            blockers.append("insufficient_promotion_samples")
+        if calibrator.validation_count < config.SOXS_ACTIONABLE_MIN_VALIDATION_SAMPLES:
+            blockers.append("insufficient_promotion_validation_samples")
+        if calibrator.validation_brier is None or calibrator.baseline_brier is None:
+            blockers.append("missing_holdout_brier")
+        elif (
+            calibrator.validation_brier
+            > calibrator.baseline_brier - config.SOXS_ACTIONABLE_MIN_BRIER_IMPROVEMENT
+        ):
+            blockers.append("insufficient_holdout_brier_improvement")
+
+    if not market_data or not market_data.get("soxs_history_valid", False):
+        blockers.append("soxs_history_not_validated")
+    if not config.SOXS_ACTIONABLE_SIGNALS:
+        blockers.append("manual_promotion_disabled")
+
+    is_actionable = calibration_state == "VALIDATED" and not blockers
+    if calibration_state == "BLOCKED":
+        status = "BLOCKED"
+    elif not calibrator.is_fitted:
+        status = "SHADOW"
+    elif is_actionable:
+        status = "ACTIONABLE"
+    else:
+        status = "VALIDATED"
+
+    return {
+        "status": status,
+        "calibration_state": calibration_state,
+        "is_actionable": is_actionable,
+        "blockers": list(dict.fromkeys(blockers)),
+        "sample_count": calibrator.sample_count,
+        "training_count": calibrator.training_count,
+        "validation_count": calibrator.validation_count,
+        "validation_brier": calibrator.validation_brier,
+        "baseline_brier": calibrator.baseline_brier,
+        "max_actionable_position_pct": config.SOXS_MAX_ACTIONABLE_POSITION_PCT,
+    }
+
+
+def _cap_actionable_soxs_position(position: float) -> float:
+    """Apply the transitional hard exposure ceiling to actionable alerts."""
+    return min(
+        max(0.0, float(position)),
+        float(config.SOXS_MAX_ACTIONABLE_POSITION_PCT),
+    )
+
 
 async def check_soxs_signals_task(session: aiohttp.ClientSession, state: GTSStateManager):
     """
     Периодический мониторинг фундаментального фона полупроводников по модели SOXS v5.0.
     """
-    global last_notified_position
+    global last_notified_position, last_soxs_snapshot_ts, last_soxs_readiness
+
+    await refresh_soxs_calibrator(session)
     
     # 1. Извлекаем последние агрегированные сигналы из БД (через переданный state)
     capex_signals = await state.get_last_capex_signals()
@@ -85,7 +314,7 @@ async def check_soxs_signals_task(session: aiohttp.ClientSession, state: GTSStat
     
     # 2. Получаем текущую цену SOXX и MA200 с передачей сессии
     market_data = await get_market_data(session)
-    soxx_below_ma200 = market_data.get("soxx_below_ma200", False)
+    soxx_below_ma200 = market_data.get("soxx_below_ma200")
     soxx_ma200_value = market_data.get("soxx_ma200_value", 0.0)
     soxx_current_price = market_data.get("soxx_current_price", 0.0)
     
@@ -93,20 +322,113 @@ async def check_soxs_signals_task(session: aiohttp.ClientSession, state: GTSStat
     # Нормализуем до максимального значения 10 для консистентности модели
     divergence_score, divergence_keys = await state.get_divergence_metrics_10d()
     rotation_score, rotation_spread, ret_t1, ret_t2 = await state.get_rotation_ranking() # Existing line
+
+    data_gaps = _soxs_market_data_gaps(market_data, rotation_score)
+    if data_gaps:
+        last_soxs_readiness = {
+            **_soxs_signal_readiness(quant_engine.calibrator, market_data),
+            "status": "BLOCKED",
+            "is_actionable": False,
+            "blockers": [f"market_data:{gap}" for gap in data_gaps],
+        }
+        logging.warning(
+            "SOXS decision skipped (fail-closed): missing/invalid %s",
+            ", ".join(data_gaps),
+        )
+        return
+
+    readiness = _soxs_signal_readiness(quant_engine.calibrator, market_data)
+    last_soxs_readiness = readiness
+    if readiness["status"] == "BLOCKED":
+        logging.error(
+            "SOXS decision skipped (readiness blocked): %s",
+            ", ".join(readiness["blockers"]),
+        )
+        return
     
     # 3. Вызов математического расчета SOXS Quant Engine
-    res = quant_engine.calculate_bear_probability(
-        capex_signals=capex_signals,
-        guidance_signals=guidance_signals,
-        divergence_instances=divergence_score,
-        rotation_indicator=rotation_score,
-        soxx_below_ma200=soxx_below_ma200
+    try:
+        res = quant_engine.calculate_bear_probability(
+            capex_signals=capex_signals,
+            guidance_signals=guidance_signals,
+            divergence_instances=divergence_score,
+            rotation_indicator=rotation_score,
+            soxx_below_ma200=soxx_below_ma200,
+        )
+    except CalibrationBlockedError as exc:
+        last_soxs_readiness = {
+            **readiness,
+            "status": "BLOCKED",
+            "is_actionable": False,
+            "blockers": [str(exc)],
+        }
+        logging.error("SOXS decision skipped (calibration fail-closed): %s", exc)
+        return
+
+    model_target = float(
+        res.get("shadow_target_position_percent", res["target_position_percent"])
     )
-    
-    target_pos = res["target_position_percent"]
-    
-    # 4. Проверка изменения фазы позиции (если позиция сменила шаг)
-    if target_pos != last_notified_position:
+    now = time.time()
+    should_snapshot = (now - last_soxs_snapshot_ts) >= config.SOXS_SNAPSHOT_INTERVAL
+
+    if not readiness["is_actionable"]:
+        if should_snapshot:
+            await state.save_quant_decision(
+                bear_prob=res["bear_probability"],
+                bear_score=res.get("bear_score", 0.0),
+                target_pos=0.0,
+                shadow_target_pos=model_target,
+                capex=res["capex_score"],
+                guidance=res["guidance_score"],
+                triggers=res["active_triggers"],
+                readiness_status=readiness["status"],
+                is_actionable=False,
+                block_reason=", ".join(readiness["blockers"]),
+            )
+            last_soxs_snapshot_ts = now
+        logging.warning(
+            "SOXS shadow signal only: model target=%.0f%%, state=%s, blockers=%s",
+            model_target,
+            readiness["status"],
+            ", ".join(readiness["blockers"]),
+        )
+        return
+
+    raw_target = _cap_actionable_soxs_position(res["target_position_percent"])
+    if raw_target != res["target_position_percent"]:
+        res = {
+            **res,
+            "uncapped_target_position_percent": res["target_position_percent"],
+            "target_position_percent": raw_target,
+            "verdict_name": quant_engine._verdict_for_position(raw_target),
+        }
+    target_pos = apply_soxs_hysteresis(raw_target)
+    hysteresis_held = target_pos != raw_target
+    if hysteresis_held:
+        res = {
+            **res,
+            "target_position_percent": target_pos,
+            "verdict_name": quant_engine._verdict_for_position(target_pos),
+        }
+
+    position_changed = target_pos != last_notified_position
+
+    async def _persist_quant_snapshot() -> None:
+        await state.save_quant_decision(
+            bear_prob=res["bear_probability"],
+            bear_score=res.get("bear_score", 0.0),
+            target_pos=target_pos,
+            capex=res["capex_score"],
+            guidance=res["guidance_score"],
+            triggers=res["active_triggers"],
+            readiness_status="ACTIONABLE",
+            is_actionable=True,
+            shadow_target_pos=model_target,
+            block_reason=None,
+        )
+
+    # 4. Telegram alert only when applied position changes
+    if position_changed:
         direction_emoji = "🚨" if target_pos > last_notified_position else "✅"
         divergence_details = f" ({', '.join(divergence_keys)})" if divergence_keys else ""
         
@@ -137,7 +459,18 @@ async def check_soxs_signals_task(session: aiohttp.ClientSession, state: GTSStat
         msg = (
             f"{direction_emoji} <b>[GTS QUANT ALERT] ИЗМЕНЕНИЕ ПОЗИЦИИ SOXS v5.0</b>\n\n"
             f"Текущая вероятность разворота: <b>{res['bear_probability']}%</b>\n"
-            f"Рекомендуемая позиция SOXS: <b>{res['target_position_percent']}%</b>\n"
+            f"Рекомендуемая позиция SOXS: <b>{target_pos}%</b>\n"
+        )
+        if res.get("regime_gated"):
+            msg += f"<i>Regime gate: сырой сигнал {res.get('raw_target_position_percent', target_pos)}% → {target_pos}%</i>\n"
+        if res.get("uncapped_target_position_percent") is not None:
+            msg += (
+                f"<i>Safety cap: модель {res['uncapped_target_position_percent']}% "
+                f"→ исполнимый максимум {target_pos}%</i>\n"
+            )
+        if hysteresis_held:
+            msg += f"<i>Hysteresis: подтверждение позиции {raw_target}% отложено</i>\n"
+        msg += (
             f"Режим торговой фазы: <code>{res['verdict_name']}</code>\n\n"
             f"<b>Активные триггеры давления:</b>\n"
             f"{active_triggers_str}\n\n"
@@ -157,15 +490,11 @@ async def check_soxs_signals_task(session: aiohttp.ClientSession, state: GTSStat
         
         # Обновляем состояние в памяти
         last_notified_position = target_pos
-        
-        # Логируем слепок в БД для истории
-        await state.save_quant_decision(
-            bear_prob=res['bear_probability'],
-            target_pos=target_pos,
-            capex=res['capex_score'],
-            guidance=res['guidance_score'],
-            triggers=res['active_triggers']
-        )
+        await _persist_quant_snapshot()
+        last_soxs_snapshot_ts = now
+    elif should_snapshot:
+        await _persist_quant_snapshot()
+        last_soxs_snapshot_ts = now
 
 async def auto_save_task(state: GTSStateManager):
     """Фоновая задача для периодического сохранения состояния в БД."""
@@ -551,64 +880,35 @@ async def get_fear_greed_index(session: aiohttp.ClientSession) -> Tuple[Optional
         return None, None, 0
 
 
-async def sync_historical_prices(tickers: List[str]):
-    """Запускается 1 раз в сутки. Догружает только недостающие дневные свечи."""
-    logging.info("⏳ Запуск синхронизации исторических данных из yfinance...")
-    loop = asyncio.get_event_loop()
-    now_utc = datetime.now(timezone.utc)
-    
+async def sync_historical_prices(
+    tickers: List[str], session: aiohttp.ClientSession, *, force: bool = False
+):
+    """Validate complete daily histories before atomically replacing DB rows."""
+    logging.info("⏳ Запуск проверяемой синхронизации исторических данных...")
     async with get_db_connection() as conn:
-        for ticker in tickers:
-            # 1. Проверяем последнюю дату кэша в БД для этого тикера
-            async with conn.execute(
-                "SELECT date FROM daily_prices WHERE ticker = ? ORDER BY date DESC LIMIT 1", 
-                (ticker,)
-            ) as cursor:
-                row = await cursor.fetchone()
-            
-            # Определяем необходимый период скачивания
-            if row:
-                last_date = datetime.strptime(row[0], '%Y-%m-%d').replace(tzinfo=timezone.utc)
-                delta_days = (now_utc - last_date).days
-                if delta_days <= 1:
-                    continue  # Данные актуальны, пропускаем
-                fetch_period = "5d" if delta_days < 5 else "1mo"
-            else:
-                fetch_period = "1y"  # Если базы нет, качаем за 1 год
-            
-            # Блокирующий вызов yfinance выполняем в Executor-пуле thread-безопасно
-            def fetch_data():
-                return yf.download(ticker, period=fetch_period, interval="1d", progress=False)['Close']
-            
-            try:
-                close_series = await loop.run_in_executor(sync_executor, fetch_data)
-                
-                if close_series is not None and not close_series.empty:
-                    # ГАРАНТИЯ ОДНОМЕРНОСТИ SERIES:
-                    # .squeeze() превращает DataFrame с одной колонкой в Series.
-                    close_series = close_series.squeeze()
-                    
-                    # Если yfinance вернул MultiIndex и squeeze не помог — жестко забираем первую колонку
-                    if isinstance(close_series, pd.DataFrame):
-                        close_series = close_series.iloc[:, 0]
-                        
-                    # Корректно пишем в БД
-                    records = []
-                    for dt, val in close_series.items():
-                        # Теперь val гарантированно является числом (float), а не Series
-                        if val is not None and not pd.isna(val):
-                            date_str = dt.strftime('%Y-%m-%d')
-                            records.append((ticker, date_str, float(val)))
-                    
-                    if records:
-                        await conn.executemany(
-                            "INSERT OR REPLACE INTO daily_prices (ticker, date, close) VALUES (?, ?, ?)",
-                            records
-                        )
-                        await conn.commit()
-                        logging.info(f"✅ Синхронизировано {len(records)} свечей для {ticker} (период: {fetch_period})")
-            except Exception as e:
-                logging.error(f"Ошибка при фоновом импорте {ticker}: {e}")
+        results = await sync_daily_price_histories(session, conn, tickers, force=force)
+
+    refreshed = [result for result in results if result.status == "success"]
+    failed = [result for result in results if result.status == "failed"]
+    cached = len(results) - len(refreshed) - len(failed)
+    for result in refreshed:
+        logging.info(
+            "✅ %s history validated via %s: %d rows (%s..%s)",
+            result.ticker,
+            result.provider,
+            result.row_count,
+            result.first_date,
+            result.last_date,
+        )
+    for result in failed:
+        logging.error("❌ %s history refresh failed closed: %s", result.ticker, result.error)
+    logging.info(
+        "Historical sync complete: refreshed=%d cached=%d failed=%d",
+        len(refreshed),
+        cached,
+        len(failed),
+    )
+    return results
 
 
 # =====================================================================
@@ -654,32 +954,29 @@ async def fetch_async_prices(session: aiohttp.ClientSession, tickers: List[str],
     # Синхронизируем исторический кэш (1y) только если его нет в RAM ИЛИ прошло более 24 часов (86400с)
     need_hist_sync = (_HISTORICAL_PRICES_CACHE is None) or (now - _LAST_HIST_SYNC_TIME > 86400) or force_history
 
-    # --- 1. ОБНОВЛЕНИЕ КЭША ИСТОРИИ (Раз в сутки) ---
+    # --- 1. ОБНОВЛЕНИЕ ПРОВЕРЕННОГО КЭША ИСТОРИИ (Раз в сутки) ---
     if need_hist_sync:
-        logging.info("⏳ Заполнение глобального RAM-кэша истории за 1 год...")
+        logging.info("⏳ Обновление проверенного RAM-кэша истории из БД...")
         try:
-            loop = asyncio.get_event_loop()
-            
-            # Нам обязательно нужен SOXX для расчета скользящей средней MA200
             tickers_for_hist = list(tickers)
             if "SOXX" not in tickers_for_hist:
                 tickers_for_hist.append("SOXX")
-
-            def fetch_yf_hist():
-                # Загружаем только дневную архивную сетку
-                return yf.download(tickers_for_hist, period="1y", interval="1d", progress=False)['Close']
-
-            hist_df = await loop.run_in_executor(sync_executor, fetch_yf_hist)
+            await sync_historical_prices(tickers_for_hist, session, force=force_history)
+            async with get_db_connection() as conn:
+                hist_df = await load_validated_daily_frame(
+                    conn, tickers_for_hist, days=config.PRICE_HISTORY_RAM_DAYS
+                )
             if not hist_df.empty:
-                # Нормализуем временную зону под UTC для бесшовного слияния далее
-                hist_df.index = pd.to_datetime(hist_df.index).tz_localize('UTC')
                 _HISTORICAL_PRICES_CACHE = hist_df
                 _LAST_HIST_SYNC_TIME = now
-                logging.info("✅ Глобальный RAM-кэш истории (1y, 1d) успешно обновлен.")
+                logging.info(
+                    "✅ Проверенный RAM-кэш истории обновлен: %d тикеров.",
+                    len(hist_df.columns),
+                )
             else:
-                logging.error("❌ Не удалось получить дневные котировки для кэша.")
+                logging.error("❌ В БД нет истории, прошедшей контроль качества.")
         except Exception as e:
-            logging.error(f"❌ Ошибка заполнения исторического кэша из yfinance: {e}")
+            logging.error(f"❌ Ошибка обновления проверенного исторического кэша: {e}")
 
     # --- 2. БЫСТРЫЙ ИНТРАДЕЙ-ЗАПРОС (Каждые 7 минут) ---
     if config.MARKET_DATA_PROVIDER == "twelvedata" and config.MARKET_DATA_API_KEY:
@@ -692,10 +989,21 @@ async def fetch_async_prices(session: aiohttp.ClientSession, tickers: List[str],
         if "SOXX" not in tickers:
             tickers.append("SOXX")
 
-        url = f"https://api.twelvedata.com/time_series?symbol={symbols}&interval=15min&outputsize=50&apikey={config.MARKET_DATA_API_KEY}"
+        url = "https://api.twelvedata.com/time_series"
+        params = {
+            "symbol": symbols,
+            "interval": "15min",
+            "outputsize": "50",
+            "apikey": config.MARKET_DATA_API_KEY,
+        }
         
         try:
-            async with session.get(url, timeout=15) as resp:
+            async with session.get(
+                url,
+                params=params,
+                ssl=create_verified_ssl_context(),
+                timeout=15,
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     combined = {}
@@ -715,16 +1023,32 @@ async def fetch_async_prices(session: aiohttp.ClientSession, tickers: List[str],
         except Exception as e:
             logging.error(f"TwelveData Error: {e}. Transition to fast yfinance fallback...")
 
-    # --- БЫСТРЫЙ ИНТРАДЕЙ ЧЕРЕЗ YFINANCE (Всего 2 дня истории 15-минутных баров!) ---
+    # --- ПРОВЕРЯЕМЫЙ ИНТРАДЕЙ ЧЕРЕЗ YAHOO CHART ---
+    try:
+        intraday_data = await fetch_yahoo_chart_intraday(session, tickers)
+        if "SOXX" not in intraday_data.columns:
+            raise ValueError("SOXX missing from Yahoo Chart intraday response")
+        return _stitch_prices(_HISTORICAL_PRICES_CACHE, intraday_data), "yahoo_chart_hybrid"
+    except Exception as e:
+        logging.error(f"Yahoo Chart intraday error: {e}. Transition to yfinance fallback...")
+
+    # --- ПОСЛЕДНИЙ ИНТРАДЕЙ FALLBACK ЧЕРЕЗ YFINANCE ---
     logging.debug("Запрос текущего интрадея (2d, 15m) через yfinance")
     try:
         loop = asyncio.get_event_loop()
         def fetch_yf_intraday():
             # Качаем ультра-легкий пакет цен за 2 дня вместо 1 года
-            return yf.download(tickers, period="2d", interval="15m", progress=False)['Close']
+            return yf.download(
+                tickers,
+                period="2d",
+                interval="15m",
+                auto_adjust=True,
+                repair=True,
+                progress=False,
+            )['Close']
 
         intraday_data = await loop.run_in_executor(sync_executor, fetch_yf_intraday)
-        intraday_data.index = pd.to_datetime(intraday_data.index).tz_convert('UTC')
+        intraday_data.index = pd.to_datetime(intraday_data.index, utc=True)
         
         # Сшиваем O(1) исторический DataFrame в памяти и свежий интрадей
         final_df = _stitch_prices(_HISTORICAL_PRICES_CACHE, intraday_data)
@@ -789,6 +1113,7 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
         # Инициализируем значения по умолчанию
         market_data['soxx_ma200_value'] = 0.0
         market_data['soxx_current_price'] = 0.0 # Инициализация для предотвращения nan
+        market_data['soxx_below_ma200'] = None
 
         # Получаем текущую цену SOXX, если она доступна и не NaN
         if "SOXX" in close_prices.columns and not close_prices["SOXX"].empty and pd.notna(close_prices["SOXX"].iloc[-1]):
@@ -836,6 +1161,13 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
             logging.error(f"Error calculating Composite Global Regime: {e}")
 
         market_data['price_history'] = close_prices # Передаем полную историю (кэш + интрадей)
+        # Intraday SOXS alone is not enough to promote a position signal. This flag
+        # is true only when the daily history survived the production validator.
+        market_data['soxs_history_valid'] = bool(
+            _HISTORICAL_PRICES_CACHE is not None
+            and "SOXS" in _HISTORICAL_PRICES_CACHE.columns
+            and not _HISTORICAL_PRICES_CACHE["SOXS"].dropna().empty
+        )
 
         # Вычисление Честной 200-дневной средней для SOXX
         if _HISTORICAL_PRICES_CACHE is not None and "SOXX" in _HISTORICAL_PRICES_CACHE.columns:
@@ -866,7 +1198,7 @@ async def get_market_data(session: aiohttp.ClientSession) -> Dict[str, Any]:
                 ma200 = daily_soxx_series.rolling(window=200).mean().iloc[-1]
                 if pd.notna(ma200) and ma200 > 0:
                     market_data['soxx_ma200_value'] = float(ma200)
-                    market_data['soxx_below_ma200'] = latest_price < ma200
+                    market_data['soxx_below_ma200'] = bool(latest_price < ma200)
             
         # Рассчитываем изменения согласно интервалу
         bars_lookback = config.MARKET_LOOKBACK_HOURS * 4
@@ -927,6 +1259,63 @@ async def count_eligible_predictions(state: GTSStateManager) -> int:
                     return (row[0] or 0) + (row[1] or 0)
                 return 0
 
+
+def _learning_resolution_window(
+    resolved: int, age_hours: float, primary_hours: float, secondary_hours: float
+) -> Optional[Tuple[float, int]]:
+    """Return the ready learning window/status, or None while a prediction is young."""
+    if resolved == 0:
+        return (primary_hours, 1) if age_hours >= primary_hours else None
+    if resolved == 1:
+        return (secondary_hours, 2) if age_hours >= secondary_hours else None
+    return None
+
+async def refresh_soxs_calibrator(session: aiohttp.ClientSession) -> None:
+    """Re-fit SOXS logistic calibrator from historical quant_decisions vs SOXX returns."""
+    global quant_engine, last_soxs_calibration_run
+
+    if time.time() - last_soxs_calibration_run < config.SOXS_CALIBRATION_INTERVAL:
+        return
+
+    async with get_db_connection() as conn:
+        async with conn.execute("""
+            SELECT bear_score, bear_probability, timestamp
+            FROM quant_decisions
+            WHERE timestamp >= datetime('now', '-90 days')
+              AND bear_score IS NOT NULL
+              AND timestamp < datetime('now', '-' || ? || ' hours')
+            ORDER BY timestamp ASC
+        """, (config.SOXS_CALIBRATION_HOLDOUT_HOURS,)) as cursor:
+            rows = [dict(r) for r in await cursor.fetchall()]
+
+    daily_soxx = load_daily_soxx_from_db()
+    if daily_soxx.empty:
+        market_data = await get_market_data(session)
+        price_history = market_data.get("price_history") if market_data else None
+    else:
+        price_history = daily_soxx.to_frame(name="SOXX")
+    if price_history is None or price_history.empty:
+        logging.warning("SOXS calibrator refresh skipped: no reproducible SOXX history")
+        return
+
+    cal = fit_from_history(rows, price_history, daily_series=daily_soxx)
+    quant_engine.calibrator = cal
+    async with get_db_connection() as conn:
+        await save_calibrator_to_db(conn, cal)
+        await conn.commit()
+    last_soxs_calibration_run = time.time()
+    if cal.is_fitted:
+        logging.info("SOXS calibrator refreshed (%d training samples)", cal.training_count)
+    elif cal.is_blocked:
+        logging.error("SOXS calibrator blocked after validation: %s", cal.block_reason)
+    else:
+        logging.info(
+            "SOXS calibrator remains in fallback mode: %s (n=%d)",
+            cal.block_reason,
+            cal.sample_count,
+        )
+
+
 async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager, raw_market_data: Optional[Dict] = None):
     if not raw_market_data:
         raw_market_data = await get_market_data(session)
@@ -937,43 +1326,6 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
 
     price_history = raw_market_data['price_history']
     
-    def get_ewma_beta(target_rets, bench_rets):
-        """Расчет беты через EWMA для адаптивности к режиму."""
-        if len(target_rets) < 10: return 1.0
-        # RiskMetrics lambda = 0.94 -> alpha = 1 - 0.94
-        alpha = 1 - config.EWMA_LAMBDA
-        cov = target_rets.ewm(alpha=alpha).cov(bench_rets).iloc[-1]
-        var = bench_rets.ewm(alpha=alpha).var().iloc[-1]
-        beta = cov / var if var > 0 else 1.0
-        return max(-config.BETA_CLIP, min(config.BETA_CLIP, beta))
-
-    def calculate_expected_move(target_key, bench_cfg, prediction_time, b_move_raw, price_history):
-        try:
-            target_ticker = config.ASSET_TICKER_MAP.get(target_key)
-            # Получаем доходности для расчета беты (окно перед новостью)
-            hist_end = prediction_time.replace(tzinfo=None)
-            hist_start = hist_end - timedelta(days=2) 
-
-            if bench_cfg["type"] == "leveraged":
-                return b_move_raw * bench_cfg["factor"]
-            
-            if bench_cfg["type"] == "multi_factor":
-                # BTC: 0.7 * Nasdaq_Beta * Nasdaq_Return + (-0.3 * DXY_Beta * DXY_Return)
-                expected = 0.0
-                # В данной версии упрощаем до взвешенного движения бенчмарков
-                # В идеале здесь нужен запуск регрессии
-                return b_move_raw * bench_cfg["weights"][0] 
-
-            bench_ticker = bench_cfg["primary"]
-            if target_ticker in price_history and bench_ticker in price_history:
-                t_rets = price_history[target_ticker].loc[hist_start:hist_end].pct_change().dropna()
-                b_rets = price_history[bench_ticker].loc[hist_start:hist_end].pct_change().dropna()
-                beta = get_ewma_beta(t_rets, b_rets)
-                return b_move_raw * beta
-            
-            return b_move_raw * bench_cfg.get("factor", 1.0)
-        except: return 0.0
-
     # 1. ВЫБОРКА (Без блокировки)
     # 1. СБОР ДАННЫХ (Без блокировки)
     async with get_db_connection() as conn:
@@ -1041,32 +1393,16 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                 prediction_time = datetime.strptime(row['timestamp'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
                 age_hours = (datetime.now(timezone.utc) - prediction_time).total_seconds() / 3600
                 
-                target_lookback = 0
-                new_resolved_status = row['resolved']
-
                 # Порог для принудительного удаления из очереди (window + запас 12ч)
                 # Увеличиваем порог для фондового рынка, чтобы пережить выходные (48ч + запас)
                 force_resolve_age = s_win + (72 if target.lower() not in ['btc', 'crypto'] else 12)
 
-                # Фаза 1: Первичная реакция (Primary)
-                if row['resolved'] == 0:
-                    if age_hours >= p_win:
-                        target_lookback = p_win
-                        new_resolved_status = 1
-                    else: 
-                        # Если новость слишком старая, но так и не прошла Фазу 1
-                        if age_hours > force_resolve_age:
-                            if target.lower() not in ['btc', 'crypto'] and (datetime.now(timezone.utc).weekday() >= 5 or raw_market_data.get('is_stale', True)):
-                                continue
-                            logging.info(f"🗑️ Force resolve (Phase 1 Expired): {event_key}")
-                        batch_updates.append((2, 0, 0, 0, row['id']))
-                        continue
-                # Фаза 2: Закрепление тренда (Secondary)
-                elif row['resolved'] == 1:
-                    if age_hours >= s_win:
-                        target_lookback = s_win
-                        new_resolved_status = 2
-                    else: continue
+                learning_window = _learning_resolution_window(
+                    row['resolved'], age_hours, p_win, s_win
+                )
+                if learning_window is None:
+                    continue
+                target_lookback, new_resolved_status = learning_window
 
                 actual = 0
                 raw_change = 0
@@ -1120,17 +1456,13 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                                 expected_pct = 0.0
                                 b_cfg = config.ASSET_BENCHMARK_CONFIG.get(target.lower())
                                 if b_cfg:
-                                    bench_key = b_cfg["primary"]
-                                    if bench_key in price_history.columns:
-                                        b_ts = price_history[bench_key].dropna().tz_localize(None)
-                                        idx_b_at = b_ts.index.get_indexer([prediction_time_naive], method='backfill')[0]
-                                        # Используем смещенное время, чтобы сопоставить движение бенчмарка с активом
-                                        idx_b_after = b_ts.index.get_indexer([shifted_target_time], method='backfill')[0]
-                                        if idx_b_at != -1 and idx_b_after != -1:
-                                            b_at, b_after = float(b_ts.iloc[idx_b_at]), float(b_ts.iloc[idx_b_after])
-                                            if b_at != 0:
-                                                b_move = ((b_after - b_at) / b_at) * 100
-                                                expected_pct = calculate_expected_move(target.lower(), b_cfg, prediction_time, b_move, price_history)
+                                    expected_pct = calculate_expected_move(
+                                        target.lower(),
+                                        b_cfg,
+                                        prediction_time_naive,
+                                        shifted_target_time,
+                                        price_history,
+                                    )
 
                                 # 3. Z-Alpha: нормализуем избыточную доходность по волатильности
                                 z_alpha = (raw_change_pct - expected_pct) / realized_vol
@@ -1199,9 +1531,10 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
                 model_accumulators[row['model_name']]["total"] += 1
                 
                 if new_resolved_status == 1:
-                    # Фаза 1: Быстрая калибровка множителя и фильтрация RAM-баллов
-                    all_errors.append(error)
-                    errors_by_asset[target.lower()].append(error)
+                    # Walk-forward: не калибруем множители на слишком свежих событиях
+                    if age_hours >= config.WALK_FORWARD_MIN_CALIBRATION_AGE:
+                        all_errors.append(error)
+                        errors_by_asset[target.lower()].append(error)
                     if not is_correct and abs(score) > config.NEUTRAL_SCORE_THRESHOLD:
                         async with state.score_lock:
                             # Штрафуем балл в памяти сильнее при неверном направлении
@@ -1230,7 +1563,13 @@ async def learning_cycle(session: aiohttp.ClientSession, state: GTSStateManager,
 
                 else:
                     # Фаза 2: Уточнение веса конкретного события (Long-term)
-                    updates_by_key[(event_key, target)].append((error, is_correct))
+                    if age_hours >= config.WALK_FORWARD_HOLDOUT_HOURS:
+                        updates_by_key[(event_key, target)].append((error, is_correct))
+                    else:
+                        logging.debug(
+                            "Walk-forward holdout: skipping weight update for %s (%s), age=%.1fh",
+                            event_key, target, age_hours,
+                        )
                 batch_updates.append((new_resolved_status, actual, is_correct, raw_change, row['id']))
 
     # 3. ЗАПИСЬ (Короткая блокировка)
@@ -1375,7 +1714,10 @@ RE_NUM_CLEAN = re.compile(r'\b\d+\b')
 stop_words = {
         'reports', 'hit', 'triggers', 'massive', 'says', 'amid', 'following', 'after', 'due', 'warns', 'shows', 'proposes', 'plans', 'set', 'could', 'would', 'may', 'will', 'предложил', 'предлагает', 'может', 'планирует', 'хочет', 'объявил', 'ago', 'min', 'hours',
         'calendar', 'corporate', 'event', 'fiscal', 'announces', 'dividend', 'shareholder',
-        'opinion', 'analysis', 'outlook', 'why', 'experts', 'expect', 'possible', 'likely', 'outlook', 'view', 'could', 'should'
+        'opinion', 'analysis', 'outlook', 'why', 'experts', 'expect', 'possible', 'likely', 'outlook', 'view', 'could', 'should',
+        # Шаблонные SEO-заголовки (MarketsMojo и аналоги)
+        'technical', 'momentum', 'shifts', 'mixed', 'indicator', 'signals', 'market', 'marketsmojo',
+        'downgraded', 'hold', 'strong', 'sell', 'valuation', 'fundamental', 'weaknesses', 'setbacks',
     }
 
 def clean_title(title: str) -> str:
@@ -1386,14 +1728,25 @@ def clean_title(title: str) -> str:
     words = sorted([w for w in cleaned.lower().split() if w not in stop_words])
     return " ".join(words)
 
-def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: float) -> bool:
-    if not new_title: 
+def _word_jaccard(a: str, b: str) -> float:
+    wa, wb = set(a.split()), set(b.split())
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+def is_fuzzy_duplicate(
+    new_title: str,
+    existing_titles: List[str],
+    threshold: float,
+    targets_are_clean: bool = False,
+) -> bool:
+    if not new_title:
         return False
-    
+
     new_clean = clean_title(new_title)
     len_new = len(new_clean)
-    
-    # Пытаемся импортировать сверхбыстрый rapidfuzz
+
     try:
         from rapidfuzz.fuzz import ratio as rapid_ratio
         has_rapidfuzz = True
@@ -1401,23 +1754,27 @@ def is_fuzzy_duplicate(new_title: str, existing_titles: List[str], threshold: fl
         has_rapidfuzz = False
 
     for title in existing_titles:
-        target_clean = clean_title(title)
+        target_clean = title if targets_are_clean else clean_title(title)
         len_target = len(target_clean)
-        
-        # 2. Быстрый фильтр длины (коэффициент Левенштейна зажать в лимиты)
-        # Если разница длин критична, difflib точно выдаст низкий коэффициент
+
+        if _word_jaccard(new_clean, target_clean) < config.FUZZY_MIN_WORD_JACCARD:
+            continue
+
         if len_new > 0 and len_target > 0:
             len_ratio = min(len_new, len_target) / max(len_new, len_target)
             if len_ratio < threshold - 0.15:
-                continue # Скипаем дорогой запуск сравнения!
-        
+                continue
+
         if has_rapidfuzz:
             r = rapid_ratio(new_clean, target_clean) / 100.0
         else:
             r = SequenceMatcher(None, new_clean, target_clean).ratio()
-            
+
         if r > threshold:
-            logging.info(f"🚫 Fuzzy duplicate ({r:.2f}): '{new_title}' ≈ '{title}'")
+            logging.info(
+                f"🚫 Fuzzy duplicate ({r:.2f}, jacc={_word_jaccard(new_clean, target_clean):.2f}): "
+                f"'{new_title}' ≈ '{title}'"
+            )
             return True
     return False
 
@@ -1524,6 +1881,16 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                 is_social = any(s in entry.link.lower() or s in url.lower() for s in ["reddit.com", "nitter", "twitter.com", "x.com", "stocktwits.com"])
                 effective_max_age = 1.0 if is_social else max_age_h
 
+                if config.ONLY_NEWS_AFTER_STARTUP:
+                    min_pub_ts = ENGINE_START_TS - (config.STARTUP_GRACE_MINUTES * 60)
+                    if pub_timestamp < min_pub_ts:
+                        state.metrics.metrics["news_startup_filtered"] += 1
+                        logging.debug(
+                            f"Skipping pre-startup news: '{entry.title}' "
+                            f"(pub age {(current_utc_ts - pub_timestamp)/3600:.1f}h before session)"
+                        )
+                        continue
+
                 if age_h <= effective_max_age:
                     fresh_entries.append(entry)
                 else:
@@ -1584,7 +1951,7 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                     continue
 
             # 1. Быстрая проверка на дубликаты (URL и Fuzzy)
-            use_semantic = config.USE_EMBEDDINGS and (config.GEMINI_API_KEY or config.OPENROUTER_API_KEY)
+            use_semantic = config.USE_EMBEDDINGS and bool(config.GEMINI_API_KEY and state.ai_client)
             fuzzy_threshold = config.DUPLICATE_TITLE_THRESHOLD if use_semantic else config.FALLBACK_DUPLICATE_THRESHOLD
 
             new_clean = clean_title(original_title)
@@ -1598,8 +1965,13 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                     state.metrics.metrics["news_duplicate_hash"] += 1
                     continue
 
-                # Теперь передаем в функцию список УЖЕ ОЧИЩЕННЫХ залогов (clean_titles)
-                if is_fuzzy_duplicate(original_title, list(state.cache.clean_titles.keys()), fuzzy_threshold):
+                # Теперь передаем в функцию список УЖЕ ОЧИЩЕННЫХ заголовков (clean_titles)
+                if is_fuzzy_duplicate(
+                    original_title,
+                    list(state.cache.clean_titles.keys()),
+                    fuzzy_threshold,
+                    targets_are_clean=True,
+                ):
                     state.metrics.metrics["news_duplicate_fuzzy"] += 1
                     state.cache.add_url(entry.link, original_title)
                     continue
@@ -1608,7 +1980,10 @@ async def process_single_feed(url: str, session: aiohttp.ClientSession, loop: as
                 state.cache.clean_titles[new_clean] = True
 
             # Проверка в БД (перед тяжелым AI запросом эмбеддинга для экономии API)
-            db_titles = await state.get_db_titles(hours=config.SEMANTIC_DEDUPLICATION_WINDOW)
+            db_titles = await state.get_db_titles(
+                hours=config.DB_DEDUP_LOOKBACK_HOURS,
+                limit=config.DB_DEDUP_TITLE_LIMIT,
+            )
             if is_fuzzy_duplicate(original_title, db_titles, fuzzy_threshold):
                 state.metrics.metrics["news_duplicate_fuzzy"] += 1
                 continue
@@ -1770,6 +2145,10 @@ async def process_single_analysis_result(entry: Any, market_data: Dict, analysis
 
     try:
         score, event_type, entities, slug, is_black_swan, model_name, confidence, ai_summary, title_ru, capex_sig, guidance_sig = analysis_result
+
+        capex_sig, guidance_sig = enrich_soxs_signals(
+            entities, slug, entry.title, ai_summary or "", capex_sig, guidance_sig
+        )
 
         # Сброс флага Black Swan, если score новости недостаточно велик (защита от галлюцинаций ИИ)
         if is_black_swan and abs(score) < config.BLACK_SWAN_SCORE_THRESHOLD:
@@ -2164,8 +2543,79 @@ async def send_hourly_summary(session: aiohttp.ClientSession, state: GTSStateMan
     await send_telegram(session, final_summary_msg)
     state.clear_hourly_summary_news()
 
+async def _load_soxs_readiness_db_metrics() -> Dict[str, Any]:
+    """Load compact audit metrics without making healthcheck depend on market APIs."""
+    metrics: Dict[str, Any] = {
+        "quant_snapshots": 0,
+        "quant_snapshot_days": 0,
+        "latest_decision_status": None,
+        "latest_price_sync": None,
+    }
+    try:
+        async with get_db_connection() as conn:
+            async with conn.execute(
+                "SELECT COUNT(*), COUNT(DISTINCT date(timestamp)) FROM quant_decisions"
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    metrics["quant_snapshots"] = int(row[0] or 0)
+                    metrics["quant_snapshot_days"] = int(row[1] or 0)
+
+            async with conn.execute(
+                """
+                SELECT readiness_status, is_actionable, shadow_target_position,
+                       target_position, block_reason, timestamp
+                FROM quant_decisions
+                ORDER BY id DESC LIMIT 1
+                """
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    metrics["latest_decision_status"] = {
+                        "status": row[0],
+                        "is_actionable": bool(row[1]),
+                        "shadow_target_position": row[2],
+                        "target_position": row[3],
+                        "block_reason": row[4],
+                        "timestamp": row[5],
+                    }
+
+            async with conn.execute(
+                """
+                SELECT provider, status, row_count, last_date, error, timestamp
+                FROM price_sync_runs
+                WHERE ticker = 'SOXS'
+                ORDER BY id DESC LIMIT 1
+                """
+            ) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    metrics["latest_price_sync"] = {
+                        "provider": row[0],
+                        "status": row[1],
+                        "row_count": int(row[2] or 0),
+                        "last_date": row[3],
+                        "error": row[4],
+                        "timestamp": row[5],
+                    }
+    except Exception as exc:
+        metrics["metrics_error"] = str(exc)
+    return metrics
+
+
 async def get_healthcheck() -> Dict[str, Any]:
     """Возвращает текущие показатели здоровья системы."""
+    history_valid = bool(
+        _HISTORICAL_PRICES_CACHE is not None
+        and "SOXS" in _HISTORICAL_PRICES_CACHE.columns
+        and not _HISTORICAL_PRICES_CACHE["SOXS"].dropna().empty
+    )
+    readiness = _soxs_signal_readiness(
+        quant_engine.calibrator,
+        {"soxs_history_valid": history_valid},
+    )
+    readiness["last_signal_evaluation"] = dict(last_soxs_readiness)
+    readiness.update(await _load_soxs_readiness_db_metrics())
     return {
         "status": "ok",
         "queue_size": news_queue.qsize() if 'news_queue' in globals() else 0,
@@ -2174,7 +2624,8 @@ async def get_healthcheck() -> Dict[str, Any]:
         "ai_requests": state.metrics.metrics["ai_requests"],
         "active_model": model_rotator.get_active()["name"],
         "market_data_provider": state.market.market_data_status,
-        "last_market_sync": datetime.fromtimestamp(state.market.last_market_data_time).strftime('%H:%M:%S') if state.market.last_market_data_time else "Never"
+        "last_market_sync": datetime.fromtimestamp(state.market.last_market_data_time).strftime('%H:%M:%S') if state.market.last_market_data_time else "Never",
+        "soxs_readiness": readiness,
     }
 
 async def check_ollama_status(session: aiohttp.ClientSession) -> bool:
@@ -2194,24 +2645,39 @@ async def check_ollama_status(session: aiohttp.ClientSession) -> bool:
     return False
 
 async def main():
+    global _HISTORICAL_PRICES_CACHE, _LAST_HIST_SYNC_TIME
     last_learning_run = 0
     last_cleanup_run = 0
     loop = asyncio.get_running_loop()
 
     # 1. Создаем постоянную сессию для воркеров и системных задач (Market Data, Telegram, AI)
-    async with aiohttp.ClientSession() as persistent_session:
+    async with create_session() as persistent_session:
         workers = []
         try:
             # Инициализация БД (теперь асинхронная)
             await init_db()
 
-            tickers_list = list(config.ASSET_TICKER_MAP.values())
+            tickers_list = list(dict.fromkeys(
+                list(config.ASSET_TICKER_MAP.values())
+                + list(config.ROTATION_TICKERS)
+            ))
             # Удаляем синтетический "GLOBAL_REGIME" из списка реальных тикеров yfinance
             tickers_list = [t for t in tickers_list if t != "GLOBAL_REGIME"]
 
             # Проводим разовую синхронизацию базы и RAM-кэша при старте
-            await sync_historical_prices(tickers_list)
+            await sync_historical_prices(tickers_list, persistent_session)
             await state.load_historical_cache_to_ram(tickers_list)
+            async with get_db_connection() as conn:
+                initial_history = await load_validated_daily_frame(
+                    conn, tickers_list, days=config.PRICE_HISTORY_RAM_DAYS
+                )
+            if not initial_history.empty:
+                _HISTORICAL_PRICES_CACHE = initial_history
+                _LAST_HIST_SYNC_TIME = time.time()
+                logging.info(
+                    "✅ Стартовый RAM-кэш истории готов: %d тикеров.",
+                    len(initial_history.columns),
+                )
 
             # Проверка Ollama, если она выбрана как основная модель
             if config.USE_LOCAL_OLLAMA or config.OLLAMA_FALLBACK:
@@ -2221,9 +2687,29 @@ async def main():
 
             # Инициализация состояния из БД в асинхронном контексте
             await state.init_from_db()
+
+            async with get_db_connection() as conn:
+                quant_engine.calibrator = await load_calibrator_from_db(conn)
+                if quant_engine.calibrator.is_fitted:
+                    await save_calibrator_to_db(conn, quant_engine.calibrator)
+                    await conn.commit()
+            await init_soxs_position_state()
+            await refresh_soxs_calibrator(persistent_session)
             
             # Инициализация общего AI клиента
-            if config.GEMINI_API_KEY:
+            pool = model_rotator.pool
+            if not pool:
+                logging.critical(
+                    "❌ Нет доступных AI-моделей! Получите бесплатный ключ Groq: "
+                    "https://console.groq.com/keys → добавьте GROQ_API_KEY в .env "
+                    "или запустите: python setup_free_ai.py"
+                )
+            elif pool[0].get("provider") == "groq":
+                logging.info(f"🤖 Основной AI: Groq ({pool[0]['name']})")
+            elif pool[0].get("provider") == "cerebras":
+                logging.info(f"🤖 Основной AI: Cerebras ({pool[0]['name']})")
+
+            if config.USE_GEMINI and config.GEMINI_API_KEY:
                 state.ai_client = genai.Client(api_key=config.GEMINI_API_KEY)
                 
             # Запуск фонового репортера статистики
@@ -2312,7 +2798,7 @@ async def main():
 
                 # 2. Создаем НОВУЮ сессию специально для этого цикла сканирования
                 # DummyCookieJar гарантирует, что Google News не будет "узнавать" нас по куки
-                async with aiohttp.ClientSession(cookie_jar=aiohttp.DummyCookieJar()) as scan_session:
+                async with create_session(cookie_jar=aiohttp.DummyCookieJar()) as scan_session:
                     scan_tasks = []
                     for url in config.RSS_FEEDS:
                         # Создаем задачу, но не ждем её сразу, чтобы соблюсти паузу
@@ -2330,7 +2816,7 @@ async def main():
 
                 # Дополнительно опрашиваем StockTwits для ключевых тикеров
                 if config.SOCIAL_SEARCH_ENABLED:
-                    async with aiohttp.ClientSession() as social_session:
+                    async with create_session() as social_session:
                         social_tasks = []
                         for asset in ["NVDA", "BTC", "TSLA", "AMD"]:
                             social_tasks.append(asyncio.create_task(fetch_stocktwits(social_session, asset, current_market_data)))

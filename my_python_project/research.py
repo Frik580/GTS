@@ -32,12 +32,9 @@ def init_model_pool():
         models_list = [m.name for m in all_models if 'generateContent' in m.supported_actions]
         
         family_priority = {
-            'gemini-3.1-flash': 1, 'gemini-3.1-pro': 2, 
-            'gemini-3-flash': 3, 'gemini-3-pro': 4,
+            'gemini-3.5-flash': 1, 'gemini-3.1-flash': 2,
+            'gemini-3.1-pro': 3, 'gemini-3-flash': 4,
             'gemini-2.5-flash': 5, 'gemini-2.5-pro': 6,
-            'gemini-2.0-flash': 7,
-            'gemini-1.5-flash': 8, 'gemini-1.5-pro': 9,
-            'gemini-1.0-pro': 10
         }
         
         for m_name in models_list:
@@ -56,8 +53,7 @@ def init_model_pool():
 
         if config.OPENROUTER_API_KEY:
             or_models = [
-                {"name": "google/gemini-2.0-flash-lite-preview-02-05:free", "supports_json": True, "provider": "openrouter"},
-                {"name": "tencent/hy3-preview:free", "supports_json": False, "provider": "openrouter"}
+                {"name": "google/gemma-4-26b-a4b-it:free", "supports_json": True, "provider": "openrouter"}
             ]
             for m in or_models:
                 sorted_pool.append(m)
@@ -65,8 +61,6 @@ def init_model_pool():
         if config.DEEPSEEK_API_KEY:
             ds_models = [
                 {"name": "deepseek-v4-flash", "supports_json": True, "provider": "deepseek"},
-                {"name": "deepseek-chat", "supports_json": True, "provider": "deepseek"},
-                {"name": "deepseek-reasoner", "supports_json": False, "provider": "deepseek"}
             ]
             for m in ds_models:
                 sorted_pool.append(m)
@@ -74,7 +68,7 @@ def init_model_pool():
 
         return sorted_pool
     except Exception:
-        return [{"name": "models/gemini-1.5-flash", "supports_json": True, "provider": "gemini"}]
+        return [{"name": "models/gemini-2.5-flash", "supports_json": True, "provider": "gemini"}]
 
 model_pool = init_model_pool()
 current_model_idx = 0

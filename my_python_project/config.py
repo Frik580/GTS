@@ -3,15 +3,30 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Read a boolean environment flag without inverting its meaning."""
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
 # API Keys
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY")
 MARKET_DATA_API_KEY = os.getenv("MARKET_DATA_API_KEY") # Ключ от TwelveData или др.
+# Включить/отключить провайдеров ИИ (отключайте исчерпанные, чтобы не тратить время на 429)
+USE_GEMINI = os.getenv("USE_GEMINI", "False").lower() == "true"
+USE_OPENROUTER = os.getenv("USE_OPENROUTER", "False").lower() == "true"
+USE_GROQ = os.getenv("USE_GROQ", "True").lower() == "true"
+USE_CEREBRAS = os.getenv("USE_CEREBRAS", "True").lower() == "true"
 # Включить/отключить использование DeepSeek
-USE_DEEPSEEK = os.getenv("USE_DEEPSEEK", "True").lower() == "true"
+USE_DEEPSEEK = os.getenv("USE_DEEPSEEK", "False").lower() == "true"
 
 # Провайдер данных: "twelvedata" или "yfinance" (фоллбек)
 MARKET_DATA_PROVIDER = os.getenv("MARKET_DATA_PROVIDER", "yfinance")
@@ -24,6 +39,8 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:4b")
 
 # Network Settings
 HTTP_PROXY = os.getenv("HTTP_PROXY") # Оставьте пустым в .env, если прокси не нужен
+# TLS verification is mandatory by default.  Never disable it for market data.
+SSL_VERIFY = _env_bool("SSL_VERIFY", True)
 
 # Database and Logs
 DB_PATH = "gts.db"
@@ -44,6 +61,10 @@ ASSET_TICKER_MAP = {
     "soxx": "SOXX",
     "global": "GLOBAL_REGIME"
 }
+
+# Тикеры для Leadership Fatigue / Rotation Indicator.
+# Они должны синхронизироваться с историей при каждом запуске приложения.
+ROTATION_TICKERS = ("NVDA", "AVGO", "ASML", "AMD", "MU", "INTC", "QCOM")
 
 # Список ключевых слов для отслеживания. Можно менять, добавлять или удалять.
 # Теперь это словарь: "Ключевое слово": Вес (приоритет)
@@ -188,7 +209,7 @@ DIRECT_RSS_FEEDS = [
 ]
 
 # Настройки фильтрации источников
-ONLY_SPECIFIC_SOURCES = False # Теперь только доверенные источники (Reuters, Bloomberg и т.д.)
+ONLY_SPECIFIC_SOURCES = True # Теперь только доверенные источники (Reuters, Bloomberg и т.д.)
 SPECIFIC_SOURCES_LIST = [
     "reuters.com",
     "bloomberg.com",
@@ -278,8 +299,14 @@ CHECK_INTERVAL = 420 # Увеличено до 7 минут, чтобы сниз
 COOLDOWN = 480 # Снижаем до 8 минут для более частых обновлений по сюжету
 LEARNING_INTERVAL = 1800 # 30 минут — оптимально для накопления выборки цен
 MARKET_LOOKBACK_HOURS = 2 # Увеличиваем до 2 часов: macro-alpha требует времени для проявления
-MAX_NEWS_AGE_HOURS = 4 # Увеличено до 4ч для надежности захвата RSS
-MAX_NEWS_AGE_HOURS_INACTIVE = 12 # Увеличено до 12ч для ночного периода
+MAX_NEWS_AGE_HOURS = 2 # Только свежие новости (было 4ч — пропускало старый backlog из RSS)
+MAX_NEWS_AGE_HOURS_INACTIVE = 6 # Ночью (было 12ч)
+# Не оценивать новости, опубликованные до старта движка (кроме grace для RSS-задержки)
+ONLY_NEWS_AFTER_STARTUP = _env_bool("ONLY_NEWS_AFTER_STARTUP", True)
+STARTUP_GRACE_MINUTES = int(os.getenv("STARTUP_GRACE_MINUTES", "20"))
+DB_DEDUP_LOOKBACK_HOURS = 72  # Окно fuzzy-проверки по заголовкам из БД
+DB_DEDUP_TITLE_LIMIT = 500    # Макс. заголовков из БД для fuzzy dedup
+DB_URL_CACHE_LIMIT = 3000     # Сколько URL подгружать из БД при старте
 
 # Адаптивные задержки обучения (в часах) в зависимости от типа события
 EVENT_TYPE_LOOKBACK = {
@@ -317,6 +344,8 @@ DEFAULT_AI_BATCH_SIZE = 25 # Размер пакета по умолчанию. 
 AI_BATCH_WAIT_SECONDS = 60 # Время ожидания для накопления пакета новостей
 PROVIDER_BATCH_SIZES = {
     "gemini": 3,
+    "groq": 5,
+    "cerebras": 5,
     "nvidia": 5,
     "openai": 5,
     "openrouter": 5,
@@ -326,6 +355,8 @@ ONLY_PRIORITY_GEMINI = True # Если True, используются тольк
 
 # Concurrency Settings
 GEMINI_CONCURRENCY = 1 # Бесплатный тариф требует последовательных запросов
+GROQ_CONCURRENCY = 2
+CEREBRAS_CONCURRENCY = 2
 OPENROUTER_CONCURRENCY = 5 # Платные/быстрые модели могут обрабатываться параллельно
 DEEPSEEK_CONCURRENCY = 2 # Лимит для DeepSeek API
 
@@ -355,13 +386,13 @@ TRIVIAL_SCORE_THRESHOLD = 0.05 # Порог для отсеивания трив
 MIN_WEIGHT_THRESHOLD = 0.7 # Ослабляем порог для сохранения большего числа связей
 NEUTRAL_SCORE_THRESHOLD = 1.8 # СНИЖАЕМ ПОРОГ, чтобы пропускать больше новостей
 MAX_ENTITY_PARTS = 3 # Увеличено до 3, чтобы лучше обрабатывать сложные Slug от ИИ
-DUPLICATE_TITLE_THRESHOLD = 0.8 # Снижаем порог для лучшего захвата перефразированных заголовков
-FALLBACK_DUPLICATE_THRESHOLD = 0.50 # Повышаем чувствительность для не-семантического поиска
+DUPLICATE_TITLE_THRESHOLD = 0.82 # Баланс: ловит перефразировки, меньше ложных срабатываний на шаблонные статьи
+FALLBACK_DUPLICATE_THRESHOLD = 0.55
+FUZZY_MIN_WORD_JACCARD = 0.35 # Мин. пересечение слов — отсекает шаблоны MarketsMojo и т.п.
 SEMANTIC_DEDUPLICATION_WINDOW = 720 # Увеличено до 30 дней (720ч) для борьбы с ре-индексацией старых новостей
 SEMANTIC_DUPLICATE_THRESHOLD = 0.85 # Снижаем порог для более агрессивного поиска семантических дублей
 USE_EMBEDDINGS = True # Включить/выключить семантическую дедупликацию через векторы
 EMBEDDING_MODEL = "models/gemini-embedding-2" # Основная модель эмбеддингов (Gemini)
-OPENROUTER_EMBEDDING_MODEL = "nvidia/llama-nemotron-embed-vl-1b-v2:free" # Высокопроизводительная альтернатива для OpenRouter
 CONFIDENCE_THRESHOLD = 0.25 # СНИЖАЕМ ПОРОГ, чтобы дать шанс новостям с умеренной уверенностью
 SLUG_SPAM_WINDOW = 7200 # 2 часа: если новость с тем же Slug пришла быстрее, она игнорируется как дубль
 
@@ -435,7 +466,9 @@ ASSET_BENCHMARK_CONFIG = {
     # "oil":    {"primary": "DX-Y.NYB", "type": "rolling_beta"}, 
     "oil":    {"primary": "CL=F", "type": "fixed", "factor": 1.0}, # Для нефти оставляем простую модель
     "gold":   {"primary": "TIP", "secondary": "DX-Y.NYB", "type": "multi_factor", "weights": [0.5, -0.5]}, # 50% реальные ставки, 50% обратная корреляция с DXY
-    "global": {"primary": "GLOBAL_REGIME", "type": "fixed", "factor": 1.0}
+    # GLOBAL_REGIME — целевой ряд (факт); бенчмарк — широкий рынок (ожидание через rolling beta).
+    # Раньше primary=GLOBAL_REGIME давал Z-Alpha=0 всегда (actual == expected).
+    "global": {"primary": "^GSPC", "type": "rolling_beta"},
 }
 
 # Веса для композитного режима Global Regime
@@ -491,3 +524,129 @@ SOXS_POSITION_LEVELS = [
     {"limit": 85.0, "position": 100.0, "name": "100% Position (Full Market Protection Plan)"},
     {"limit": 100.1, "position": 120.0, "name": "Aggressive Entry (120%+ Leveraged Cyclical Top)"}
 ]
+
+# SOXS probability calibration (logistic on historical bear_score vs SOXX forward returns)
+SOXS_CALIBRATION_MIN_SAMPLES = 20
+SOXS_CALIBRATION_FORWARD_HOURS = 24
+SOXS_CALIBRATION_BEAR_THRESHOLD_PCT = 1.0  # SOXX drop >= 1% over forward window => bearish label
+SOXS_CALIBRATION_DEFAULT_COEF = 0.05       # Fallback linear-ish mapping when not enough data
+SOXS_CALIBRATION_DEFAULT_INTERCEPT = 0.0
+SOXS_CALIBRATION_INTERVAL = 86400          # Re-fit calibrator once per day
+SOXS_CALIBRATION_BASELINE_PROB = 30.0      # bear_score=0 -> 30% (bullish baseline)
+SOXS_CALIBRATION_MIN_COEF = 0.01           # Below this the fitted model is rejected
+SOXS_CALIBRATION_HOLDOUT_HOURS = 48        # Exclude recent snapshots from calibration fit
+SOXS_USE_LEGACY_CALIBRATION_ROWS = False   # Skip rows without bear_score when fitting
+
+# SOXS position management
+SOXS_POSITION_HYSTERESIS_HOURS = 48        # Min time between applied position changes
+SOXS_POSITION_CONFIRM_CYCLES = 2           # Consecutive cycles at new level before applying
+SOXS_REGIME_GATE_MAX_POSITION = 20.0       # Cap without SOXX below MA200 or strong fundamentals
+SOXS_REGIME_GATE_MIN_BEAR_SCORE = 15.0     # Allow > gate max when bear score is high enough
+SOXS_SNAPSHOT_INTERVAL = 3600              # Save quant snapshot every hour (even if position unchanged)
+
+# SOXS divergence indicator (Price Confirmation v2)
+SOXS_DIVERGENCE_MIN_SCORE = 4.0
+SOXS_DIVERGENCE_TARGET_ASSETS = ("soxs", "nasdaq")
+SOXS_DIVERGENCE_GUIDANCE_WEIGHT = 2
+SOXS_DIVERGENCE_CAPEX_WEIGHT = 2
+SOXS_DIVERGENCE_NEWS_WEIGHT = 1
+SOXS_DIVERGENCE_LOOKBACK_DAYS = 10
+
+# SOXS calibration label: multi-day forward window (trading days on daily_prices)
+SOXS_CALIBRATION_FORWARD_DAYS = 5          # Label window for cyclical hedge (5 trading days)
+SOXS_CALIBRATION_USE_MULTI_DAY_LABEL = True
+SOXS_CALIBRATION_MULTI_DAY_THRESHOLD_PCT = 2.0  # SOXX drop >= 2% over N days => bearish
+SOXS_CALIBRATION_VALIDATION_RATIO = 0.25   # Final chronological block used out-of-sample
+SOXS_CALIBRATION_MIN_VALIDATION_SAMPLES = 5
+SOXS_CALIBRATION_MIN_BEARISH_TRAIN = 2
+SOXS_CALIBRATION_MIN_BEARISH_VALIDATION = 1
+SOXS_CALIBRATION_EMBARGO_DAYS = 1          # Gap between fitted and validation samples
+SOXS_CALIBRATION_MIN_BRIER_IMPROVEMENT = 0.0
+SOXX_CALIBRATION_MAX_ABS_DAILY_RETURN = 0.5  # Reject likely unadjusted splits in labels
+
+# Deployment promotion gate. A fitted calibrator is necessary but not sufficient:
+# actionable position alerts require explicit opt-in and stronger OOS evidence.
+SOXS_ACTIONABLE_SIGNALS = _env_bool("SOXS_ACTIONABLE_SIGNALS", False)
+SOXS_ACTIONABLE_MIN_SAMPLES = max(
+    SOXS_CALIBRATION_MIN_SAMPLES,
+    int(os.getenv("SOXS_ACTIONABLE_MIN_SAMPLES", "100")),
+)
+SOXS_ACTIONABLE_MIN_VALIDATION_SAMPLES = max(
+    SOXS_CALIBRATION_MIN_VALIDATION_SAMPLES,
+    int(os.getenv("SOXS_ACTIONABLE_MIN_VALIDATION_SAMPLES", "20")),
+)
+SOXS_ACTIONABLE_MIN_BRIER_IMPROVEMENT = max(
+    0.0,
+    float(os.getenv("SOXS_ACTIONABLE_MIN_BRIER_IMPROVEMENT", "0.01")),
+)
+# Transitional hard cap for the 3x daily-reset ETF. Raising the env value cannot
+# bypass it; changing the ceiling requires a deliberate reviewed code change.
+SOXS_MAX_ACTIONABLE_POSITION_PCT = min(
+    20.0,
+    max(0.0, float(os.getenv("SOXS_MAX_ACTIONABLE_POSITION_PCT", "20"))),
+)
+
+# Reproducible SOXS strategy backtest assumptions
+SOXS_BACKTEST_COMMISSION_BPS = 1.0
+SOXS_BACKTEST_SLIPPAGE_BPS = 5.0
+SOXS_BACKTEST_PURGE_DAYS = SOXS_CALIBRATION_FORWARD_DAYS
+SOXS_BACKTEST_EMBARGO_DAYS = 1
+SOXS_BACKTEST_MAX_ABS_DAILY_RETURN = 1.0  # >100% usually means an unadjusted split discontinuity
+
+# Validated historical-price ingestion. Twelve Data is used when a key exists;
+# direct Yahoo Chart and yfinance are independent fallback transports.
+HISTORICAL_PRICE_PROVIDERS = tuple(
+    provider.strip().lower()
+    for provider in os.getenv(
+        "HISTORICAL_PRICE_PROVIDERS", "twelvedata,yahoo_chart,fred,yfinance"
+    ).split(",")
+    if provider.strip()
+)
+# Twelve Data uses different symbols for several Yahoo index series.
+TWELVEDATA_SYMBOL_MAP = {
+    "^MOVE": "MOVE",
+}
+# These Yahoo indices are not available from the configured Twelve Data plan.
+# Skip known 404 requests and use the Yahoo/yfinance fallback chain instead.
+TWELVEDATA_UNSUPPORTED_TICKERS = {"DX-Y.NYB", "^TNX", "^IRX"}
+YAHOO_DAILY_MAX_MISSING_CLOSES = 5
+# Public FRED fallbacks. DXY uses the Fed broad dollar index as an explicitly
+# documented proxy; the yield series are expressed in percentage points.
+FRED_SERIES_MAP = {
+    "DX-Y.NYB": "DTWEXBGS",
+    "^TNX": "DGS10",
+    "^IRX": "DGS3MO",
+}
+PRICE_HISTORY_OUTPUT_SIZE = 5000
+PRICE_HISTORY_REQUEST_TIMEOUT = 30
+# A rate-limit response from a paid/free market-data API is transient.  Keep
+# retries bounded so one exhausted quota cannot stall the scheduler forever.
+TWELVEDATA_MAX_RETRIES = min(
+    4, max(0, int(os.getenv("TWELVEDATA_MAX_RETRIES", "2")))
+)
+TWELVEDATA_RETRY_BASE_SECONDS = max(
+    0.25, float(os.getenv("TWELVEDATA_RETRY_BASE_SECONDS", "2"))
+)
+TWELVEDATA_RETRY_MAX_SECONDS = max(
+    TWELVEDATA_RETRY_BASE_SECONDS,
+    float(os.getenv("TWELVEDATA_RETRY_MAX_SECONDS", "30")),
+)
+PRICE_HISTORY_MIN_ROWS = 20
+PRICE_HISTORY_CORE_MIN_ROWS = 200
+PRICE_HISTORY_MAX_AGE_DAYS = 10
+PRICE_HISTORY_REFRESH_AFTER_DAYS = 3
+PRICE_HISTORY_FUTURE_TOLERANCE_DAYS = 1
+PRICE_HISTORY_MAX_ABS_DAILY_RETURN = 2.0
+SOXS_TRACKING_CHECK_MIN_ABS_RETURN = 0.50
+SOXS_TRACKING_MAX_RESIDUAL = 0.30
+PRICE_HISTORY_RAM_DAYS = 400
+PRICE_HISTORY_US_CLOSE_GRACE_MINUTES = 15
+MARKET_INTRADAY_MAX_CONCURRENCY = 6
+YFINANCE_CACHE_DIR = os.getenv("YFINANCE_CACHE_DIR", ".cache/yfinance")
+
+# SOXS signal lookback for capex/guidance aggregation
+SOXS_SIGNAL_LOOKBACK_DAYS = 15
+
+# Walk-forward learning: exclude recent predictions from weight/multiplier updates
+WALK_FORWARD_HOLDOUT_HOURS = 48            # Minimum age before applying learning updates
+WALK_FORWARD_MIN_CALIBRATION_AGE = 6       # Minimum age before multiplier calibration (phase 1)
